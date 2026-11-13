@@ -35,9 +35,11 @@ export type SharedSector = {
   pvpHits: PvpHit[];
   /** Set when another pilot destroyed this ship: its carried cargo, sent to them once. */
   pvpLoot?: { to: string; cargo: Partial<Record<Resource, number>>; sent?: boolean; returned?: boolean };
+  /** Rocks this pilot's ship knocked (motion only): sent so others see the rock move. No claim needed, no ore changes. */
+  bumpedRocks: Set<number>;
 };
 export function sharedSector(role: SharedSector['role'], mayChangeRock: (id: number) => boolean): SharedSector {
-  return { role, targets: [], mayChangeRock, changedRocks: new Set(), shots: [], hits: [], loot: [], allies: new Set(), pvpHits: [] };
+  return { role, targets: [], mayChangeRock, changedRocks: new Set(), shots: [], hits: [], loot: [], allies: new Set(), pvpHits: [], bumpedRocks: new Set() };
 }
 
 const num = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
@@ -64,6 +66,23 @@ export function encodeEnemies(enemies: { id: number; kind?: EnemyKind; x: number
 export function decodeEnemies(d: unknown): EnemyRow[] {
   if (!Array.isArray(d)) return [];
   return d.slice(0, 96).filter((r): r is EnemyRow => Array.isArray(r) && r.length === 10 && Number.isSafeInteger(r[0]) && typeof r[1] === 'string' && r[1] in ENEMIES && [r[2], r[3], r[4], r[5], r[6], r[7], r[9]].every(num) && typeof r[8] === 'string');
+}
+
+/** A rock's motion after a bump: id, x, y, vx, vy. */
+export type BumpRow = [number, number, number, number, number];
+export function encodeBump(a: Asteroid): BumpRow { return [a.id, round(a.x), round(a.y), round(a.vx, 2), round(a.vy, 2)]; }
+export function decodeBumps(d: unknown): BumpRow[] {
+  if (!Array.isArray(d)) return [];
+  return d.slice(0, 64).filter((r): r is BumpRow => Array.isArray(r) && r.length === 5 && Number.isSafeInteger(r[0]) && r.slice(1).every(num) && Math.abs(r[3]) < 2000 && Math.abs(r[4]) < 2000);
+}
+/** Another pilot's own shot: drawn and stopped by rocks here, but it never damages anything in this simulation (the shooter's own simulation decides hits). */
+export type PilotShot = { x: number; y: number; vx: number; vy: number; life: number; weapon?: string; level?: number; rocket?: boolean };
+export function encodePilotShot(b: PilotShot): PilotShot {
+  return { x: round(b.x), y: round(b.y), vx: round(b.vx), vy: round(b.vy), life: round(b.life, 2), weapon: b.weapon, level: b.level, rocket: b.rocket || undefined };
+}
+export function decodePilotShots(d: unknown): PilotShot[] {
+  if (!Array.isArray(d)) return [];
+  return d.slice(0, 64).filter((s): s is PilotShot => s && [s.x, s.y, s.vx, s.vy, s.life].every(num) && s.life > 0 && s.life < 20 && (s.weapon === undefined || typeof s.weapon === 'string') && (s.level === undefined || Number.isInteger(s.level)));
 }
 
 export function decodeShots(d: unknown): SharedShot[] {

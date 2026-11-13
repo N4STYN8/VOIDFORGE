@@ -1,11 +1,13 @@
-import { NET, MATCH, packState, parseServer, roomTag, type CastKind, type ClientMessage, type DirectKind, type Member, type ShipBlock, type ShipState, type WorldRef } from './netProtocol.ts';
+import { NET, MATCH, packState, parseServer, roomTag, type CastKind, type ClientMessage, type DirectKind, type LobbySummary, type Member, type ShipBlock, type ShipState, type WorldRef } from './netProtocol.ts';
 import { ClaimBook } from './shared.ts';
 
 /**
  * Browser side of the relay connection. No Phaser or DOM beyond WebSocket; time is passed in (seconds),
  * so it can be driven from tests. The game keeps running offline whatever happens here.
  */
-export type LobbyInfo = { code: string; host: string; members: Member[]; world: WorldRef | null };
+export type LobbyInfo = { code: string; host: string; members: Member[]; world: WorldRef | null; open?: boolean };
+/** Seconds between reconnect attempts while staying online: doubling from the first, up to the last. */
+export const RECONNECT = { first: 2, max: 30 };
 export type Peer = { id: string; name: string; samples: { at: number; s: ShipState }[]; blocks: ShipBlock[] };
 export type PeerPose = ShipState & { id: string; name: string; blocks: ShipBlock[] };
 export type NetStatus = 'offline' | 'connecting' | 'online' | 'error';
@@ -20,6 +22,10 @@ export class NetClient {
   /** Called when the lobby's world (the host's sector) changes, or the lobby ends (null). */
   onLobbyWorld: (world: WorldRef | null, lobby?: LobbyInfo) => void = () => {};
   onNote: (text: string) => void = () => {};
+  /** The open lobby list and online pilot count, from the last `requestLobbies`. */
+  lobbyList: LobbySummary[] = [];
+  online = 0;
+  onLobbies: () => void = () => {};
   /** Shared-sector traffic from other pilots in this room (already filtered to the current room). */
   onCast: (from: string, kind: CastKind, data: unknown) => void = () => {};
   onDirect: (from: string, kind: DirectKind, data: unknown) => void = () => {};
@@ -31,6 +37,8 @@ export class NetClient {
   /** True when this sector is shared with at least one other pilot. */
   get sharing() { return this.connected && (this.room?.members ?? 0) > 1; }
   get authority() { return this.room?.authority === this.id; }
+  /** Seed of the sector world this client last reported (its room). */
+  get sectorSeed() { return this.sector?.seed; }
   private socket?: SocketLike;
   private pending: ClientMessage[] = [];
   private sector?: WorldRef;
@@ -63,7 +71,26 @@ export class NetClient {
     socket.addEventListener('error', () => { if (this.socket === socket && this.status === 'connecting') this.status = 'error'; });
   }
   disconnect() { const socket = this.socket; this.socket = undefined; socket?.close(); this.dropped('Offline.'); }
-  create() { this.send({ t: 'create' }); }
+  /**
+   * Stays connected: connects now and, whenever the connection drops, tries again after RECONNECT.first
+   * seconds, doubling up to RECONNECT.max. `goOffline` stops that.
+   */
+  stayOnline(url: string, name: string) {
+    this.keepOnline = { url }; this.retryDelay = RECONNECT.first; clearTimeout(this.retryTimer);
+    this.connect(url, name);
+  }
+  goOffline() { this.keepOnline = undefined; clearTimeout(this.retryTimer); this.disconnect(); this.setNote('Playing offline.'); }
+  get staysOnline() { return Boolean(this.keepOnline); }
+  private keepOnline?: { url: string };
+  private retryDelay: number = RECONNECT.first;
+  private retryTimer?: ReturnType<typeof setTimeout>;
+  /** Changes the pilot name other players see. */
+  rename(name: string) { this.name = name; if (this.connected) this.raw({ t: 'hello', v: NET.version, name }); }
+  get pilotName() { return this.name; }
+  /** `open` lobbies are listed for everyone to join; private ones only by code or invite link. */
+  create(open = true) { this.send({ t: 'create', open: open || undefined }); }
+  setOpen(open: boolean) { if (this.isHost) this.raw({ t: 'open', open }); }
+  requestLobbies() { if (this.connected) this.raw({ t: 'lobbies' }); }
   join(code: string) { this.send({ t: 'join', code }); }
   leave() { if (this.lobby) this.send({ t: 'leave' }); }
 
@@ -131,7 +158,8 @@ export class NetClient {
   receive(raw: string, now = performance.now() / 1000) {
     const m = parseServer(raw); if (!m) return;
     switch (m.t) {
-      case 'welcome': this.id = m.id; this.status = 'online'; this.setNote('Connected.'); return;
+      case 'welcome': this.id = m.id; this.status = 'online'; this.retryDelay = RECONNECT.first; this.setNote('Online.'); this.raw({ t: 'lobbies' }); return;
+      case 'lobbies': this.lobbyList = m.list; this.online = m.online; this.onLobbies(); return;
       case 'error': this.setNote(m.message); return;
       case 'gone': this.peers.delete(m.id); return;
       case 'room': this.room = { authority: m.authority, members: m.members }; return;
@@ -143,7 +171,7 @@ export class NetClient {
       case 'left-lobby': { const had = this.lobby; this.lobby = undefined; if (m.reason) this.setNote(m.reason); if (had) this.onLobbyWorld(null); return; }
       case 'lobby': {
         const before = this.lobby?.world?.seed, first = !this.lobby || this.lobby.code !== m.code;
-        this.lobby = { code: m.code, host: m.host, members: m.members, world: m.world };
+        this.lobby = { code: m.code, host: m.host, members: m.members, world: m.world, open: m.open };
         if (first) this.setNote(m.host === this.id ? `Lobby ${m.code} created. Share the invite link.` : `Joined lobby ${m.code}.`);
         if (m.world && (first || m.world.seed !== before)) this.onLobbyWorld(m.world, this.lobby);
         return;
@@ -159,10 +187,24 @@ export class NetClient {
     }
   }
   private send(m: ClientMessage) { if (this.connected) this.raw(m); else this.pending.push(m); }
-  private raw(m: ClientMessage) { if (this.socket && this.socket.readyState === 1) this.socket.send(JSON.stringify(m)); }
+  private raw(m: ClientMessage) {
+    if (!this.socket || this.socket.readyState !== 1) return;
+    // The relay closes a connection that sends an oversized frame, so never send one.
+    const text = JSON.stringify(m);
+    if (text.length > NET.maxMessage / 4 && new TextEncoder().encode(text).length > NET.maxMessage - 16) { this.oversized++; return; }
+    this.socket.send(text);
+  }
+  /** Messages dropped locally because they were too large to send. */
+  oversized = 0;
   private dropped(text: string) {
     const had = this.lobby;
     this.status = 'offline'; this.socket = undefined; this.id = undefined; this.lobby = undefined; this.peers.clear(); this.pending = []; this.room = undefined; this.claims.clear(); this.profileSent = ''; this.matchWaiting?.(null);
+    if (this.keepOnline && text !== 'Offline.') {
+      // Staying online: try again shortly, backing off while the relay is unreachable.
+      const url = this.keepOnline.url, delay = this.retryDelay; this.retryDelay = Math.min(RECONNECT.max, delay * 2);
+      clearTimeout(this.retryTimer); this.retryTimer = setTimeout(() => { if (this.keepOnline && this.status !== 'online' && this.status !== 'connecting') this.connect(url, this.name); }, delay * 1000);
+      text += ` Retrying in ${delay}s.`;
+    }
     this.setNote(text);
     if (had) this.onLobbyWorld(null);
   }

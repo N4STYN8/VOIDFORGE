@@ -17,11 +17,11 @@ import './compactHud.css';
 import './outfitter.css';
 import './map.css';
 import { hashSeed } from './world.ts';
-import { travel, enterWorld, returnHome, worldRef, rebuildAtHome, ownsSector, progressionScore, linkedHomes } from './sectors.ts';
+import { travel, enterWorld, returnHome, worldRef, rebuildAtHome, ownsSector, progressionScore, linkedHomes, adoptWorld } from './sectors.ts';
 import { SECTOR_STEPS } from './sectorGrid.ts';
 import { NetClient, relayUrl, inviteLink, type PeerPose } from './net.ts';
 import { SharedLink } from './sharedLink.ts';
-import { NET } from './netProtocol.ts';
+import { NET, MATCH } from './netProtocol.ts';
 import { loadSavedGame, saveGame, saveText, saveGameConfirmed, backupSavedGame } from './persistence.ts';
 /** The save found at start-up; storage is read before the game is created because the large store is asynchronous. */
 let startModel: GameModel | null = null;
@@ -277,7 +277,7 @@ class SpaceScene extends Phaser.Scene {
     this.targetLabel = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '10px', color: '#b5ebdf', backgroundColor: '#0b1423', padding: { x: 6, y: 3 } }).setOrigin(0.5, 0).setDepth(5);
     this.follow = this.add.zone(this.model.player.x, this.model.player.y, 1, 1);
     this.cameras.main.setBounds(0, 0, WORLD.width, WORLD.height).setZoom(1.35).startFollow(this.follow, true, 0.15, 0.15);
-    this.keys = this.input.keyboard!.addKeys(`W,A,S,D,SPACE,E,R,ESC,B,Q,M,N,G,V,SHIFT,C,${OUTPOST.key}`) as Record<string, Phaser.Input.Keyboard.Key>;
+    this.keys = this.input.keyboard!.addKeys(`W,A,S,D,SPACE,E,R,ESC,B,Q,M,N,G,V,P,SHIFT,C,${OUTPOST.key}`) as Record<string, Phaser.Input.Keyboard.Key>;
     this.input.on('wheel', (_pointer: Phaser.Input.Pointer, _objects: unknown, _dx: number, dy: number) => {
       if (!this.mapOpen && !this.building) this.cameras.main.setZoom(Phaser.Math.Clamp(this.cameras.main.zoom * Math.exp(-dy * 0.001), 0.55, 2.2));
     });
@@ -322,7 +322,7 @@ class SpaceScene extends Phaser.Scene {
       newGame:async seed=>{const next=seed?new GameModel(seed):new GameModel();if(this.sessionStarted){const error=await saveGameConfirmed(this.model);if(error)throw new Error(error);}if(!await backupSavedGame())throw new Error('Backup failed. Export your current save before starting a new world.');this.switchModel(next);this.beginSession();const error=await saveGameConfirmed(next);if(error)this.model.message=error;},
       settings:()=>this.settings.show(),
       sound:kind=>{if(kind!=='hover')this.audio.unlock();this.audio.play(kind==='hover'?'uiHover':kind==='warning'?'uiWarning':'uiClick');},
-      multiplayer:async()=>{if(!this.sessionStarted){const saved=await loadSavedGame();if(!saved)throw new Error('Start a new voyage first, then open Multiplayer to use its pilot.');this.switchModel(saved);}this.beginSession();const panel=document.querySelector<HTMLDetailsElement>('#cockpit-session');if(panel)panel.open=true;this.netPanel.querySelector<HTMLInputElement>('#net-name')?.focus();},
+      multiplayer:async()=>{if(!this.sessionStarted){const saved=await loadSavedGame();if(!saved)throw new Error('Start a new voyage first, then open Multiplayer to use its pilot.');this.switchModel(saved);}this.beginSession();this.setNetOpen(true);},
     },Boolean(startModel));
     this.settings.addMainMenu(()=>{if(this.menu.open)return;void this.returnToMenu();});
     this.scene.setVisible(false);this.input.keyboard!.enabled=false;this.input.keyboard!.disableGlobalCapture();
@@ -331,13 +331,17 @@ class SpaceScene extends Phaser.Scene {
   update(_time: number, delta: number) {
     if(this.menu?.open)return;
     if (Phaser.Input.Keyboard.JustDown(this.keys.M)) { this.setMapOpen(!this.mapOpen); this.building = false; }
+    if (Phaser.Input.Keyboard.JustDown(this.keys.P)) this.setNetOpen(!this.netOpen);
+    // The open lobby list stays fresh while the panel is up.
+    if (this.netOpen && performance.now() - this.lobbiesAsked > 4000) { this.lobbiesAsked = performance.now(); this.net.requestLobbies(); }
     if ((Phaser.Input.Keyboard.JustDown(this.keys.B) || Phaser.Input.Keyboard.JustDown(this.keys.Q)) && !this.mapOpen) {
       if (this.building) this.building = false;
       else if (this.model.atStation && !this.model.dead) this.building = true;
       else this.model.message = 'Return to the green station to open the shop (Q).';
     }
     if (Phaser.Input.Keyboard.JustDown(this.keys.ESC)) {
-      if (this.mapOpen) this.mapOpen = false;
+      if (this.netOpen) this.setNetOpen(false);
+      else if (this.mapOpen) this.mapOpen = false;
       else if (this.buildMode) this.buildMode = false;
       else if (this.building) this.building = false;
       else this.paused = !this.paused;
@@ -407,6 +411,7 @@ class SpaceScene extends Phaser.Scene {
     if (this.hudElapsed >= 100) {
     this.hudElapsed = 0;
     const destination = this.model.bases.filter(base => this.model.isExplored(base) || base.unlocked).reduce((best, base) => Math.hypot(p.x - base.x, p.y - base.y) < Math.hypot(p.x - best.x, p.y - best.y) ? base : best);
+    this.cockpit.netStatus = this.netSummary;
     this.cockpit.update(this.model,aim,this.paused||this.building||this.settings.open,this.buildMode);
     document.body.classList.toggle('cockpit-modal',this.building||this.settings.open);
     const html=flightHud(this.model,{base:destination,direction:this.directionToStation(),zoom:this.cameras.main.zoom,muted:this.audio.muted,effects:this.effects.enabled,detailsOpen:this.hud.querySelector<HTMLDetailsElement>('details')?.open??false});
@@ -436,27 +441,70 @@ class SpaceScene extends Phaser.Scene {
     this.status.textContent = this.paused ? 'PAUSED — Press Esc to resume' : this.model.message;
     this.status.classList.toggle('urgent', this.model.dead || this.paused);
   }
-  /** Builds the multiplayer section of the Systems menu: pilot name, connect, create/join lobby, invite, leave. */
+  /**
+   * The Multiplayer panel (P, or its button on the command bar): online status and pilot count, pilot name,
+   * the current lobby with invite and leave, open lobbies to join with one click, create (open or private)
+   * and join by code, pilots in this sector, and a Play offline switch. The game connects on its own unless
+   * the player chose to play offline.
+   */
   private setupNetPanel() {
     const saved = (key: string) => { try { return localStorage.getItem(key); } catch { return null; } };
-    this.netPanel.className = 'net-panel'; this.netPanel.id = 'net-panel';
-    this.netPanel.innerHTML = `<div class="net-head"><b>MULTIPLAYER</b><span data-net-status></span></div>
-      <div class="net-row"><input id="net-name" maxlength="${NET.maxName}" aria-label="Pilot name" placeholder="Pilot name"><button data-net="connect"></button></div>
-      <div class="net-row"><button data-net="create">Create lobby</button><input id="net-code" maxlength="${NET.codeLength}" aria-label="Lobby code" placeholder="CODE" autocomplete="off"><button data-net="join">Join</button></div>
-      <div class="net-lobby" data-net-lobby hidden><div class="net-row"><b data-net-code></b><button data-net="invite">Copy invite</button><button data-net="leave">Leave</button></div><ul data-net-members></ul></div>
-      <small data-net-note></small>`;
-    this.sessionControls.append(this.netPanel);
-    const name = this.netPanel.querySelector<HTMLInputElement>('#net-name')!, code = this.netPanel.querySelector<HTMLInputElement>('#net-code')!;
+    const store = (key: string, value: string | null) => { try { if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value); } catch { /* storage blocked */ } };
+    this.netPanel.id = 'multiplayer'; this.netPanel.hidden = true;
+    this.netPanel.setAttribute('role', 'dialog'); this.netPanel.setAttribute('aria-label', 'Multiplayer');
+    this.netPanel.innerHTML = `<header class="mp-head"><div><small>SHARED SPACE</small><h2>Multiplayer</h2></div><span class="mp-status" data-net-status></span><button data-net="close">Close · P</button></header>
+      <div class="mp-body">
+        <section class="mp-col">
+          <h3>Pilot</h3>
+          <div class="mp-row"><input id="net-name" maxlength="${NET.maxName}" aria-label="Pilot name" placeholder="Pilot name"><button data-net="rename">Save name</button></div>
+          <label class="mp-check"><input type="checkbox" data-net-offline> Play offline</label>
+          <h3>Your lobby</h3>
+          <div data-net-lobby></div>
+          <div class="mp-row" data-net-create><button data-net="create-open">Create open lobby</button><button data-net="create-private">Create private lobby</button></div>
+          <div class="mp-row"><input id="net-code" maxlength="${NET.codeLength}" aria-label="Lobby code" placeholder="CODE" autocomplete="off"><button data-net="join">Join by code</button></div>
+          <h3>Pilots in this sector</h3>
+          <ul class="mp-list" data-net-here></ul>
+        </section>
+        <section class="mp-col">
+          <div class="mp-title"><h3>Open lobbies</h3><button data-net="refresh">Refresh</button></div>
+          <ul class="mp-list" data-net-lobbies></ul>
+          <p class="mp-hint">Lobby members fly together in the host's sector and never damage each other. Anyone else you meet outside a station ring can attack you and take your cargo.</p>
+        </section>
+      </div>
+      <small class="mp-note" data-net-note></small>`;
+    document.body.append(this.netPanel);
+    const name = this.netPanel.querySelector<HTMLInputElement>('#net-name')!, code = this.netPanel.querySelector<HTMLInputElement>('#net-code')!, offline = this.netPanel.querySelector<HTMLInputElement>('[data-net-offline]')!;
     name.value = saved('voidforge.pilot') ?? this.model.shipName;
-    const connect = () => { const pilot = name.value.trim() || 'Pilot'; try { localStorage.setItem('voidforge.pilot', pilot); } catch { /* storage blocked */ } this.net.connect(relayUrl(location.search), pilot); };
-    this.netPanel.addEventListener('focusin', event => { if ((event.target as HTMLElement).tagName === 'INPUT') { this.input.keyboard!.enabled = false; this.input.keyboard!.disableGlobalCapture(); } });
+    offline.checked = saved('voidforge.offline') === 'true';
+    const pilotName = () => name.value.trim() || 'Pilot';
+    // Online is the normal state: every action that needs the relay makes sure the client is connecting.
+    const connect = () => {
+      if (offline.checked) { offline.checked = false; store('voidforge.offline', null); }
+      store('voidforge.pilot', pilotName());
+      if (!this.net.staysOnline || this.net.status === 'offline' || this.net.status === 'error') this.net.stayOnline(relayUrl(location.search), pilotName());
+    };
+    const typing = (on: boolean) => { if (!on && (this.menu?.open || this.settings.open)) return; this.input.keyboard!.enabled = !on; if (on) this.input.keyboard!.disableGlobalCapture(); else this.input.keyboard!.enableGlobalCapture(); };
+    this.netPanel.addEventListener('focusin', event => { const target = event.target as HTMLInputElement; if (target.tagName === 'INPUT' && target.type !== 'checkbox') typing(true); });
+    this.netPanel.addEventListener('focusout', () => typing(false));
+    this.netPanel.addEventListener('pointerdown', event => event.stopPropagation());
+    this.netPanel.addEventListener('keydown', event => { if (event.key === 'Escape') { (event.target as HTMLElement).blur?.(); this.setNetOpen(false); } });
     code.addEventListener('keydown', event => { if (event.key === 'Enter') { connect(); this.net.join(code.value); code.blur(); } });
+    name.addEventListener('keydown', event => { if (event.key === 'Enter') { store('voidforge.pilot', pilotName()); this.net.rename(pilotName()); name.blur(); } });
+    offline.addEventListener('change', () => {
+      store('voidforge.offline', offline.checked ? 'true' : null);
+      if (offline.checked) this.net.goOffline(); else connect();
+      offline.blur(); this.renderNetPanel(true);
+    });
     this.netPanel.addEventListener('click', event => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-net]'); if (!button) return;
       const action = button.dataset.net;
-      if (action === 'connect') { if (this.net.status === 'online' || this.net.status === 'connecting') this.net.disconnect(); else connect(); }
-      if (action === 'create') { connect(); this.net.create(); }
+      if (action === 'close') this.setNetOpen(false);
+      if (action === 'rename') { store('voidforge.pilot', pilotName()); this.net.rename(pilotName()); this.model.message = `Pilot name: ${pilotName()}.`; }
+      if (action === 'create-open' || action === 'create-private') { connect(); this.net.create(action === 'create-open'); }
       if (action === 'join') { if (!code.value.trim()) this.model.message = 'Type the lobby code your friend shared.'; else { connect(); this.net.join(code.value); } }
+      if (action === 'join-listed' && button.dataset.code) { connect(); this.net.join(button.dataset.code); }
+      if (action === 'refresh') { connect(); this.net.requestLobbies(); }
+      if (action === 'open' || action === 'private') this.net.setOpen(action === 'open');
       if (action === 'leave') this.net.leave();
       if (action === 'invite' && this.net.lobby) {
         const link = inviteLink(location.origin, location.pathname, this.net.lobby.code);
@@ -466,7 +514,18 @@ class SpaceScene extends Phaser.Scene {
       }
       button.blur(); this.renderNetPanel(true);
     });
+    this.net.onLobbies = () => this.renderNetPanel(true);
     this.net.onNote = text => { this.model.message = text; this.renderNetPanel(true); };
+    // The sector authority's copy of this sector arrived: same rocks, depletion, stations, outposts and clock as theirs.
+    this.link.onWorld = world => {
+      try {
+        const next = adoptWorld(this.model, world); if (next === this.model) return;
+        const keep = { build: this.building, map: this.mapOpen };
+        this.switchModel(next); this.building = keep.build; this.mapOpen = keep.map;
+        const authority = this.net.room?.authority ?? '', name = this.net.peers.get(authority)?.name ?? this.net.lobby?.members.find(m => m.id === authority)?.name;
+        this.model.message = `Synced with ${name ?? 'the sector'}${name ? "'s view of this sector" : ''}.`;
+      } catch (error) { this.model.message = `Could not sync this sector: ${(error as Error).message}`; }
+    };
     // Lobby world changes: guests fly into the host's sector, and back to their own when the lobby ends.
     this.net.onLobbyWorld = world => {
       try {
@@ -480,33 +539,68 @@ class SpaceScene extends Phaser.Scene {
     this.renderNetPanel(true);
   }
   private netConnect = () => {};
-  /** Runs once the scene is fully built: return home after a reload, then follow an invite link. */
+  private netOpen = false;
+  private lobbiesAsked = -Infinity;
+  private setNetOpen(open: boolean) {
+    this.netOpen = open; this.netPanel.hidden = !open;
+    if (open) { this.net.requestLobbies(); this.lobbiesAsked = performance.now(); this.renderNetPanel(true); }
+    else if (document.activeElement instanceof HTMLElement && this.netPanel.contains(document.activeElement)) document.activeElement.blur();
+  }
+  /** Runs once the scene is fully built: return home after a reload, go online, then follow an invite link. */
   private startNet() {
     // A reload is never still in a lobby, so a pilot saved in someone else's world starts back in their own.
     if (this.model.galaxy.away) this.switchModel(returnHome(this.model));
-    // Invite links: ?join=CODE connects and joins once, then the code is removed from the address bar.
+    const offline = (() => { try { return localStorage.getItem('voidforge.offline') === 'true'; } catch { return false; } })();
+    // Invite links: ?join=CODE joins once (going online even after Play offline), then the code is removed from the address bar.
     const invited = new URLSearchParams(location.search).get('join');
     if (invited) {
       const code = this.netPanel.querySelector<HTMLInputElement>('#net-code')!;
       code.value = invited.toUpperCase().slice(0, NET.codeLength); this.netConnect(); this.net.join(code.value);
       const url = new URL(location.href); url.searchParams.delete('join'); history.replaceState(null, '', url);
       this.model.message = `Joining lobby ${code.value}…`;
+    } else if (!offline) {
+      // Online by default. If the relay cannot be reached the game plays alone and keeps retrying.
+      const name = this.netPanel.querySelector<HTMLInputElement>('#net-name')!.value.trim() || 'Pilot';
+      this.net.stayOnline(relayUrl(location.search), name);
     }
     this.renderNetPanel(true);
   }
+  /** The command bar's one-line multiplayer status. */
+  private get netSummary() {
+    const net = this.net;
+    if (net.status === 'online') return net.lobby ? `LOBBY ${net.lobby.code}` : `ONLINE${net.online ? ` · ${net.online}` : ''}`;
+    if (net.status === 'connecting') return 'CONNECTING';
+    return net.staysOnline ? 'RECONNECTING' : 'OFFLINE';
+  }
   private renderNetPanel(force = false) {
-    const net = this.net, lobby = net.lobby;
-    const state = [net.status, net.note, lobby?.code, lobby?.host, lobby?.members.map(m => m.id + m.name).join(), net.id].join('|');
+    const net = this.net, lobby = net.lobby, here = [...net.peers.values()];
+    const listing = net.lobbyList.map(l => `${l.code}${l.host}${l.members}${l.power}`).join();
+    const state = [this.netOpen, net.status, net.staysOnline, net.note, net.online, lobby?.code, lobby?.host, lobby?.open, lobby?.members.map(m => m.id + m.name).join(), net.id, listing, here.map(p => p.id + p.name).join()].join('|');
     if (!force && state === this.netContent) return; this.netContent = state;
+    if (!this.netOpen) return;
+    const esc = (text: string) => text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
     const q = <T extends HTMLElement = HTMLElement>(selector: string) => this.netPanel.querySelector<T>(selector)!;
-    q('[data-net-status]').textContent = net.status.toUpperCase(); q('[data-net-status]').dataset.state = net.status;
-    q<HTMLButtonElement>('[data-net="connect"]').textContent = net.status === 'online' || net.status === 'connecting' ? 'Disconnect' : 'Connect';
-    q('[data-net-lobby]').hidden = !lobby;
+    const status = q('[data-net-status]');
+    status.dataset.state = net.status === 'online' ? 'online' : net.status === 'connecting' || net.staysOnline ? 'connecting' : 'offline';
+    status.textContent = net.status === 'online' ? `ONLINE · ${net.online || 1} pilot${net.online === 1 ? '' : 's'} online` : this.netSummary;
+    q<HTMLInputElement>('[data-net-offline]').checked = !net.staysOnline && net.status === 'offline';
+    const allies = new Set(lobby?.members.map(m => m.id) ?? []);
+    q('[data-net-lobby]').innerHTML = lobby
+      ? `<div class="mp-lobby"><div class="mp-code"><b>${esc(lobby.code)}</b><span>${lobby.open ? 'Open · listed' : 'Private · code only'} · ${lobby.members.length}/${NET.maxLobby}</span></div>
+         <ul class="mp-list">${lobby.members.map(m => `<li><span>${esc(m.name)}${m.id === net.id ? ' (you)' : ''}</span><small>${m.host ? 'HOST' : 'MEMBER'}</small></li>`).join('')}</ul>
+         <div class="mp-row"><button data-net="invite">Copy invite link</button>${net.isHost ? `<button data-net="${lobby.open ? 'private' : 'open'}">Make ${lobby.open ? 'private' : 'open'}</button>` : ''}<button data-net="leave">Leave</button></div></div>`
+      : `<p class="mp-empty">Not in a lobby. Create one, or join an open lobby to fly together.</p>`;
+    q('[data-net-create]').hidden = Boolean(lobby);
+    q('[data-net-here]').innerHTML = here.length
+      ? here.map(p => `<li><span>${esc(p.name)}</span><small class="${allies.has(p.id) ? 'ally' : 'hostile'}">${allies.has(p.id) ? 'ALLY' : 'HOSTILE'}</small></li>`).join('')
+      : `<li class="mp-empty">${net.status === 'online' ? 'Nobody else nearby.' : 'Offline.'}</li>`;
+    const power = progressionScore(this.model);
+    q('[data-net-lobbies]').innerHTML = net.status !== 'online' ? '<li class="mp-empty">Go online to see open lobbies.</li>'
+      : net.lobbyList.filter(l => l.code !== lobby?.code).map(l => {
+        const close = l.power === undefined ? '' : l.power <= power * MATCH.maxRatio && power <= l.power * MATCH.maxRatio ? 'similar level' : l.power > power ? 'stronger' : 'newer';
+        return `<li><span><b>${esc(l.host)}</b></span><small>${l.members}/${NET.maxLobby}${close ? ` · ${close}` : ''}</small><button data-net="join-listed" data-code="${esc(l.code)}">Join</button></li>`;
+      }).join('') || '<li class="mp-empty">No open lobbies right now. Create one and others can join.</li>';
     q('[data-net-note]').textContent = net.note;
-    if (lobby) {
-      q('[data-net-code]').textContent = `LOBBY ${lobby.code}`;
-      q('[data-net-members]').replaceChildren(...lobby.members.map(m => { const li = document.createElement('li'); li.textContent = `${m.name}${m.host ? ' · host' : ''}${m.id === net.id ? ' (you)' : ''}`; return li; }));
-    }
   }
   /** Each frame: tell the relay which sector we are in, send our ship and collect the other pilots here. */
   private updateNet(now: number) {
@@ -664,18 +758,20 @@ class SpaceScene extends Phaser.Scene {
   }
   private drawOutposts(view: Phaser.Geom.Rectangle, now: number) {
     const g = this.graphics, seen = new Set<number>(), size = OUTPOST.cell; this.turretIndex = 0; this.droneIndex = 0;
-    for (const outpost of this.model.outposts) {
-      seen.add(outpost.id);
+    // Another pilot's outposts (shared sector) are drawn the same way, under negative sprite keys so ids never clash.
+    const shown: [Outpost, number][] = [...this.model.outposts.map(o => [o, o.id] as [Outpost, number]), ...this.model.visitorOutposts.map(o => [o, -1 - o.id] as [Outpost, number])];
+    for (const [outpost, spriteId] of shown) {
+      seen.add(spriteId);
       const b = outpostBounds(outpost), inView = (b.maxX + 1) * size > view.x - 40 && b.minX * size < view.right + 40 && (b.maxY + 1) * size > view.y - 40 && b.minY * size < view.bottom + 40;
-      let entry = this.outpostSprites.get(outpost.id);
+      let entry = this.outpostSprites.get(spriteId);
       if (!inView) { entry?.image.setVisible(false); continue; }
       if (!entry || entry.revision !== outpost.revision) {
         // Static blocks are baked once per change, never redrawn per frame.
-        const baked = paintOutpost(outpost), key = `outpost-${outpost.id}`;
+        const baked = paintOutpost(outpost), key = `outpost-${spriteId}`;
         if (this.textures.exists(key)) this.textures.remove(key);
         this.textures.addCanvas(key, baked.canvas)!.setFilter(Phaser.Textures.FilterMode.NEAREST);
         const image = entry?.image ?? this.add.image(0, 0, key).setOrigin(0).setDepth(-0.6);
-        image.setTexture(key).setPosition(baked.x, baked.y); entry = { image, revision: outpost.revision }; this.outpostSprites.set(outpost.id, entry);
+        image.setTexture(key).setPosition(baked.x, baked.y); entry = { image, revision: outpost.revision }; this.outpostSprites.set(spriteId, entry);
       }
       entry.image.setVisible(true);
       for (const s of outpost.structures) {
@@ -752,9 +848,9 @@ class SpaceScene extends Phaser.Scene {
     const label = this.radar.querySelector<HTMLElement>('[data-radar-label]');
     if (label) label.textContent = `RADAR ${(range / 1000).toFixed(1)} km`;
   }
-  private disconnectForMenu(){if(this.net.status!=='offline'){this.menuNetworkTransition=true;try{this.net.disconnect();this.link.frame(this.model,performance.now()/1000);}finally{this.menuNetworkTransition=false;}}this.netStarted=false;}
+  private disconnectForMenu(){if(this.net.status!=='offline'||this.net.staysOnline){this.menuNetworkTransition=true;try{this.net.goOffline();this.link.frame(this.model,performance.now()/1000);}finally{this.menuNetworkTransition=false;}}this.netStarted=false;}
   private beginSession(){this.scene.setVisible(true);this.sessionStarted=true;if(!this.netStarted){this.netStarted=true;this.startNet();}this.paused=false;this.input.keyboard!.resetKeys();this.input.keyboard!.enabled=true;this.input.keyboard!.enableGlobalCapture();this.commandInput.clear();this.saveElapsed=0;}
-  private openMenu(){this.disconnectForMenu();this.scene.setVisible(false);this.building=false;this.mapOpen=false;this.buildMode=false;this.builder.hidden=true;this.mapWindow.hidden=true;document.body.classList.remove('chart-open');this.audio.setLoop('mine',0);this.audio.setLoop('tractor',0);this.input.keyboard!.resetKeys();this.input.keyboard!.enabled=false;this.input.keyboard!.disableGlobalCapture();this.menu.show(this.sessionStarted||Boolean(startModel));}
+  private openMenu(){this.setNetOpen(false);this.disconnectForMenu();this.scene.setVisible(false);this.building=false;this.mapOpen=false;this.buildMode=false;this.builder.hidden=true;this.mapWindow.hidden=true;document.body.classList.remove('chart-open');this.audio.setLoop('mine',0);this.audio.setLoop('tractor',0);this.input.keyboard!.resetKeys();this.input.keyboard!.enabled=false;this.input.keyboard!.disableGlobalCapture();this.menu.show(this.sessionStarted||Boolean(startModel));}
   private async returnToMenu(){
     const paused=this.paused;this.paused=true;this.input.keyboard!.enabled=false;this.input.keyboard!.disableGlobalCapture();
     try{const choice=await this.menu.confirmReturn();if(choice==='cancel'){this.paused=paused;return;}
@@ -771,6 +867,7 @@ class SpaceScene extends Phaser.Scene {
     if(this.settings.open)return;
     // Navigation/settings remain usable while paused, just like their keyboard equivalents.
     if(action==='settings'){this.settings.show();return;}
+    if(action==='multiplayer'){this.setNetOpen(!this.netOpen);return;}
     if(action==='map'){this.setMapOpen(!this.mapOpen);this.building=false;this.buildMode=false;return;}
     if(action==='shop'){if(!this.mapOpen&&this.model.atStation&&!this.model.dead)this.building=!this.building;return;}
     if(this.paused||this.building||this.mapOpen||this.model.dead)return;

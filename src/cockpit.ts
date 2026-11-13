@@ -2,7 +2,7 @@ import {cockpitIcon,frameMarkup} from './cockpitArt.ts';
 import { DANGER, ENEMIES, EXPLORATION, MODULES, WEAPON_TYPES } from './data.ts';
 import type { GameModel, Point } from './model.ts';
 import { clearLineOfSight } from './enemyAI.ts';
-export type CockpitAction='boost'|'overclock'|'shop'|'build'|'map'|'dock'|'settings';
+export type CockpitAction='boost'|'overclock'|'shop'|'build'|'map'|'dock'|'multiplayer'|'settings';
 const esc=(s:string)=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 const fmt=(n:number)=>Math.round(n).toLocaleString();
 /** Read-only presentation: a contact is acquired only under the cursor, in sensor range and with line of sight. */
@@ -22,6 +22,8 @@ export class Cockpit {
  private navigation!:HTMLElement;private target!:HTMLElement;private weapons!:HTMLElement;private commands!:HTMLElement;private contactCount!:HTMLElement;
  private commandButtons=new Map<CockpitAction,{button:HTMLButtonElement;status:HTMLElement}>();
  private compact=false;
+ /** One-line multiplayer status for the Multiplayer button (set by the scene each tick). */
+ netStatus='OFFLINE';
  private stationIcon='';
  setStationIcon(url:string){this.stationIcon=url;}
  constructor(session:HTMLElement,action:(action:CockpitAction)=>void){
@@ -45,7 +47,7 @@ this.root.querySelector('#cockpit-session')!.append(session);const help=document
   this.write(this.navigation,`<span><i>${cockpitIcon('nav')}</i>Sector: <b>${Math.floor(p.x/EXPLORATION.cell)}:${Math.floor(p.y/EXPLORATION.cell)}</b></span><span class="nav-position">X / Y <b>${fmt(p.x)} / ${fmt(p.y)}</b></span><span class="nav-threat ${model.atStation?'safe':''}">${model.atStation?'SAFE ZONE':esc(DANGER.labels[model.danger-1].toUpperCase())}</span><span class="nav-destination"><i>${cockpitIcon('destination')}</i>${esc(base.name)} · ${fmt(Math.hypot(base.x-p.x,base.y-p.y))} m</span>`);
   const tactical=tacticalReadout(model,aim);this.write(this.target,`${tactical.station&&this.stationIcon?`<img class="contact-icon" src="${this.stationIcon}" alt="">`:""}${tactical.target}`);this.write(this.weapons,tactical.weapons);this.contactCount.textContent=String(tactical.contacts).padStart(2,'0')+' CONTACTS';
   const engines=model.modules.filter(m=>m.kind==='engine'&&m.level>=2&&m.integrity>0),cooldown=Math.max(0,...engines.map(m=>m.boostCooldown??0));
-  const commands:[CockpitAction,string,string,string,boolean][]=[['boost','Shift','Burst',model.boostActive?'ACTIVE':engines.length?(model.boostReady?'READY':`${Math.ceil(cooldown)}s`):'L2 ENGINE',!engines.length],['overclock','C','Overclock',model.coreLevel<5?'L5 CORE':model.coreAbility.active>0?`${Math.ceil(model.coreAbility.active)}s ACTIVE`:model.coreAbility.cooldown>0?`${Math.ceil(model.coreAbility.cooldown)}s`:'READY',model.coreLevel<5],['shop','Q','Outfitter',model.atStation?'DOCKED':'AT FORGE',!model.atStation],['build','F','Build mode',buildMode?'ACTIVE':model.builder?'AVAILABLE':'BUILD MODULE',!model.builder],['map','M','Sector map','EXPLORED',false],['dock','E','Dock / repair','MINERALS',false],['settings','⚙','Settings','AUDIO / VFX',false]];
+  const commands:[CockpitAction,string,string,string,boolean][]=[['boost','Shift','Burst',model.boostActive?'ACTIVE':engines.length?(model.boostReady?'READY':`${Math.ceil(cooldown)}s`):'L2 ENGINE',!engines.length],['overclock','C','Overclock',model.coreLevel<5?'L5 CORE':model.coreAbility.active>0?`${Math.ceil(model.coreAbility.active)}s ACTIVE`:model.coreAbility.cooldown>0?`${Math.ceil(model.coreAbility.cooldown)}s`:'READY',model.coreLevel<5],['shop','Q','Outfitter',model.atStation?'DOCKED':'AT FORGE',!model.atStation],['build','F','Build mode',buildMode?'ACTIVE':model.builder?'AVAILABLE':'BUILD MODULE',!model.builder],['map','M','Sector map','EXPLORED',false],['dock','E','Dock / repair','MINERALS',false],['multiplayer','P','Multiplayer',this.netStatus,false],['settings','⚙','Settings','AUDIO / VFX',false]];
   // Keep native button identity across HUD ticks: replacing a pressed/focused node loses its click.
   for(const [action,key,label,status,locked] of commands){
    let entry=this.commandButtons.get(action);
@@ -54,7 +56,8 @@ this.root.querySelector('#cockpit-session')!.append(session);const help=document
     button.innerHTML=`<i class="command-icon">${cockpitIcon(action)}</i><span><kbd>${key}</kbd> ${label}<small></small></span>`;
     entry={button,status:button.querySelector('small')!};this.commandButtons.set(action,entry);this.commands.append(button);
    }
-   entry.button.disabled=(!['map','settings','shop'].includes(action)&&blocked)||(!['map','settings'].includes(action)&&(model.dead||locked));
+   entry.button.disabled=(!['map','settings','shop','multiplayer'].includes(action)&&blocked)||(!['map','settings','multiplayer'].includes(action)&&(model.dead||locked));
+   entry.button.dataset.state=action==='multiplayer'?(/^(ONLINE|LOBBY)/.test(status)?'online':/OFFLINE/.test(status)?'offline':'connecting'):'';
    entry.button.title=`${label} · ${status}`;
    if(entry.status.textContent!==status)entry.status.textContent=status;
   }

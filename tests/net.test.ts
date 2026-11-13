@@ -7,6 +7,7 @@ import { GameModel } from '../src/model.ts';
 import { enterWorld, returnHome, worldRef, travel } from '../src/sectors.ts';
 import { saveText } from '../src/persistence.ts';
 import { WORLD } from '../src/data.ts';
+import { sectorSeed } from '../src/sectorGrid.ts';
 
 const ship = (x: number, angle = 0): ShipState => ({ x, y: 0, vx: 0, vy: 0, angle, health: 80, maxHealth: 100, paint: 2 });
 const state = (id: string, s: ShipState, room = 'a') => JSON.stringify({ t: 'state', id, name: 'Nate', r: roomTag(room), s });
@@ -84,10 +85,18 @@ test('a guest flies their own ship into the host world and back home without los
   assert.ok(Math.hypot(visiting.player.x - host.player.x, visiting.player.y - host.player.y) < 600, 'arrives near the host');
   assert.equal(visiting.cargo.iron, 20); assert.equal(visiting.stored.crystal, 9);
   assert.match(visiting.sectorName, /Lobby world/);
-  assert.throws(() => travel(visiting, 'east'), /host leads/);
+  // Guests cross edges too: into the next cell of the host's grid, still a guest, with everything they carry.
+  const onward = travel(visiting, 'east');
+  assert.equal(onward.galaxy.away?.x, 1); assert.equal(onward.galaxy.away?.y, 0); assert.equal(onward.galaxy.away?.home, host.galaxy.home);
+  assert.equal(onward.seed, sectorSeed(host.galaxy.home, 1, 0), 'the same cell the host would reach');
+  assert.equal(onward.cargo.iron, 20); assert.equal(onward.stored.crystal, 9);
+  assert.ok(onward.galaxy.foreign?.[host.seed], 'the host sector copy is kept');
+  assert.equal(GameModel.fromSave(JSON.parse(saveText(onward))).galaxy.away?.seed, onward.seed, 'survives a save');
+  const back = travel(onward, 'west');
+  assert.equal(back.seed, host.seed); assert.equal(back.galaxy.away?.x, 0);
   visiting.player.x = WORLD.width - 21;
-  for (let i = 0; i < 60; i++) visiting.update(0.05, { x: 1, y: 0, aim: { x: WORLD.width, y: visiting.player.y }, fire: false, mine: false, dock: false });
-  assert.equal(visiting.sectorRequest, undefined, 'guests cannot cross edges on their own');
+  for (let i = 0; i < 60 && !visiting.sectorRequest; i++) visiting.update(0.05, { x: 1, y: 0, aim: { x: WORLD.width, y: visiting.player.y }, fire: false, mine: false, dock: false });
+  assert.equal(visiting.sectorRequest, 'east', 'holding thrust into an edge asks to cross'); visiting.sectorRequest = undefined;
   // Mine a rock in the visit; the guest's copy keeps it after going home and coming back.
   const rock = visiting.asteroids[0], rockId = rock.id; rock.amount = Math.max(1, rock.amount - 3); const left = rock.amount;
   const reloaded = GameModel.fromSave(JSON.parse(saveText(visiting)));
@@ -100,4 +109,31 @@ test('a guest flies their own ship into the host world and back home without los
   const again = enterWorld(home, worldRef(host));
   const kept = again.world.snapshot(again.asteroids).changes.find(([id]) => id === rockId);
   assert.equal(kept?.[1]?.amount, left);
+});
+
+test('staying online reconnects after a drop, backing off, until the pilot goes offline', async () => {
+  const opened: string[] = [];
+  type Listener = (event: { data?: unknown }) => void;
+  const sockets: { listeners: Record<string, Listener[]>; fire(type: string): void }[] = [];
+  const open = (url: string) => {
+    opened.push(url);
+    const socket = { readyState: 0, listeners: {} as Record<string, Listener[]>, sent: [] as string[],
+      addEventListener(type: string, listener: Listener) { (this.listeners[type] ??= []).push(listener); },
+      send(text: string) { this.sent.push(text); }, close() { this.fire('close'); },
+      fire(type: string) { for (const l of this.listeners[type] ?? []) l({}); } };
+    sockets.push(socket); return socket;
+  };
+  const net = new NetClient(open as never);
+  net.stayOnline('ws://relay.test', 'Ace');
+  assert.equal(opened.length, 1); assert.ok(net.staysOnline);
+  sockets[0].fire('close');
+  assert.equal(net.status, 'offline'); assert.match(net.note, /Retrying in 2s/);
+  await new Promise(r => setTimeout(r, 2100));
+  assert.equal(opened.length, 2, 'tried again');
+  sockets[1].fire('close');
+  assert.match(net.note, /Retrying in 4s/, 'backs off');
+  net.goOffline();
+  assert.ok(!net.staysOnline); assert.equal(net.note, 'Playing offline.');
+  await new Promise(r => setTimeout(r, 50));
+  assert.equal(opened.length, 2, 'no more attempts once offline');
 });
