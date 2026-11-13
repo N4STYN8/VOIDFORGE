@@ -12,7 +12,7 @@ import { ensureAsteroidGeometry,asteroidLocal,asteroidWorld, miningImpact, mineM
 export type { Asteroid } from './mining.ts';
 import type { EffectEvent } from './effectEvents.ts';
 import { edgeDirection, sectorKey, sectorLabel, type SectorDirection } from './sectorGrid.ts';
-import type { SharedSector, SharedShot, SharedTarget, RockState, EnemyRow } from './shared.ts';
+import type { SharedSector, SharedShot, SharedTarget, RockState, EnemyRow, BumpRow, PilotShot } from './shared.ts';
 import { collideAsteroid, collide, type Body } from './collisions.ts';
 import { PVP, SECTOR, WORLD, SHIP, WEAPONS, ENEMIES, ENEMY_AI, ENEMY_SPAWN, HORDE, FLEET, WAYPOINTS, OUTPOST, STRUCTURES, STRUCTURE_SPECIAL, DRONES, type StructureKind, DANGER, BOSS, HEARING, type EnemyDefinition, type EnemyWeapon, COLLISION, ORE_COMBAT, PATROL, MODULE_DURABILITY, REPAIR, MODULES, BUILD_GRID, BASES, BASE_RADIUS, EXPLORATION, RESOURCES, type EnemyKind, CORE, ROCKET, WEAPON_TYPES, SHIP_SYSTEMS, VFX, type WeaponKind, equipment, upgradeCost, type EquipmentStats, type EquipmentKind, type ModuleKind, type Resource } from './data.ts';
 export type ShipModule = { invested?:Minerals; x: number; y: number; kind: ModuleKind; level: number; cooldown: number; integrity: number; ability?:AbilityState; targetIds?: number[]; boostRemaining?:number; boostCooldown?:number };
@@ -40,7 +40,7 @@ export const starterModules = (): ShipModule[] => [{ x: 1, y: 0, kind: 'cannon',
 export type Input = { x: number; y: number; aim: Point; fire: boolean; mine: boolean; dock: boolean; boost?:boolean; overclock?:boolean; view?: { x: number; y: number; width: number; height: number } };
 export type Enemy = Point & { /** Shared sector: id of the remote pilot whose hit landed last (authority only, not saved meaningfully). */ lastHitBy?: string; /** Outpost raid target and party membership. */ raid?:number;raidParty?:boolean; armor?:number;accuracyScale?:number;maxHealth?:number;damageScale?:number;rewardScale?:number;meltdown?:number; meltdownDone?:boolean; faction?: import("./data.ts").FactionKind; cargo?: Partial<Record<Resource,number>>; industryClock?:number; horde?: boolean; populationExempt?: boolean; mount?: Point; phase2?: boolean; phase3?: boolean; cooldown3?: number; surge?: number; surgeTimer?: number; empTimer?: number; empCharge?: number; state?: EnemyState; lastSeen?: Point; memory?: number; clock?: number; retreat?: number; retreated?: boolean; reposition?: number; sidestep?: number; stuck?: number; px?: number; py?: number; shield?: number; shieldDelay?: number; cooldown2?: number; charge?: { t: number; angle: number; weapon: number }; sx?: number; sy?: number; parent?: number; home?: Point; populationRegion?:string;populationClass?:'normal'|'elite';populationPatrol?:Point & {id:number;angle:number};rewarded?:boolean; empRecovery?:number;disabledFor?: number; vx?: number; vy?: number; impactCooldown?: number; kind?: EnemyKind; squad?: number; slot?: number; patrolAngle?: number; id: number; health: number; cooldown: number; angle: number };
 export type Drop = Point & {vx?:number;vy?:number; id: number; ore: Resource; amount: number };
-export type Bullet = Point & { id: number; vx: number; vy: number; life: number; enemy: boolean; damage?: number; homing?: number; rocket?: boolean; splash?: number; weapon?: WeaponKind; level?: number; attackerId?:number; penetrating?:number; hitIds?:number[]; enhanced?:boolean; guided?:boolean; ultimate?:boolean;armorPiercing?:boolean;pierceFalloff?:number;fragment?:boolean; age?:number; /** Fired by an outpost turret: survives off screen like hostile fire. */ turret?:boolean };
+export type Bullet = Point & { id: number; vx: number; vy: number; life: number; enemy: boolean; damage?: number; homing?: number; rocket?: boolean; splash?: number; weapon?: WeaponKind; level?: number; attackerId?:number; penetrating?:number; hitIds?:number[]; enhanced?:boolean; guided?:boolean; ultimate?:boolean;armorPiercing?:boolean;pierceFalloff?:number;fragment?:boolean; age?:number; /** Fired by an outpost turret: survives off screen like hostile fire. */ turret?:boolean; /** Another pilot's shot, shown here only: rocks stop it, it never damages anything in this simulation. */ remote?:boolean };
 const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 export class GameModel {
@@ -62,6 +62,8 @@ export class GameModel {
   get sectorName() { const away = this.galaxy.away, link = this.galaxy.links?.[sectorKey(this.galaxy.x, this.galaxy.y)]; if (!away && link) return `${link.name ?? 'Another pilot'}'s sector`; return away ? `Lobby world · ${away.x === 0 && away.y === 0 ? 'host home sector' : sectorLabel(away.x, away.y)}` : sectorLabel(this.galaxy.x, this.galaxy.y); }
   /** Other pilots in this sector, for the radar and compass. Presentation only: set by the scene, never saved. */
   pilots: { x: number; y: number; name: string; hostile?: boolean }[] = [];
+  /** Shared sector: the sector authority's outposts, drawn here for show only (never saved, never usable, so their minerals cannot be copied). */
+  visitorOutposts: Outpost[] = [];
   /** Shared-sector hooks while other pilots are here (see shared.ts). Undefined in single-player. Never saved. */
   shared?: SharedSector;
   /** True after another pilot destroyed this ship: it must be rebuilt at the home station (sectors.ts rebuildAtHome). */
@@ -1073,6 +1075,11 @@ export class GameModel {
       if (this.shared?.role === 'authority') this.shared.shots.push({ x: bullet.x, y: bullet.y, vx: bullet.vx, vy: bullet.vy, life: bullet.life, damage: bullet.damage ?? 0, weapon: bullet.weapon, homing: bullet.homing, rocket: bullet.rocket || undefined, splash: bullet.splash });
     }
   }
+  /** Follower: renews depleted ore the same seeded way as the authority (its enemies come from the authority). */
+  private renewOre(view:Input['view']){
+    const blockers=[{...this.player,radius:SHIP.radius},...this.modules.map(m=>({...this.modulePoint(m),radius:12})),...this.outposts.map(o=>({...outpostCenter(o),radius:outpostRadius(o)+40}))];
+    this.world.replenish(this.player,this.asteroids,view,blockers);
+  }
   private updatePopulation(view:Input['view'],regenerate=true){
     const blockers=[{...this.player,radius:SHIP.radius},...this.modules.map(m=>({...this.modulePoint(m),radius:12})),...this.enemies.map(e=>({...e,radius:ENEMIES[e.kind??'raider'].radius})),...this.outposts.map(o=>({...outpostCenter(o),radius:outpostRadius(o)+40}))];
     if(regenerate)this.world.replenish(this.player,this.asteroids,view,blockers);
@@ -1090,7 +1097,6 @@ export class GameModel {
   private updateSectorEdge(dt: number, thrust: Point) {
     const direction = this.dead ? undefined : edgeDirection(this.player, thrust);
     if (!direction) { this.sectorHold = 0; return; }
-    if (this.galaxy.away) { this.sectorHold = 0; this.message = 'In a lobby the host leads sector travel. Leave the lobby to fly on alone.'; return; }
     this.sectorHold += dt;
     if (this.sectorHold >= SECTOR.hold) { this.sectorRequest = direction; this.sectorHold = 0; }
     else this.message = `Sector edge: keep thrusting ${direction} to cross (${(SECTOR.hold - this.sectorHold).toFixed(1)}s).`;
@@ -1165,6 +1171,38 @@ export class GameModel {
       this.bullets.push({ id: this.id++, x: shot.x, y: shot.y, vx: shot.vx, vy: shot.vy, life: shot.life, enemy: true, damage: shot.damage, weapon: shot.weapon as WeaponKind | undefined, homing: shot.homing, rocket: shot.rocket, splash: shot.splash });
     }
   }
+  /** Other pilots' own shots: drawn flying here and stopped by rocks, without damaging anything. */
+  applyPilotShots(shots: PilotShot[]) {
+    for (const shot of shots) {
+      if (this.bullets.filter(b => b.remote).length >= 192) break;
+      const weapon = shot.weapon && shot.weapon in WEAPON_TYPES ? shot.weapon as WeaponKind : undefined;
+      this.bullets.push({ id: this.id++, x: shot.x, y: shot.y, vx: shot.vx, vy: shot.vy, life: shot.life, enemy: false, remote: true, weapon, level: shot.level, rocket: shot.rocket });
+      const angle = Math.atan2(shot.vy, shot.vx), near = dist(shot, this.player) < 900;
+      this.effect({ type: 'muzzle', x: shot.x, y: shot.y, angle, weapon, level: shot.level, color: weapon ? WEAPON_TYPES[weapon].color : 0xfff1a8, silent: !near });
+    }
+  }
+  private updateRemoteBullet(b: Bullet, dt: number) {
+    const start = { x: b.x, y: b.y }; b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
+    for (const asteroid of this.asteroids) {
+      if (segmentCircleHit(start, b, asteroid, asteroid.radius + 4) === undefined) continue;
+      const local = segmentPolygonHit(ensureAsteroidGeometry(asteroid), asteroidLocal(asteroid, start), asteroidLocal(asteroid, b));
+      if (!local) continue;
+      const point = asteroidWorld(asteroid, local);
+      b.life = 0; this.effect({ type: 'impact', ...point, radius: b.rocket ? 22 : 10, weapon: b.weapon, color: b.weapon ? WEAPON_TYPES[b.weapon].color : 0xfff1a8 });
+      return;
+    }
+  }
+  /** Rocks another pilot's ship knocked: their motion, so the rock moves the same way here. */
+  applyBumps(rows: BumpRow[]) {
+    for (const [id, x, y, vx, vy] of rows) {
+      const rock = this.asteroids.find(a => a.id === id); if (!rock || rock.motion) continue;
+      rock.x = clamp(x, rock.radius, WORLD.width - rock.radius); rock.y = clamp(y, rock.radius, WORLD.height - rock.radius); rock.vx = vx; rock.vy = vy;
+    }
+  }
+  /** Follower: keeps this sector's clock with the authority's, so moving belts and renewals line up. */
+  applyClock(time: number) {
+    if (Number.isFinite(time) && Math.abs(time - this.world.time) > 0.5) this.world.time = time;
+  }
   /** Authority: a hit another pilot landed on one of this sector's enemies. */
   applyRemoteHit(enemyId: number, damage: number, by: string, pierce = false) {
     const e = this.enemies.find(other => other.id === enemyId && other.health > 0);
@@ -1179,12 +1217,23 @@ export class GameModel {
   applyRock(state: RockState) {
     const rock = this.asteroids.find(a => a.id === state.id);
     if (state.gone) {
+      this.pendingRocks.delete(state.id);
       if (rock) { this.emitDebris(rock, { x: 1, y: -1 }, RESOURCES[rock.ore].color, rock.id); this.asteroids = this.asteroids.filter(a => a !== rock); this.world.destroy(rock.id, rock); }
+      // Out of this pilot's streaming range: still gone from this sector, so nobody can mine it again here.
+      else try { this.world.destroy(state.id); } catch { /* not a rock this world knows */ }
       return;
     }
-    if (!rock) return;
+    // Not streamed in here yet: kept until it is, so ore another pilot took stays taken.
+    if (!rock) { this.pendingRocks.delete(state.id); this.pendingRocks.set(state.id, state); if (this.pendingRocks.size > 4096) this.pendingRocks.delete(this.pendingRocks.keys().next().value!); return; }
+    this.pendingRocks.delete(state.id);
     Object.assign(rock, { x: state.x, y: state.y, vx: state.vx, vy: state.vy, amount: state.amount, health: state.health, radius: state.radius });
     if (state.geometry) rock.geometry = structuredClone(state.geometry);
+  }
+  /** Remote rock changes waiting for their rock to stream in. */
+  private pendingRocks = new Map<number, RockState>();
+  private applyPendingRocks() {
+    if (!this.pendingRocks.size) return;
+    for (const rock of this.asteroids) { const state = this.pendingRocks.get(rock.id); if (state) this.applyRock(state); }
   }
   /** Another pilot's shots hit this ship. Allies, ships inside a station ring and the dead take nothing; each attacker is capped per second. */
   applyPvpHit(from: string, name: string, damage: number, ally: boolean) {
@@ -1278,7 +1327,7 @@ export class GameModel {
     });
     for (const rock of rocks) {
       const speed = collideAsteroid(playerBody, rock, rock.geometry!, COLLISION.restitution);
-      if (speed !== undefined) this.impact(speed, 'Asteroid', miningImpact(rock, playerBody, rock));
+      if (speed !== undefined) { this.impact(speed, 'Asteroid', miningImpact(rock, playerBody, rock)); this.shared?.bumpedRocks.add(rock.id); }
     }
     // Moving ore can push other deposits rather than passing through them.
     const buckets = new Map<string, number[]>();
@@ -1317,9 +1366,22 @@ export class GameModel {
       a.vx = a.x === rock.x ? rock.vx : -rock.vx * COLLISION.restitution;
       a.vy = a.y === rock.y ? rock.vy : -rock.vy * COLLISION.restitution;
     }
+    // Other pilots are solid. Each pilot resolves only its own ship against the others' latest poses, so both
+    // sides separate and bounce. Allies and ships in a station ring take no damage from it.
+    if (this.shared && !this.dead) for (const other of this.shared.targets) {
+      if (other.dead) continue;
+      const body: Body = { x: other.x, y: other.y, vx: other.vx, vy: other.vy, radius: other.radius ?? SHIP.radius, mass: playerBody.mass };
+      const ram = { ...playerBody, radius: this.pilotRadius };
+      const speed = collide(ram, body, COLLISION.restitution);
+      if (speed === undefined) continue;
+      playerBody.x = ram.x; playerBody.y = ram.y; playerBody.vx = ram.vx; playerBody.vy = ram.vy;
+      if (!this.shared.allies.has(other.id) && !this.atStation && !this.safeAt(other)) this.impact(speed, 'Ship', other);
+    }
     p.x = clamp(playerBody.x, 20, WORLD.width - 20); p.y = clamp(playerBody.y, 20, WORLD.height - 20);
     p.vx = p.x === playerBody.x ? playerBody.vx : 0; p.vy = p.y === playerBody.y ? playerBody.vy : 0;
   }
+  /** The ship's reach for pilot-to-pilot contact, from its block layout: the same rule other pilots use for this ship. */
+  get pilotRadius() { return pilotRadius(this.modules.filter(m => m.integrity > 0).map(m => [m.x, m.y])); }
   private enemyDestroyed(e: Enemy) {
     const def = ENEMIES[e.kind ?? 'raider'];
     if(e.rewarded)return;
@@ -1775,7 +1837,7 @@ export class GameModel {
     }
     this.resolveContacts(dt);
     this.revealExploration();
-    if (this.streaming) this.asteroids = this.world.activate(p, this.asteroids);
+    if (this.streaming) { this.asteroids = this.world.activate(p, this.asteroids); this.applyPendingRocks(); }
     for (const asteroid of this.asteroids) if (this.isExplored(asteroid)) this.world.surveyed.set(asteroid.id, { id: asteroid.id, x: asteroid.x, y: asteroid.y, ore: asteroid.ore });
     for(const pulse of this.empPulses){
       pulse.radius=Math.min(pulse.maxRadius,pulse.radius+WEAPON_TYPES.emp.speed*dt);
@@ -1799,6 +1861,7 @@ export class GameModel {
     this.novaFields=this.novaFields.filter(field=>(field.life-=dt)>0);
     for (const b of [...this.bullets]) {
       if (b.life <= 0) continue;
+      if (b.remote) { this.updateRemoteBullet(b, dt); continue; }
       if(b.guided||b.fragment){b.age=(b.age??0)+dt;if(b.age>(b.guided?SPECIAL.rocket.lifetime:SPECIAL.flak.lifetime)){b.life=0;continue;}}
       if(b.guided){
         const target=this.enemies.filter(e=>e.health>0&&dist(e,b)<=SPECIAL.rocket.range).sort((a,c)=>dist(a,b)-dist(c,b))[0];
@@ -1877,7 +1940,7 @@ export class GameModel {
     });
     this.minedTarget=this.miningLinks.length?remainingOre.get(this.miningLinks[0].targetId):undefined;this.miningPoint=this.miningLinks[0]?.to;
     // A follower's enemies belong to the sector authority, so it spawns none of its own.
-    this.spawnTimer-=dt;if(this.spawnTimer<=0){if(this.shared?.role!=='follower')this.updatePopulation(input.view);this.spawnTimer=POPULATION.tick;}
+    this.spawnTimer-=dt;if(this.spawnTimer<=0){if(this.shared?.role!=='follower')this.updatePopulation(input.view);else this.renewOre(input.view);this.spawnTimer=POPULATION.tick;}
 
     if (this.dead) {
       this.deaths++;
@@ -1897,3 +1960,6 @@ export type GameSave = {
   bullets: Bullet[]; detachedModules: GameModel['detachedModules']; kills: number; outposts?: Outpost[]; shipName?: string; shipPaint?: number; hangar?: StoredShip[]; waypoints?: Waypoint[]; horde?: GameModel['horde']; galaxy?: Galaxy; rebuildDue?: boolean; deaths: number; id: number; rng: number;
   spawnTimer: number; shieldDelay: number; impactTimer: number;
 };
+
+/** Reach of a ship for pilot-to-pilot contact, from its block offsets (cells from the core). */
+export function pilotRadius(blocks: [number, number][]) { return 18 + 16 * Math.max(0, ...blocks.map(([x, y]) => Math.max(Math.abs(x), Math.abs(y)))); }

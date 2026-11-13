@@ -119,3 +119,52 @@ test('ship state reaches only pilots within interest range, and /stats reports t
     a.close(); b.close();
   } finally { await relay.close(); }
 });
+
+test('open lobbies are listed with the online count; private ones only join by code; renames reach the lobby', async () => {
+  const relay = await startRelay({ port: 0, host: '127.0.0.1' });
+  try {
+    const a = await client(relay, 'Ace'), b = await client(relay, 'Bea'), c = await client(relay, 'Cy');
+    a.send({ t: 'profile', home: 'ace-home', power: 42 });
+    a.send({ t: 'create', open: true });
+    const open = await a.next('lobby');
+    assert.equal(open.open, true);
+    b.send({ t: 'create' });
+    const hidden = await b.next('lobby');
+    assert.equal(hidden.open, undefined, 'private by default on the wire');
+    c.send({ t: 'lobbies' });
+    let list = await c.next('lobbies');
+    assert.equal(list.online, 3);
+    assert.deepEqual(list.list, [{ code: open.code, host: 'Ace', members: 1, power: 42 }], 'only the open lobby, with its host progression');
+    c.send({ t: 'join', code: hidden.code });
+    assert.equal((await c.next('lobby', m => m.code === hidden.code)).members.length, 2, 'a private lobby still joins by code');
+    // The host can make it open, and renames show in the member list.
+    b.send({ t: 'open', open: true });
+    assert.equal((await b.next('lobby', m => m.open === true)).code, hidden.code);
+    c.send({ t: 'hello', v: NET.version, name: 'Cyrus' });
+    assert.ok((await b.next('lobby', m => m.members.some(p => p.name === 'Cyrus'))));
+    a.send({ t: 'lobbies' });
+    list = await a.next('lobbies');
+    assert.deepEqual(list.list.map(l => [l.host, l.members]), [['Bea', 2], ['Ace', 1]], 'fullest first');
+    // Only the host may change visibility.
+    c.send({ t: 'open', open: false });
+    a.send({ t: 'lobbies' });
+    assert.equal((await a.next('lobbies')).list.length, 2);
+    a.close(); b.close(); c.close();
+  } finally { await relay.close(); }
+});
+
+test('a destroyed pilot never runs a room: enemies pass to a live pilot and back after the rebuild', async () => {
+  const relay = await startRelay({ port: 0, host: '127.0.0.1' });
+  try {
+    const owner = await client(relay, 'Owner'), guest = await client(relay, 'Guest');
+    owner.send({ t: 'sector', world: world('shared-room'), owner: true });
+    await owner.next('room', m => m.authority === owner.id);
+    guest.send({ t: 'sector', world: world('shared-room') });
+    await guest.next('room', m => m.members === 2 && m.authority === owner.id);
+    owner.send({ t: 'state', s: { ...ship(0), health: 0, dead: true } });
+    await guest.next('room', m => m.authority === guest.id);
+    owner.send({ t: 'state', s: ship(0) });
+    await guest.next('room', m => m.authority === owner.id);
+    owner.close(); guest.close();
+  } finally { await relay.close(); }
+});

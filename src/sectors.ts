@@ -44,7 +44,7 @@ function stash(galaxy: Galaxy, save: GameSave) {
  * before is generated from its grid seed, so the same neighbour always appears.
  */
 export function travel(model: GameModel, direction: SectorDirection, neighbour?: { world: WorldRef; name?: string } | null): GameModel {
-  if (model.galaxy.away) throw new Error('the lobby host leads sector travel');
+  if (model.galaxy.away) return travelAway(model, direction);
   const save = model.toSave(), galaxy = structuredClone(model.galaxy), step = SECTOR_STEPS[direction];
   stash(galaxy, save);
   const x = galaxy.x + step.dx, y = galaxy.y + step.dy, key = sectorKey(x, y);
@@ -55,6 +55,42 @@ export function travel(model: GameModel, direction: SectorDirection, neighbour?:
   delete galaxy.sectors[key];
   const next = arrive(save, target, { ...galaxy, x, y }, entryPoint(direction, save.player));
   next.message = `Entered ${next.sectorName}.`;
+  return next;
+}
+
+/**
+ * A lobby guest crossing an edge of the host's world: they move to the neighbouring cell of the host's grid
+ * and stay a guest there (the same cell the host would reach, so the lobby meets up again). The cell left
+ * behind is kept among their copies of other players' sectors.
+ */
+function travelAway(model: GameModel, direction: SectorDirection): GameModel {
+  const save = model.toSave(), galaxy = structuredClone(model.galaxy), away = galaxy.away!, step = SECTOR_STEPS[direction];
+  stash(galaxy, save);
+  const x = away.x + step.dx, y = away.y + step.dy, seed = sectorSeed(away.home, x, y);
+  galaxy.away = { ...away, x, y, seed };
+  const own = away.home === galaxy.home ? galaxy.sectors[sectorKey(x, y)] : undefined;
+  const target = galaxy.foreign?.[seed] ?? own ?? generated(seed);
+  if (galaxy.foreign) delete galaxy.foreign[seed];
+  const next = arrive(save, target, galaxy, entryPoint(direction, save.player));
+  next.message = `Entered ${next.sectorName}.`;
+  return next;
+}
+
+/**
+ * Replaces this pilot's copy of the current sector with the sector authority's copy, keeping the pilot's
+ * ship where it is. Only world-bound fields come over. The authority's pickups, enemies and shots are
+ * dropped (pickups and loose ship parts are personal; enemies and shots arrive from the authority anyway), and its outposts
+ * become `visitorOutposts`, for show only, so no minerals can be copied out of them. The pilot's own
+ * outposts and explored cells in this sector are kept.
+ */
+export function adoptWorld(model: GameModel, world: SectorWorld): GameModel {
+  if (world.seed !== model.seed) return model;
+  const save = model.toSave(), pilot = Object.fromEntries(PILOT_KEYS.map(k => [k, save[k]]));
+  const explored = [...new Set([...save.explored, ...(Array.isArray(world.explored) ? world.explored : [])])];
+  const next = GameModel.fromSave({ ...world, ...pilot, explored, outposts: save.outposts, drops: save.drops, detachedModules: save.detachedModules, waypoints: save.waypoints, enemies: [], squads: [], bullets: [], empPulses: [], novaFields: [], horde: undefined,
+    player: { ...save.player }, id: Math.max(save.id, Number(world.id) || 0), galaxy: structuredClone(model.galaxy) } as unknown as GameSave);
+  next.visitorOutposts = (Array.isArray(world.outposts) ? world.outposts : []).map(o => ({ ...structuredClone(o), stored: undefined, drones: [], energy: 0 }));
+  next.shared = model.shared; next.pilots = model.pilots; next.message = model.message;
   return next;
 }
 

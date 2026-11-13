@@ -11,9 +11,10 @@ import { SharedLink } from '../src/sharedLink.ts';
  * With no code (or "-") it creates a lobby and prints the invite code; a browser joins with
  * http://localhost:5173/?relay=ws://127.0.0.1:8787&join=CODE. `--raiders` adds a raider pack 900 units
  * from the station for testing shared enemies. `--visitor` joins no lobby and is not the sector owner (a
- * stranger for PvP tests, carrying 20 iron); `--orbit=N` sets the circle radius. It never touches browser saves.
+ * stranger for PvP tests, carrying 20 iron); `--orbit=N` sets the circle radius; `--fire` shoots at the nearest other
+ * pilot (outside the station ring, so use a large orbit). It never touches browser saves.
  */
-const args = process.argv.slice(2), raiders = args.includes('--raiders'), visitor = args.includes('--visitor'), orbit = Number(args.find(a => a.startsWith('--orbit='))?.slice(8) ?? 160), [url = 'ws://127.0.0.1:8787', code = '-', seed = 'relay-bot-world'] = args.filter(a => !a.startsWith('--'));
+const args = process.argv.slice(2), fire = args.includes('--fire'), raiders = args.includes('--raiders'), visitor = args.includes('--visitor'), orbit = Number(args.find(a => a.startsWith('--orbit='))?.slice(8) ?? 160), [url = 'ws://127.0.0.1:8787', code = '-', seed = 'relay-bot-world'] = args.filter(a => !a.startsWith('--'));
 const model = new GameModel(seed), net = new NetClient(), link = new SharedLink(net, () => model), centre = { x: model.bases[0].x, y: model.bases[0].y }, clock = () => performance.now() / 1000, start = clock();
 net.onNote = text => console.log(`[bot] ${text}`);
 net.connect(url, visitor ? 'Stranger' : 'Test Pilot');
@@ -22,7 +23,8 @@ if (raiders) for (let i = 0; i < 3; i++) (model as unknown as { spawnEnemy(kind:
 let announced = '', reported = 0;
 setInterval(() => {
   const now = clock(), angle = (now - start) * 0.4;
-  model.update(0.05, { x: 0, y: 0, aim: { x: centre.x, y: centre.y - 500 }, fire: false, mine: false, dock: false });
+  const target = (model.shared?.targets ?? []).slice().sort((a, b) => Math.hypot(a.x - model.player.x, a.y - model.player.y) - Math.hypot(b.x - model.player.x, b.y - model.player.y))[0];
+  model.update(0.05, { x: 0, y: 0, aim: target ? { x: target.x, y: target.y } : { x: centre.x, y: centre.y - 500 }, fire: fire && Boolean(target), mine: false, dock: false });
   if (!model.dead) Object.assign(model.player, { x: centre.x + Math.cos(angle) * orbit, y: centre.y + Math.sin(angle) * orbit, vx: -Math.sin(angle) * orbit * 0.4, vy: Math.cos(angle) * orbit * 0.4, angle: angle + Math.PI / 2 });
   net.setSector({ ...worldRef(model), spot: [Math.round(model.player.x), Math.round(model.player.y)] }, !visitor);
   const p = model.player;
