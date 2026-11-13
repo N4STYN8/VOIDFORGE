@@ -75,3 +75,7 @@ Enemy regions span 3,600 units and derive low/medium/high threat from seeded fie
 Boss encounter content is not implemented. The persistent encounter ledger is ready to gate repeat defeats for 20–30 minutes and grant a unique progression reward only once; it does not create new bosses.
 
 Starter weapon damage is now 12/11/45/27/39/4/9 for autocannon/pulse/rail/plasma/missile/flak pellet/EMP. Higher levels keep their established damage. Weapon asteroid impulse is 0.3 per damage divided by rock mass. Additional seeded belts and clusters add up to 32 candidate deposits per chunk through the existing safe population scheduler, preserving original geography and depleted rocks.
+
+## Moving fields
+Worlds contain static formations, drifting belts, elliptical orbital belts and looping flowing belts. Shared motion follows saved game time, with small individual variation and slow rotation. Large-belt speed parameters range 2–8 units/s; smaller formations 5–12. About one fifth of eligible independent rocks drift at 1.5–3.5 units/s. Starter deposits and unsafe paths near bases/world edges stay protected.
+Mining and collisions use each asteroid's current rotated polygon. Mineral drops inherit 50% of rock velocity; tractors pull them normally. Depletion stays finite and replacement deposits join their parent's current motion. Saves preserve epoch, path parameters, mining and physical offsets; unloaded belts catch up analytically. Existing worlds begin motion at their saved epoch, not at an arbitrary advanced phase. Paused menus/maps do not advance game time.

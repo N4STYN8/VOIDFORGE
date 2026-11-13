@@ -54,6 +54,8 @@ export class EnemyPopulation {
   let arrivals=0;
   for(const key of keys){
    const r=this.region(key,now);
+   r.threat=threatAt(this.spec,key);
+   if(key!==enemyRegionKey(this.spec.bases[0])){const moving=asteroids.filter(a=>a.motion&&enemyRegionKey(a)===key);if(moving.length>=12){const rare=moving.filter(a=>a.ore==='crystal'||a.ore==='radioactive').length;if(rare>=8)r.threat='high';else if(r.threat==='low')r.threat='medium';}}
    // Existing sleeping actors count against targets and only wake at safe, offscreen positions.
    for(const e of [...r.sleeping])if(active.length<POPULATION.enemyBudget&&clear(e,ENEMIES[e.kind??'raider'].radius)){
     active.push(e);r.sleeping=r.sleeping.filter(other=>other.id!==e.id);

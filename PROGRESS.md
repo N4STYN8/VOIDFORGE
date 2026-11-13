@@ -1,5 +1,14 @@
 # Progress
 
+## Latest — moving asteroid belts and gentle ambient drift
+- Seeded static, drifting, elliptical orbital and looping figure-eight flowing belts. Shared motion is analytical in saved game time; individual bounded variation and slow independent rotation keep formations cohesive.
+- About 20% of eligible non-belt rocks have sustained 1.5–3.5 units/s drift; starter deposits/base approaches stay protected. Moving belt speeds are configurable (large 2–8, small 5–12 parameter ranges).
+- Mining/deformation, swept projectiles, visibility and ship contacts use rotation-aware local coordinates. Drops inherit half rock velocity and remain tractor-collectible. Enemy movement/patrols locally steer around moving rocks; rich moving groups raise regional threat.
+- Streaming inversely queries belt motion, filters current-space actors, deduplicates IDs, prioritizes nearby rocks under budget and retains sparse mining/contact overrides. Cached source chunks and a two-second activation cadence avoid distant physics simulation.
+- Regeneration preserves parent belt identity and joins its current motion at safe offscreen locations. Optional v1 metadata stores belt definitions/epoch, per-rock offsets/rotation and drop velocity; old worlds start motion at their saved epoch without position jumps.
+- 114 tests pass; production build passes. Browser stress: 296 moving rocks, 36 enemies and 33-module mining/combat ship measured ~60 FPS (maximum observed frame ~26 ms), with no runtime errors. Reload preserved elapsed motion. A second two-hour world with 16 belts, 683 active rocks (497 belt members), 36 enemies and the same ship also measured ~60 FPS (max observed frame ~32 ms).
+- Next: human playtest of belt pacing/streaming and resource-rich patrol pressure. Boss encounter content remains queued; no new boss system was introduced.
+
 ## Latest — gentler gunfire, weaker starters, denser space and stable outfitter scrolling
 - Weapon asteroid impulse reduced another 90% (3→0.3), resting-rock shot speed cap 120→12. Repeated volleys cannot accumulate high speed; existing ship/collision momentum is preserved.
 - L1 damage reduced ~40% across all seven weapons: cannon 12, pulse 11, rail 45, plasma 27, missile 39, flak 4/pellet, EMP 9. Tiers 2–5 and firing intervals unchanged.

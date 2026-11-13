@@ -1,5 +1,6 @@
+import { asteroidLocal } from './mining.ts';
 import { closestBoundary, containsPoint, type AsteroidGeometry } from './asteroidGeometry.ts';
-export type Body = { x: number; y: number; vx: number; vy: number; radius: number; mass: number };
+export type Body = { x: number; y: number; vx: number; vy: number; radius: number; mass: number;rotation?:number };
 
 // Circle contact: separate overlap and exchange normal momentum.
 // Returns closing speed; existing overlap at rest never causes impact damage.
@@ -23,13 +24,14 @@ export function collide(a: Body, b: Body, restitution: number): number | undefin
 
 export function collideAsteroid(player: Body, rock: Body, geometry: AsteroidGeometry, restitution: number): number | undefined {
   if (Math.hypot(player.x - rock.x, player.y - rock.y) >= player.radius + rock.radius) return;
-  const local = { x: player.x - rock.x, y: player.y - rock.y };
+  const local = asteroidLocal(rock,player);
   const nearest = closestBoundary(local, geometry.vertices), inside = containsPoint(local, geometry.vertices);
   if (!inside && nearest.distance >= player.radius) return;
   let nx = inside ? local.x - nearest.point.x : nearest.point.x - local.x;
   let ny = inside ? local.y - nearest.point.y : nearest.point.y - local.y;
   const length = Math.hypot(nx, ny);
   if (length > 1e-8) { nx /= length; ny /= length; } else { nx = 1; ny = 0; }
+  const angle=rock.rotation??0,c=Math.cos(angle),s=Math.sin(angle),worldX=nx*c-ny*s;ny=nx*s+ny*c;nx=worldX;
   const overlap = player.radius + (inside ? nearest.distance : -nearest.distance) + 0.01;
   const inverseP = 1 / player.mass, inverseR = 1 / rock.mass, total = inverseP + inverseR;
   player.x -= nx * overlap * inverseP / total; player.y -= ny * overlap * inverseP / total;

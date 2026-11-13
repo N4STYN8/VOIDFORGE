@@ -1,11 +1,12 @@
+import { advanceBelt,spinFor,BELT_MOTION } from './beltMotion.ts';
 import { EnemyPopulation,type EnemyPopulationSnapshot } from './enemyPopulation.ts';
 import { POPULATION } from './populationConfig.ts';
 import { SPECIAL } from './abilityConfig.ts';
 import { freshAbility,state,tick,activate,onFire,onHit,onMiningHit,onDamageTaken,onBoost,onEnergyDeficit,onOverheat,type AbilityState } from './abilities.ts';
 import { ChunkWorld, SeedRandom, randomWorldSeed, type WorldSnapshot } from './world.ts';
 import { segmentPolygonHit, segmentCircleHit } from './asteroidGeometry.ts';
-import { clearLineOfSight } from './enemyAI.ts';
-import { ensureAsteroidGeometry, miningImpact, mineMaterial, type Asteroid } from './mining.ts';
+import { clearLineOfSight,avoidMovingOre } from './enemyAI.ts';
+import { ensureAsteroidGeometry,asteroidLocal,asteroidWorld, miningImpact, mineMaterial, type Asteroid } from './mining.ts';
 export type { Asteroid } from './mining.ts';
 import type { EffectEvent } from './effectEvents.ts';
 import { collideAsteroid, collide, type Body } from './collisions.ts';
@@ -14,7 +15,7 @@ export type ShipModule = { x: number; y: number; kind: ModuleKind; level: number
 export type Point = { x: number; y: number };
 export type Input = { x: number; y: number; aim: Point; fire: boolean; mine: boolean; dock: boolean; boost?:boolean; overclock?:boolean; view?: { x: number; y: number; width: number; height: number } };
 export type Enemy = Point & { populationRegion?:string;populationClass?:'normal'|'elite';populationPatrol?:Point & {id:number;angle:number};rewarded?:boolean; disabledFor?: number; vx?: number; vy?: number; impactCooldown?: number; kind?: EnemyKind; squad?: number; slot?: number; patrolAngle?: number; id: number; health: number; cooldown: number; angle: number };
-export type Drop = Point & { id: number; ore: Resource; amount: number };
+export type Drop = Point & {vx?:number;vy?:number; id: number; ore: Resource; amount: number };
 export type Bullet = Point & { id: number; vx: number; vy: number; life: number; enemy: boolean; damage?: number; rocket?: boolean; splash?: number; weapon?: WeaponKind; level?: number; attackerId?:number; penetrating?:number; hitIds?:number[]; enhanced?:boolean; guided?:boolean; fragment?:boolean; age?:number };
 const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
@@ -380,15 +381,25 @@ export class GameModel {
   private resolveContacts(dt: number) {
     const p = this.player;
     const playerBody: Body = { ...p, radius: SHIP.radius, mass: this.shipMass / SHIP_SYSTEMS.referenceMass };
-    const moving = this.asteroids.filter(a => Math.abs(a.vx) + Math.abs(a.vy) > 0.1);
-    // Sleeping deposits far from ships and moving ore need no contact work.
-    const active = this.asteroids.filter(a => (Math.abs(a.x - p.x) < 500 && Math.abs(a.y - p.y) < 500) || this.enemies.some(e => Math.abs(a.x - e.x) < 140 && Math.abs(a.y - e.y) < 140) || moving.some(other => Math.abs(a.x - other.x) < 128 && Math.abs(a.y - other.y) < 128));
+    const moving = this.asteroids.filter(a => a.motion || Math.abs(a.vx) + Math.abs(a.vy) > 0.1);
+    const movingCells=new Set(moving.map(a=>`${Math.floor(a.x/128)},${Math.floor(a.y/128)}`));
+    const nearMoving=(a:Asteroid)=>{const x=Math.floor(a.x/128),y=Math.floor(a.y/128);for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++)if(movingCells.has(`${x+dx},${y+dy}`))return true;return false;};
+    // Spatial buckets keep ambient drift from introducing an all-pairs contact scan.
+    const active = this.asteroids.filter(a => (Math.abs(a.x - p.x) < 500 && Math.abs(a.y - p.y) < 500) || this.enemies.some(e => Math.abs(a.x - e.x) < 140 && Math.abs(a.y - e.y) < 140) || nearMoving(a));
     const rocks = active.map(a => {
       ensureAsteroidGeometry(a);
+      if(advanceBelt(a,this.world.spec,this.world.time,dt))return {...a,mass:Math.max(1,(a.radius/20)**2)};
       const decay = Math.exp(-COLLISION.asteroidDrag * dt);
-      a.x += a.vx * (1 - decay) / COLLISION.asteroidDrag;
-      a.y += a.vy * (1 - decay) / COLLISION.asteroidDrag;
-      a.vx *= decay; a.vy *= decay;
+      let dx=a.driftX??0,dy=a.driftY??0;
+      if(Math.hypot(dx,dy)>0){
+        if(Math.abs(a.x-(a.originX??a.x))>POPULATION.ambientRange&&Math.sign(dx)===Math.sign(a.x-(a.originX??a.x))||a.x<a.radius+5&&dx<0||a.x>WORLD.width-a.radius-5&&dx>0)dx=-dx;
+        if(Math.abs(a.y-(a.originY??a.y))>POPULATION.ambientRange&&Math.sign(dy)===Math.sign(a.y-(a.originY??a.y))||a.y<a.radius+5&&dy<0||a.y>WORLD.height-a.radius-5&&dy>0)dy=-dy;
+        for(const base of this.bases){const distance=Math.hypot(a.x-base.x,a.y-base.y);if(distance<POPULATION.baseClearance+a.radius+30){const speed=Math.hypot(dx,dy);dx=(a.x-base.x)/(distance||1)*speed;dy=(a.y-base.y)/(distance||1)*speed;}}
+        a.driftX=dx;a.driftY=dy;a.rotation=spinFor(a)*(this.world.time-(this.world.spec.motionEpoch??0))||0;
+      }
+      a.x += dx*dt+(a.vx-dx)*(1-decay)/COLLISION.asteroidDrag;
+      a.y += dy*dt+(a.vy-dy)*(1-decay)/COLLISION.asteroidDrag;
+      a.vx=dx+(a.vx-dx)*decay;a.vy=dy+(a.vy-dy)*decay;
       return { ...a, mass: Math.max(1, (a.radius / 20) ** 2) };
     });
     for (const rock of rocks) {
@@ -441,17 +452,17 @@ export class GameModel {
     this.kills++;
     this.drops.push({ id: this.id++, x: e.x, y: e.y, ore: 'iron', amount: 6 });
   }
-  private releaseOre(point: Point, ore: Resource, amount: number) {
+  private releaseOre(point: Point, ore: Resource, amount: number,velocity?:Point) {
     if (amount <= 0) return;
     const existing = this.drops.find(d => d.ore === ore && dist(d, point) < 45);
-    if (existing) existing.amount += amount;
-    else this.drops.push({ id: this.id++, ...point, ore, amount });
+    if (existing) {const total=existing.amount+amount;if(velocity){existing.vx=((existing.vx??0)*existing.amount+velocity.x*amount)/total;existing.vy=((existing.vy??0)*existing.amount+velocity.y*amount)/total;}existing.amount=total;}
+    else this.drops.push({ id: this.id++, ...point, ore, amount,...(velocity?{vx:velocity.x,vy:velocity.y}:{}) });
   }
   destroyAsteroid(id: number): boolean {
     const asteroid = this.asteroids.find(a => a.id === id);
     if (!asteroid) return false;
     // Release only what remains; already mined ore is never paid twice.
-    this.releaseOre(asteroid, asteroid.ore, asteroid.amount);
+    this.releaseOre(asteroid, asteroid.ore, asteroid.amount,{x:asteroid.vx*BELT_MOTION.dropInheritance,y:asteroid.vy*BELT_MOTION.dropInheritance});
     asteroid.amount = 0; asteroid.health = 0;
     this.emitDebris(asteroid, { x: 1, y: -1 }, RESOURCES[asteroid.ore].color, asteroid.id);
     this.asteroids = this.asteroids.filter(a => a !== asteroid);
@@ -474,7 +485,7 @@ export class GameModel {
       const recovered = Math.floor((asteroid.shotYieldRemainder ?? 0) + removed * ORE_COMBAT.recovery + 1e-9);
       asteroid.shotYieldRemainder = (asteroid.shotYieldRemainder ?? 0) + removed * ORE_COMBAT.recovery - recovered;
       asteroid.wastedAmount = (asteroid.wastedAmount ?? 0) + removed - recovered;
-      this.releaseOre(point, asteroid.ore, recovered);
+      this.releaseOre(point, asteroid.ore, recovered,{x:asteroid.vx*BELT_MOTION.dropInheritance,y:asteroid.vy*BELT_MOTION.dropInheritance});
       this.emitDebris(point, { x: point.x - asteroid.x, y: point.y - asteroid.y }, RESOURCES[asteroid.ore].color, asteroid.id + asteroid.amount);
     }
     this.oreHits++; this.addBlast({ ...point, radius: 10, life: 0.1 },weapon);
@@ -614,12 +625,13 @@ export class GameModel {
         this.minedTarget ??= target; this.miningPoint ??= impact;
         const removed = mineMaterial(target, source.rate * dt+onMiningHit(module,dt), impact);
         if (removed > 0) {
-          this.releaseOre(impact, target.ore, removed);
+          this.releaseOre(impact, target.ore, removed,{x:target.vx*BELT_MOTION.dropInheritance,y:target.vy*BELT_MOTION.dropInheritance});
           this.emitDebris(impact, { x: impact.x - target.x, y: impact.y - target.y }, RESOURCES[target.ore].color, target.id + target.amount);
         }
         if (target.amount <= 0) { this.destroyAsteroid(target.id); if (this.minedTarget === target) { this.minedTarget = undefined; this.miningPoint = undefined; } }
       }
     }
+    for(const drop of this.drops){drop.x=clamp(drop.x+(drop.vx??0)*dt,0,WORLD.width);drop.y=clamp(drop.y+(drop.vy??0)*dt,0,WORLD.height);}
     const claimed = new Set<number>(), dropsById = new Map(this.drops.map(drop => [drop.id, drop]));
     for (const module of this.modules) if (module.kind === 'tractor') {
       const stats = MODULES.tractor.levels[module.level-1];
@@ -663,7 +675,7 @@ export class GameModel {
     this.squads = this.squads.filter(squad => this.enemies.some(e => e.squad === squad.id));
     for (const squad of this.squads) {
       if (alertedSquads.has(squad.id)) continue;
-      squad.angle += PATROL.turnRate * dt;
+      squad.angle += PATROL.turnRate * dt;const avoidance=avoidMovingOre(squad,squad.angle,this.asteroids,65)-squad.angle;squad.angle+=avoidance*dt;
       squad.x += Math.cos(squad.angle) * PATROL.speed * dt; squad.y += Math.sin(squad.angle) * PATROL.speed * dt;
       if (squad.x < 250 || squad.y < 250 || squad.x > WORLD.width - 250 || squad.y > WORLD.height - 250) { squad.angle += Math.PI / 2; squad.x = clamp(squad.x, 250, WORLD.width - 250); squad.y = clamp(squad.y, 250, WORLD.height - 250); }
       if (this.bases.some(base => base.unlocked && dist(squad, base) < BASE_RADIUS + 180)) squad.angle += dt * 2;
@@ -677,14 +689,15 @@ export class GameModel {
       if (alerted) {
         e.angle = Math.atan2(p.y - e.y, p.x - e.x);
         const direction = distance > def.stop ? 1 : e.kind === 'sniper' && distance < def.stop - 100 ? -1 : 0;
-        e.x = clamp(e.x + Math.cos(e.angle) * def.speed * dt * direction, 30, WORLD.width - 30);
-        e.y = clamp(e.y + Math.sin(e.angle) * def.speed * dt * direction, 30, WORLD.height - 30);
+        const travel=avoidMovingOre(e,e.angle+(direction<0?Math.PI:0),this.asteroids,def.radius);
+        e.x = clamp(e.x + Math.cos(travel) * def.speed * dt * Math.abs(direction), 30, WORLD.width - 30);
+        e.y = clamp(e.y + Math.sin(travel) * def.speed * dt * Math.abs(direction), 30, WORLD.height - 30);
         if (visible && distance < def.range && e.cooldown <= 0 && !this.bases.some(base => base.unlocked && dist(e, base) < BASE_RADIUS)) { this.shoot(e, e.angle, true, def.weapon); e.cooldown = def.weapon.cooldown; }
       } else if (squad) {
         const forward = e.slot === 0 ? 0 : -PATROL.spacing, side = e.slot === 0 ? 0 : (e.slot === 1 ? -1 : 1) * PATROL.spacing;
         const target = { x: squad.x + Math.cos(squad.angle) * forward - Math.sin(squad.angle) * side, y: squad.y + Math.sin(squad.angle) * forward + Math.cos(squad.angle) * side };
         const distance = dist(e, target), step = Math.min(distance, def.speed * 0.8 * dt);
-        if (distance > 0) { e.x += (target.x - e.x) / distance * step; e.y += (target.y - e.y) / distance * step; }
+        if (distance > 0) { const travel=avoidMovingOre(e,Math.atan2(target.y-e.y,target.x-e.x),this.asteroids,def.radius);e.x+=Math.cos(travel)*step;e.y+=Math.sin(travel)*step; }
         e.angle = squad.angle;
       } else {
         e.patrolAngle = (e.patrolAngle ?? e.angle) + dt * 0.2; e.angle = e.patrolAngle;
@@ -740,8 +753,8 @@ export class GameModel {
       for (const asteroid of this.asteroids) {
         if (segmentCircleHit(start, b, asteroid, asteroid.radius + 4) === undefined) continue;
         const shape = ensureAsteroidGeometry(asteroid);
-        const local = segmentPolygonHit(shape, { x: start.x - asteroid.x, y: start.y - asteroid.y }, { x: b.x - asteroid.x, y: b.y - asteroid.y });
-        if (local && (!oreHit || local.t < oreHit.t)) oreHit = { asteroid, point: { x: local.x + asteroid.x, y: local.y + asteroid.y }, t: local.t };
+        const local = segmentPolygonHit(shape, asteroidLocal(asteroid,start),asteroidLocal(asteroid,b));
+        if (local && (!oreHit || local.t < oreHit.t)) oreHit = { asteroid, point: asteroidWorld(asteroid,local), t: local.t };
       }
       let target: Enemy | undefined, targetT = Infinity;
       if (b.enemy) {

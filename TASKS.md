@@ -1,5 +1,16 @@
 # Tasks
 
+## Moving belts — completed
+- [x] Reusable seeded drifting, elliptical orbital, flowing and static motion definitions
+- [x] Gentle minority ambient drift, cohesive individual variation and independent rotation
+- [x] Rotation-aware mining, deformation, projectiles, visibility and contacts
+- [x] Moving mineral drops, tractor collection and finite-resource conservation
+- [x] Inverse-motion chunk queries, deduplication, sparse overrides and cached rendering
+- [x] Current-motion regeneration and saved epoch/offset compatibility
+- [x] Local enemy/patrol avoidance and rich-belt threat response
+- [x] 114 tests/build and ~60 FPS browser stress/reload verification
+- [ ] Human playtest of long-distance belt streaming, encounter pacing and mining feel
+
 ## Latest balance and editor fixes
 - [x] Further reduce gunfire asteroid displacement and cap stacked weapon pushes
 - [x] Weaken all L1 weapons while retaining later-tier stats
