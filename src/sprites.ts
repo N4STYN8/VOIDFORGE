@@ -1,7 +1,8 @@
 import type { Asteroid } from './model.ts';
 import { ensureAsteroidGeometry } from './mining.ts';
 import { containsPoint, type Vertex } from './asteroidGeometry.ts';
-import { RESOURCES, ENEMIES, type EnemyKind } from './data.ts';
+import { RESOURCES, ENEMIES, OUTPOST, type EnemyKind, type StructureKind } from './data.ts';
+import { bounds, neighbourMask, wear, type Outpost } from './outposts.ts';
 
 // Baked top-down pixel-art sprites painted with the plain Canvas 2D API.
 // World sprites use one pixel per world unit; the backdrop is coarser. All are drawn with
@@ -502,4 +503,75 @@ export function crispModule(canvas: HTMLCanvasElement) {
     data[i + 3] = 255;
   }
   ctx.putImageData(image, 0, 0);
+}
+
+// ---------- Player outposts (space steampunk: riveted steel, brass framing, copper pipes) ----------
+
+const STEEL = [0x14181f, 0x232a34, 0x343d4a, 0x4a5565, 0x6a7688], BRASS = [0x5c4318, 0x94702a, 0xd9a441, 0xf2d489], COPPER = [0x7a4324, 0xb87333, 0xe09a5c];
+/**
+ * Paints one 16x16 block at (x, y). `mask` marks joined neighbours (1 east, 2 south, 4 west, 8 north):
+ * open sides get a brass frame, joined sides get a riveted seam and a copper pipe run to the neighbour.
+ */
+function paintBlock(ctx: Ctx, x: number, y: number, kind: StructureKind, mask: number, damage: number, built: boolean, id: number) {
+  const size = OUTPOST.cell, px = (dx: number, dy: number, color: number, w = 1, h = 1) => dot(ctx, x + dx, y + dy, color, w, h), reinforced = kind === 'reinforcedWall';
+  if (!built) {
+    // Scaffold: dark footing, dashed brass outline and diagonal bracing until construction finishes.
+    px(0, 0, STEEL[0], size, size);
+    for (let i = 0; i < size; i += 2) { px(i, 0, BRASS[1]); px(i, size - 1, BRASS[1]); px(0, i, BRASS[1]); px(size - 1, i, BRASS[1]); }
+    for (let i = 2; i < size - 2; i += 3) { px(i, i, BRASS[0]); px(size - 1 - i, i, BRASS[0]); }
+    return;
+  }
+  px(0, 0, STEEL[1], size, size); px(1, 1, reinforced ? STEEL[3] : STEEL[2], size - 2, size - 2);
+  px(1, 1, reinforced ? STEEL[4] : STEEL[3], size - 2, 1); px(1, 1, reinforced ? STEEL[4] : STEEL[3], 1, size - 2);
+  px(1, size - 2, STEEL[0], size - 2, 1); px(size - 2, 1, STEEL[0], 1, size - 2);
+  const east = mask & 1, south = mask & 2, west = mask & 4, north = mask & 8, core = kind === 'outpostCore';
+  // Copper pipe runs toward every joined neighbour, meeting at the centre.
+  if (!core) {
+    if (east) px(8, 7, COPPER[1], 8, 2); if (west) px(0, 7, COPPER[1], 8, 2); if (south) px(7, 8, COPPER[1], 2, 8); if (north) px(7, 0, COPPER[1], 2, 8);
+    if (east || west) px(west ? 0 : 8, 7, COPPER[2], (east && west) ? 16 : 8, 1); if (mask) px(7, 7, COPPER[0], 2, 2);
+  }
+  // Brass frame on open sides (lit top/left, shaded bottom/right); riveted seam where blocks join.
+  const frame = (open: number | boolean, fx: number, fy: number, w: number, h: number, tone: number, rivets: [number, number][]) => {
+    if (open) px(fx, fy, tone, w, h); else for (const [rx, ry] of rivets) px(rx, ry, STEEL[4]);
+  };
+  frame(!north || core, 0, 0, size, 2, BRASS[2], [[4, 1], [11, 1]]); frame(!west || core, 0, 0, 2, size, BRASS[2], [[1, 4], [1, 11]]);
+  frame(!south || core, 0, size - 2, size, 2, BRASS[1], [[4, size - 2], [11, size - 2]]); frame(!east || core, size - 2, 0, 2, size, BRASS[1], [[size - 2, 4], [size - 2, 11]]);
+  if (!north || core) px(0, 0, BRASS[3], size, 1); if (!west || core) px(0, 0, BRASS[3], 1, size);
+  if (!south || core) px(0, size - 1, BRASS[0], size, 1); if (!east || core) px(size - 1, 0, BRASS[0], 1, size);
+  for (const [rx, ry] of [[3, 3], [12, 3], [3, 12], [12, 12]]) px(rx, ry, core ? BRASS[3] : STEEL[4]);
+  if (reinforced) {
+    for (let i = 3; i < size - 3; i++) { px(i, i, BRASS[1]); px(size - 1 - i, i, BRASS[0]); }
+    px(7, 7, COPPER[2], 2, 2);
+  }
+  if (core) {
+    // Command gear around a glowing boiler window.
+    for (let gy = -6; gy <= 6; gy++) for (let gx = -6; gx <= 6; gx++) {
+      const d = Math.hypot(gx + 0.5, gy + 0.5), tooth = Math.round(Math.atan2(gy + 0.5, gx + 0.5) / (Math.PI / 4)) % 2 === 0;
+      if (d < 3) px(8 + gx, 8 + gy, d < 1.6 ? 0xfff0c0 : 0xffb347); else if (d < 4.2) px(8 + gx, 8 + gy, STEEL[0]); else if (d < 5.4 || (d < 6.4 && tooth)) px(8 + gx, 8 + gy, gx + gy < 0 ? BRASS[3] : BRASS[1]);
+    }
+  }
+  // Wear: cracks and scorch marks accumulate with damage.
+  const random = seeded(id * 31 + 7);
+  for (let i = 0; i < damage * 4; i++) { const cx = 2 + Math.floor(random() * 12), cy = 2 + Math.floor(random() * 12); px(cx, cy, OUTLINE); px(cx + (random() < 0.5 ? 1 : 0), cy + 1, OUTLINE); if (damage >= 3 && i % 4 === 0) px(cx, cy, 0xff7a3c); }
+}
+/** Bakes a whole outpost into one canvas; redrawn only when the outpost's revision changes. Returns the canvas and the world position of its top-left corner. */
+export function paintOutpost(outpost: Outpost) {
+  const b = bounds(outpost), size = OUTPOST.cell, pad = 1, canvas = canvasOf((b.maxX - b.minX + 1) * size + pad * 2, (b.maxY - b.minY + 1) * size + pad * 2), ctx = canvas.getContext('2d')!;
+  for (const s of outpost.structures) paintBlock(ctx, pad + (s.cx - b.minX) * size, pad + (s.cy - b.minY) * size, s.kind, neighbourMask(outpost, s), wear(s), s.progress >= 1, s.id);
+  // One-pixel dark outline around the joined silhouette.
+  const { width, height } = canvas, image = ctx.getImageData(0, 0, width, height), data = image.data, solid = new Uint8Array(width * height);
+  for (let i = 0; i < solid.length; i++) solid[i] = data[i * 4 + 3] ? 1 : 0;
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const i = y * width + x;
+    if (solid[i] || !((x > 0 && solid[i - 1]) || (x < width - 1 && solid[i + 1]) || (y > 0 && solid[i - width]) || (y < height - 1 && solid[i + width]))) continue;
+    data[i * 4] = channel(OUTLINE, 16); data[i * 4 + 1] = channel(OUTLINE, 8); data[i * 4 + 2] = channel(OUTLINE, 0); data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(image, 0, 0);
+  return { canvas, x: b.minX * size - pad, y: b.minY * size - pad };
+}
+/** A single finished block with no neighbours, for the build catalogue and placement preview. */
+export function paintStructureIcon(kind: StructureKind) {
+  const canvas = canvasOf(OUTPOST.cell), ctx = canvas.getContext('2d')!;
+  paintBlock(ctx, 0, 0, kind, 0, 0, true, 1);
+  return canvas;
 }

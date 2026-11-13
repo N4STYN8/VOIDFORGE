@@ -144,9 +144,9 @@ export const BASES = [
 export const BASE_RADIUS = 220;
 
 export type WeaponKind = 'cannon' | 'pulse' | 'rail' | 'plasma' | 'rocket' | 'flak' | 'emp';
-export type ModuleKind = WeaponKind | 'miner' | 'cargo' | 'armor' | 'engine' | 'shield' | 'tractor' | 'reactor' | 'cooler';
+export type ModuleKind = WeaponKind | 'miner' | 'cargo' | 'armor' | 'engine' | 'shield' | 'tractor' | 'reactor' | 'cooler' | 'builder';
 export type EquipmentKind = ModuleKind | 'core';
-export type EquipmentStats = { damage?: number; cooldown?: number; mining?: number; pickup?: number; hull?: number; speed?: number; acceleration?: number; splash?: number; shield?: number; recharge?: number; tractor?: number; pull?: number; targets?: number; power?: number; heat?: number; generation?: number; energyCapacity?: number; cooling?: number; heatCapacity?: number; empRange?: number; cargo?:number; stun?: number; burstSpeed?:number; burstThrust?:number; boostDuration?:number; boostCooldown?:number; boostPower?:number; boostHeat?:number };
+export type EquipmentStats = { damage?: number; cooldown?: number; mining?: number; pickup?: number; hull?: number; speed?: number; acceleration?: number; splash?: number; shield?: number; recharge?: number; tractor?: number; pull?: number; targets?: number; power?: number; heat?: number; generation?: number; energyCapacity?: number; cooling?: number; heatCapacity?: number; empRange?: number; cargo?:number; stun?: number; burstSpeed?:number; burstThrust?:number; boostDuration?:number; boostCooldown?:number; boostPower?:number; boostHeat?:number; buildRange?:number; buildSpeed?:number; buildDiscount?:number };
 export type EquipmentDefinition = { label: string; color: number; mass: number; cost: Record<Resource, number>; weapon?: WeaponKind; description: string; levels: EquipmentStats[] };
 const cost = (iron: number, copper = 0, crystal = 0, ice = 0, radioactive = 0): Record<Resource, number> => ({ iron, copper, crystal, ice, radioactive });
 export const MODULES: Record<ModuleKind, EquipmentDefinition> = {
@@ -165,6 +165,7 @@ export const MODULES: Record<ModuleKind, EquipmentDefinition> = {
   engine: { label: 'Speed booster', color: 0x6db9ff, mass: 2, cost: cost(20,15), description: 'Powered cruise bonuses. Level 2+ adds a Shift-triggered burst with energy/heat cost and cooldown.', levels: [{speed:25,acceleration:80,power:6,heat:3},{speed:45,acceleration:140,power:9,heat:5,burstSpeed:150,burstThrust:400,boostDuration:1.8,boostCooldown:6,boostPower:18,boostHeat:12},{speed:70,acceleration:220,power:13,heat:8,burstSpeed:240,burstThrust:650,boostDuration:2.2,boostCooldown:5,boostPower:24,boostHeat:18}] },
   reactor: { label: 'Reactor', color: 0xffda86, mass: 8, cost: cost(30,15,5), description: 'Adds energy production and storage. Reactors combine their output.', levels: [{generation:35,energyCapacity:70},{generation:60,energyCapacity:110},{generation:100,energyCapacity:170}] },
   cooler: { label: 'Cooling system', color: 0x9edfff, mass: 4, cost: cost(20,10,0,10), description: 'Adds heat dissipation and thermal capacity. Cooling systems combine.', levels: [{cooling:18,heatCapacity:25},{cooling:30,heatCapacity:40},{cooling:48,heatCapacity:65}] },
+  builder: { label: 'Build module', color: 0xd9a441, mass: 6, cost: cost(60,40,15), description: 'Requires Core level 4. Enters Build Mode (F) to construct outposts on the world grid from carried cargo. Must be intact and the ship must not be short of energy.', levels: [{buildRange:240,buildSpeed:1},{buildRange:320,buildSpeed:1.5},{buildRange:320,buildSpeed:1.5,buildDiscount:10}] },
 };
 export const CORE: EquipmentDefinition = { label: 'Core', color: 0x73c9ee, mass: 12, cost: cost(30,15), description: 'Core tiers unlock item tiers and improve hull, power and cooling. No module-count cap.', levels: [{hull:100,generation:40,energyCapacity:100,cooling:12,heatCapacity:100},{hull:150,generation:60,energyCapacity:160,cooling:16,heatCapacity:140},{hull:225,generation:90,energyCapacity:240,cooling:22,heatCapacity:200}] };
 export const MAX_MODULE_LEVEL=5;
@@ -185,6 +186,7 @@ const ADVANCED_LEVELS:Record<EquipmentKind,[EquipmentStats,EquipmentStats]>={
  engine:[{speed:100,acceleration:310,power:18,heat:11,burstSpeed:320,burstThrust:850,boostDuration:2.5,boostCooldown:4.5,boostPower:32,boostHeat:24},{speed:135,acceleration:420,power:24,heat:15,burstSpeed:420,burstThrust:1100,boostDuration:2.8,boostCooldown:4,boostPower:42,boostHeat:32}],
  reactor:[{generation:150,energyCapacity:250},{generation:220,energyCapacity:360}],
  cooler:[{cooling:70,heatCapacity:95},{cooling:100,heatCapacity:140}],
+ builder:[{buildRange:400,buildSpeed:2.5,buildDiscount:10},{buildRange:480,buildSpeed:3,buildDiscount:15}],
 };
 for(const [kind,levels]of Object.entries(ADVANCED_LEVELS)) (kind==='core'?CORE:MODULES[kind as ModuleKind]).levels.push(...levels);
 export const ROCKET = { speed: 330, lifetime: 3.2 };
@@ -207,18 +209,36 @@ export function statsLabel(stats: EquipmentStats) {
   return Object.entries(stats).map(([key, value]) => `${({ damage: 'Damage', cooldown: 'Shot interval (s)', mining: 'Ore/s', cargo:'Cargo capacity +',pickup: 'Pickup +m', hull: 'Hull', speed: 'Speed +', acceleration: 'Thrust +', splash: 'Blast radius', shield: 'Shield', recharge: 'Recharge/s', tractor: 'Beam range', pull: 'Pull speed', targets: 'Targets', power:'Energy',heat:'Heat',generation:'Power/s',energyCapacity:'Energy capacity',cooling:'Cooling/s',heatCapacity:'Heat capacity',empRange:'EMP radius',stun:'Disable (s)',burstSpeed:'Burst speed +',burstThrust:'Burst thrust +',boostDuration:'Burst duration (s)',boostCooldown:'Burst cooldown (s)',boostPower:'Burst energy',boostHeat:'Burst heat' } as Record<string, string>)[key]} ${value}`).join(' · ');
 }
 export const BUILD_GRID = { radius: 3, cellSize: 16, pickupBonus: 30 };
+/**
+ * Player-built outposts. Blocks sit on a world-aligned construction grid whose cell equals a ship
+ * module tile. `radius` is how many cells from its core an outpost may extend; `coreSpacing` and
+ * `baseClearance` keep cores apart and away from stations. Building spends carried cargo and
+ * `energyPerBlock` ship energy. `gridZoom` is the camera zoom range over which the fine grid fades in.
+ */
+export const OUTPOST = {
+  coreLevel: 4, cell: BUILD_GRID.cellSize, radius: 14, coreSpacing: 900, baseClearance: 340, energyPerBlock: 6, awaySpeed: 0.5, awayRange: 2,
+  largeGrid: 160, gridZoom: [1.15, 1.75], key: 'F', rotateKey: 'R',
+  fabricator: { hpPerSecond: 25, ironPerHp: 0.08, energyPerSecond: 8 },
+};
+export type StructureKind = 'outpostCore' | 'wall' | 'reinforcedWall';
+export type StructureDefinition = { label: string; description: string; cost: Record<Resource, number>; health: number; /** Seconds at construction speed 1. */ buildTime: number; color: number };
+export const STRUCTURES: Record<StructureKind, StructureDefinition> = {
+  outpostCore: { label: 'Outpost Core', description: 'Founds a new outpost and anchors every block joined to it. Place this first; other blocks must connect back to it.', cost: cost(80, 40, 10), health: 600, buildTime: 8, color: 0xd9a441 },
+  wall: { label: 'Wall block', description: 'Basic riveted plating. Stops hostile fire. Adjacent walls join into one structure.', cost: cost(8), health: 160, buildTime: 2, color: 0x6f7c8c },
+  reinforcedWall: { label: 'Reinforced wall', description: 'Cross-braced plating with more than twice the strength of a wall block.', cost: cost(14, 6), health: 380, buildTime: 3.5, color: 0x9aa9bb },
+};
 
 export const COLLISION = { restitution: 0.3, asteroidDrag: 0.4, safeSpeed: 40, damagePerSpeed: 0.09, maxDamage: 25, damageCooldown: 0.6 };
 
 export const EXPLORATION = { cell: 480, radius: 850 };
-export const MODULE_DURABILITY: Record<ModuleKind, number[]> = { reactor:[60,90,130],cooler:[40,60,85],pulse:[40,60,85],rail:[55,80,110],plasma:[45,70,100],flak:[45,70,100],emp:[40,60,90],tractor:[40,60,85],cannon:[45,65,90],miner:[40,60,85],rocket:[50,75,105],cargo:[35,55,80],armor:[100,150,220],engine:[40,60,85],shield:[35,55,80] };
+export const MODULE_DURABILITY: Record<ModuleKind, number[]> = { reactor:[60,90,130],cooler:[40,60,85],pulse:[40,60,85],rail:[55,80,110],plasma:[45,70,100],flak:[45,70,100],emp:[40,60,90],tractor:[40,60,85],cannon:[45,65,90],miner:[40,60,85],rocket:[50,75,105],cargo:[35,55,80],armor:[100,150,220],engine:[40,60,85],shield:[35,55,80],builder:[45,65,90] };
 for(const durability of Object.values(MODULE_DURABILITY))durability.push(Math.round(durability[2]*1.4),Math.round(durability[2]*1.9));
 export const REPAIR = { ironPerHull: 0.2, copperPerModule: 0.05, salvageFraction: 0.5, emergencyMining: 3 };
 export const PATROL = { groupSize: 3, spacing: 65, speed: 55, turnRate: 0.08, sharedDetectionMultiplier: 1.4 };
 export const ORE_COMBAT = { materialPerDamage: 0.1, recovery: 0.35, impulsePerDamage: 0.3, maxShotSpeed: 12 };
 
 export const MODULE_CATEGORIES = {
-  Weapons:['cannon','pulse','rail','plasma','rocket','flak','emp'], Mining:['miner'], Collection:['tractor','cargo'], Defense:['shield','armor'], Propulsion:['engine'], Power:['reactor'], Utility:['cooler'],
+  Weapons:['cannon','pulse','rail','plasma','rocket','flak','emp'], Mining:['miner'], Collection:['tractor','cargo'], Defense:['shield','armor'], Propulsion:['engine'], Power:['reactor'], Utility:['cooler','builder'],
 } satisfies Record<string,ModuleKind[]>;
-export const MODULE_SHORT:Record<EquipmentKind,string>={core:'Core',cannon:'Auto',pulse:'Pulse',rail:'Rail',plasma:'Plasma',rocket:'Missile',flak:'Flak',emp:'EMP',miner:'Mining',tractor:'Tractor',cargo:'Cargo',armor:'Armor',shield:'Shield',engine:'Booster',reactor:'Reactor',cooler:'Cooler'};
-export const STAT_LABELS:Partial<Record<keyof EquipmentStats,string>>={damage:'Damage',cooldown:'Fire rate (shots/s)',mining:'Mining (ore/s)',cargo:'Cargo capacity +',pickup:'Pickup reach +',hull:'Hull',speed:'Cruise speed +',acceleration:'Thrust +',splash:'Blast radius',shield:'Shield',recharge:'Recharge /s',tractor:'Tractor range',pull:'Pull speed',targets:'Target slots',power:'Operating energy',heat:'Operating heat',generation:'Power output /s',energyCapacity:'Energy capacity',cooling:'Cooling /s',heatCapacity:'Heat capacity',empRange:'EMP radius',stun:'Disable (s)',burstSpeed:'Burst speed +',burstThrust:'Burst thrust +',boostDuration:'Burst duration (s)',boostCooldown:'Burst cooldown (s)',boostPower:'Burst energy',boostHeat:'Burst heat'};
+export const MODULE_SHORT:Record<EquipmentKind,string>={core:'Core',cannon:'Auto',pulse:'Pulse',rail:'Rail',plasma:'Plasma',rocket:'Missile',flak:'Flak',emp:'EMP',miner:'Mining',tractor:'Tractor',cargo:'Cargo',armor:'Armor',shield:'Shield',engine:'Booster',reactor:'Reactor',cooler:'Cooler',builder:'Build'};
+export const STAT_LABELS:Partial<Record<keyof EquipmentStats,string>>={damage:'Damage',cooldown:'Fire rate (shots/s)',mining:'Mining (ore/s)',cargo:'Cargo capacity +',pickup:'Pickup reach +',hull:'Hull',speed:'Cruise speed +',acceleration:'Thrust +',splash:'Blast radius',shield:'Shield',recharge:'Recharge /s',tractor:'Tractor range',pull:'Pull speed',targets:'Target slots',power:'Operating energy',heat:'Operating heat',generation:'Power output /s',energyCapacity:'Energy capacity',cooling:'Cooling /s',heatCapacity:'Heat capacity',empRange:'EMP radius',stun:'Disable (s)',burstSpeed:'Burst speed +',burstThrust:'Burst thrust +',boostDuration:'Burst duration (s)',boostCooldown:'Burst cooldown (s)',boostPower:'Burst energy',boostHeat:'Burst heat',buildRange:'Construction range',buildSpeed:'Construction speed x',buildDiscount:'Construction cost -%'};

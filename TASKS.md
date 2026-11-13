@@ -97,3 +97,14 @@
 ## Later systems
 - [ ] Refining, crafting, research, player-placed structures and automation
 - [ ] Human playtest of economy, power/cooling, cargo and progression balance
+
+## Outpost construction (brief: Modular Outpost Construction System)
+- [x] Phase 1: Build module with Core level 4 unlock and five levels
+- [x] Phase 2: world-aligned nested construction grid, Build Mode, placement preview and rules
+- [x] Phase 3: Outpost Core, wall, reinforced wall, visual connections, construction time, damage, connectivity, save/load
+- [ ] Phase 4: defensive turrets, outpost power and storage
+- [ ] Phase 5: mining drones and ship-to-outpost resource transfer (docking station)
+- [ ] Phase 6: upgrade and repair stations, five-level building upgrades
+- [ ] Phase 7: enemy raids on outposts, away-from-player simulation
+- [ ] Phase 8: effects, sound, balancing, performance pass
+- [ ] Decide whether ships and asteroids should collide with outpost blocks

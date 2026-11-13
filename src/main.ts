@@ -6,7 +6,8 @@ import { outfitterMarkup } from './outfitter.ts';
 import { EffectPool } from './effects.ts';
 import { drawParticles, drawEnergyBeam, drawProjectile, drawEmp } from './effectsRender.ts';
 import { GameModel } from './model.ts';
-import { WORLD, SHIP, RESOURCES, ENEMIES, ENEMY_AI, EXPLORATION, MODULES, BUILD_GRID, equipment, upgradeCost, statsLabel, type EquipmentKind, type ModuleKind } from './data.ts';
+import { cellOf, cellCenter, bounds as outpostBounds } from './outposts.ts';
+import { WORLD, SHIP, RESOURCES, ENEMIES, ENEMY_AI, OUTPOST, STRUCTURES, type StructureKind, type Resource, EXPLORATION, MODULES, BUILD_GRID, equipment, upgradeCost, statsLabel, type EquipmentKind, type ModuleKind } from './data.ts';
 import './style.css';
 import { hashSeed } from './world.ts';
 import { loadSavedGame, saveGame, backupSavedGame } from './persistence.ts';
@@ -14,7 +15,7 @@ import { GameAudio } from './audio.ts';
 import { drawExplorationMap } from './map.ts';
 import { ensureAsteroidGeometry } from './mining.ts';
 import { drawModule } from './visuals.ts';
-import { paintBackdrop, paintAsteroid, paintStation, paintEnemy, crispModule, mix, ASTEROID_SPRITE, ENEMY_SPRITE, STATION_SPRITE } from './sprites.ts';
+import { paintBackdrop, paintAsteroid, paintStation, paintEnemy, paintOutpost, paintStructureIcon, crispModule, mix, ASTEROID_SPRITE, ENEMY_SPRITE, STATION_SPRITE } from './sprites.ts';
 class SpaceScene extends Phaser.Scene {
   private effects = new EffectPool();
   private saveElapsed = 0;
@@ -63,6 +64,12 @@ class SpaceScene extends Phaser.Scene {
   private hud = document.getElementById('hud')!;
   private bossBar = document.createElement('section');
   private hordeBanner = document.createElement('section');
+  // Build Mode (outpost construction).
+  private buildMode = false; private buildKind: StructureKind = 'outpostCore'; private buildRot = 0; private buildHeld = ''; private buildWasDown = false; private buildHover = '';
+  private buildPanel = document.createElement('section'); private buildPanelContent = ''; private buildToggle = document.createElement('button');
+  private structureIcons = new Map<StructureKind, string>();
+  private gridGraphics!: Phaser.GameObjects.Graphics; private buildGhost!: Phaser.GameObjects.Image;
+  private outpostSprites = new Map<number, { image: Phaser.GameObjects.Image; revision: number }>();
   private hordeBannerContent = '';
   private bossBarContent = '';
   private status = document.getElementById('status')!;
@@ -110,6 +117,18 @@ class SpaceScene extends Phaser.Scene {
       if (pointer.x >= this.scale.width - 152 && pointer.y >= this.scale.height - 152) this.mapOpen = !this.mapOpen;
     });
     this.bossBar.id = 'boss-bar'; this.bossBar.hidden = true; document.body.append(this.bossBar);
+    this.buildPanel.id = 'build-panel'; this.buildPanel.hidden = true; document.body.append(this.buildPanel);
+    this.buildPanel.addEventListener('pointerdown', event => event.stopPropagation());
+    this.buildPanel.addEventListener('click', event => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button'); if (!button) return;
+      if (button.dataset.structure) this.buildKind = button.dataset.structure as StructureKind;
+      if (button.dataset.buildClose) this.buildMode = false;
+      button.blur(); this.renderBuildPanel();
+    });
+    this.buildToggle.id = 'build-toggle'; this.buildToggle.hidden = true; this.buildToggle.textContent = `Build mode · ${OUTPOST.key}`; document.body.append(this.buildToggle);
+    this.buildToggle.addEventListener('pointerdown', event => event.stopPropagation());
+    this.buildToggle.addEventListener('click', () => { this.toggleBuildMode(); this.buildToggle.blur(); });
+    for (const kind of Object.keys(STRUCTURES) as StructureKind[]) { const icon = paintStructureIcon(kind); this.structureIcons.set(kind, icon.toDataURL()); this.textures.addCanvas(`structure-${kind}`, icon)!.setFilter(Phaser.Textures.FilterMode.NEAREST); }
     this.hordeBanner.id = 'horde-banner'; this.hordeBanner.hidden = true; this.hordeBanner.setAttribute('role', 'alert'); document.body.append(this.hordeBanner);
     this.builder.id = 'builder'; this.builder.hidden = true;
     document.body.append(this.builder);
@@ -152,6 +171,8 @@ class SpaceScene extends Phaser.Scene {
       }else if(button.dataset.close){this.building=false;restoreKeyboard();}
       button.blur();this.renderBuilder();
     });
+    this.gridGraphics = this.add.graphics().setDepth(-2.5);
+    this.buildGhost = this.add.image(0, 0, 'structure-wall').setDepth(2).setAlpha(0.6).setVisible(false);
     this.graphics = this.add.graphics();
     this.effectsGraphics=this.add.graphics().setDepth(4).setBlendMode(Phaser.BlendModes.ADD);
     this.minimap = this.add.graphics().setScrollFactor(0).setDepth(20);
@@ -182,7 +203,7 @@ class SpaceScene extends Phaser.Scene {
     this.mapLabel = this.add.text(0, 0, 'SECTOR MAP / M', { fontFamily: 'monospace', fontSize: '9px', color: '#91afc5', letterSpacing: 1 }).setScrollFactor(0).setDepth(21);
     this.follow = this.add.zone(this.model.player.x, this.model.player.y, 1, 1);
     this.cameras.main.setBounds(0, 0, WORLD.width, WORLD.height).setZoom(1.35).startFollow(this.follow, true, 0.15, 0.15);
-    this.keys = this.input.keyboard!.addKeys('W,A,S,D,SPACE,E,R,ESC,B,Q,M,N,G,V,SHIFT,C') as Record<string, Phaser.Input.Keyboard.Key>;
+    this.keys = this.input.keyboard!.addKeys(`W,A,S,D,SPACE,E,R,ESC,B,Q,M,N,G,V,SHIFT,C,${OUTPOST.key}`) as Record<string, Phaser.Input.Keyboard.Key>;
     this.input.on('wheel', (_pointer: Phaser.Input.Pointer, _objects: unknown, _dx: number, dy: number) => {
       if (!this.mapOpen && !this.building) this.cameras.main.setZoom(Phaser.Math.Clamp(this.cameras.main.zoom * Math.exp(-dy * 0.001), 0.55, 2.2));
     });
@@ -219,10 +240,13 @@ class SpaceScene extends Phaser.Scene {
     }
     if (Phaser.Input.Keyboard.JustDown(this.keys.ESC)) {
       if (this.mapOpen) this.mapOpen = false;
+      else if (this.buildMode) this.buildMode = false;
       else if (this.building) this.building = false;
       else this.paused = !this.paused;
     }
-    if (Phaser.Input.Keyboard.JustDown(this.keys.R)) this.model.respawn();
+    if (Phaser.Input.Keyboard.JustDown(this.keys.R)) { if (this.buildMode) this.buildRot = (this.buildRot + 1) % 4; else this.model.respawn(); }
+    if (Phaser.Input.Keyboard.JustDown(this.keys[OUTPOST.key]) && !this.building && !this.mapOpen && !this.settings.open) this.toggleBuildMode();
+    if (this.buildMode && (this.model.buildModeError && !this.model.builder || this.building || this.mapOpen)) this.buildMode = false;
     if (Phaser.Input.Keyboard.JustDown(this.keys.N)){this.audio.toggleMute();this.settings.sync();}
     if(Phaser.Input.Keyboard.JustDown(this.keys.V)){this.effects.enabled=!this.effects.enabled;this.settings.persist();}
     const beforeHull = this.model.player.health, beforeShield = this.model.shield, beforeKills = this.model.kills, beforeHits = this.model.enemyHits, beforeOreHits = this.model.oreHits;
@@ -232,9 +256,10 @@ class SpaceScene extends Phaser.Scene {
     const pointer = this.input.activePointer;
     const aim = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
     const bounds = this.cameras.main.worldView;
+    if (this.buildMode && !this.paused && !this.settings.open) this.updateBuildMode(aim, pointer);
     if (!this.paused && !this.building && !this.mapOpen && !this.settings.open) this.model.update(delta / 1000, {
       x: Number(this.keys.D.isDown) - Number(this.keys.A.isDown), y: Number(this.keys.S.isDown) - Number(this.keys.W.isDown),
-      aim, fire: pointer.leftButtonDown(), overclock:Phaser.Input.Keyboard.JustDown(this.keys.C), boost, mine: pointer.rightButtonDown() || this.keys.SPACE.isDown, dock, view: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+      aim, fire: !this.buildMode && pointer.leftButtonDown(), overclock:Phaser.Input.Keyboard.JustDown(this.keys.C), boost, mine: !this.buildMode && (pointer.rightButtonDown() || this.keys.SPACE.isDown), dock, view: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
     });
     if (!this.paused && !this.building && !this.mapOpen && !this.settings.open) {
       for(const event of this.model.effects){if(event.type==='cue'&&event.cue)this.audio.play(event.cue,event.pitch,event.volume);else if(event.type==='muzzle'&&event.weapon&&!event.silent)this.audio.playWeapon(event.weapon);if(event.type==='arc')this.audio.play('pulse');if(event.type==='collection')this.audio.play('collect');if(event.type==='shield')this.audio.play('shield');}
@@ -286,6 +311,7 @@ class SpaceScene extends Phaser.Scene {
     const banner=warning>0?`<strong>ALERT</strong><span>HORDE INBOUND · ${Math.ceil(warning)}</span><small>Fight, or dock at a station to lose them</small>`:hunting?`<strong>HORDE</strong><span>${hunting} of ${Math.max(hunting,this.model.horde.total)} hostiles left</span>`:'';
     if(banner!==this.hordeBannerContent){this.hordeBanner.innerHTML=banner;this.hordeBannerContent=banner;}
     this.hordeBanner.hidden=!alert||this.building||this.mapOpen;this.hordeBanner.classList.toggle('boss-below',Boolean(boss));
+    this.renderBuildPanel();
     document.body.classList.toggle('horde-alert',alert);document.body.classList.toggle('horde-warning',alert&&warning>0);
     }
     this.status.textContent = this.paused ? 'PAUSED — Press Esc to resume' : this.model.message;
@@ -306,10 +332,97 @@ class SpaceScene extends Phaser.Scene {
     // Re-read the repainted source; a tile sprite's own texture is its internal canvas, not the tile.
     for(const layer of this.backdrop){layer.sprite.setTexture(layer.key);layer.sprite.texture.setFilter(Phaser.Textures.FilterMode.NEAREST);}
   }
+  private toggleBuildMode() {
+    if (this.buildMode) { this.buildMode = false; return; }
+    const error = this.model.buildModeError;
+    if (error) { this.model.message = error; this.audio.play('fail'); return; }
+    this.buildMode = true; this.buildHeld = ''; this.buildWasDown = true;
+    if (!this.model.outposts.length) this.buildKind = 'outpostCore';
+    this.model.message = 'Build Mode: pick a block, left click a green cell to build.';
+  }
+  /** Places blocks under the cursor while the left button is held (one per cell), and leaves Build Mode on right click. */
+  private updateBuildMode(aim: { x: number; y: number }, pointer: Phaser.Input.Pointer) {
+    const cx = cellOf(aim.x), cy = cellOf(aim.y), down = pointer.leftButtonDown();
+    this.buildHover = this.model.placeError(this.buildKind, cx, cy) ?? '';
+    if (pointer.rightButtonDown()) { this.buildMode = false; return; }
+    if (down && this.buildHeld !== `${cx},${cy}` && !(this.buildWasDown && this.buildHeld === '')) {
+      this.buildHeld = `${cx},${cy}`;
+      const placed = this.model.placeStructure(this.buildKind, cx, cy, this.buildRot);
+      if (!placed && !this.buildWasDown) this.audio.play('fail');
+      if (placed && this.buildKind === 'outpostCore') this.buildKind = 'wall';
+    }
+    if (!down) this.buildHeld = '';
+    this.buildWasDown = down;
+  }
+  private renderBuildPanel() {
+    const builder = this.model.builder;
+    this.buildToggle.hidden = !builder || this.building || this.mapOpen; this.buildToggle.setAttribute('aria-pressed', String(this.buildMode));
+    this.buildPanel.hidden = !this.buildMode; document.body.classList.toggle('build-mode', this.buildMode);
+    if (!this.buildMode || !builder) return;
+    const ores = Object.keys(this.model.cargo) as Resource[];
+    const items = (Object.keys(STRUCTURES) as StructureKind[]).map(kind => {
+      const def = STRUCTURES[kind], price = this.model.structureCost(kind), can = ores.every(ore => this.model.cargo[ore] >= price[ore]);
+      const cost = ores.filter(ore => price[ore] > 0).map(ore => `<i class="${this.model.cargo[ore] >= price[ore] ? 'have' : 'lack'}">${price[ore]} ${ore}</i>`).join(' + ');
+      return `<button data-structure="${kind}" aria-pressed="${kind === this.buildKind}" class="${can ? 'affordable' : 'unaffordable'}" title="${def.description}"><img alt="" src="${this.structureIcons.get(kind)}"><span><b>${def.label}</b><small>${cost}</small><small>${def.health} hull · ${def.buildTime}s</small></span></button>`;
+    }).join('');
+    const carried = ores.filter(ore => this.model.cargo[ore] > 0).map(ore => `${this.model.cargo[ore]} ${ore}`).join(' · ') || 'empty';
+    const status = this.buildHover ? `<p class="build-status blocked">${this.buildHover}</p>` : `<p class="build-status ready">Left click to build ${STRUCTURES[this.buildKind].label}.</p>`;
+    const html = `<header><div><small>BUILD MODULE · LEVEL ${builder.level}</small><h2>Build Mode</h2></div><button data-build-close="true">Close · ${OUTPOST.key}</button></header><p class="build-cargo">Carried cargo: ${carried}</p><div class="build-catalog">${items}</div>${status}<p class="build-stats">Range ${builder.range} · Speed x${builder.speed}${builder.discount ? ` · Cost -${builder.discount}%` : ''} · ${this.model.outposts.length} outpost${this.model.outposts.length === 1 ? '' : 's'}</p><p class="build-hints"><kbd>Left click</kbd> build (hold to drag walls) · <kbd>${OUTPOST.rotateKey}</kbd> rotate · <kbd>Right click</kbd> / <kbd>Esc</kbd> exit</p>`;
+    if (html !== this.buildPanelContent) { this.buildPanel.innerHTML = html; this.buildPanelContent = html; }
+  }
+  /** World-aligned grids: a faint large grid always, and the fine construction grid when zoomed in or building. */
+  private drawGrids(view: Phaser.Geom.Rectangle, zoom: number) {
+    const g = this.gridGraphics; g.clear();
+    const lines = (step: number, color: number, alpha: number) => {
+      g.lineStyle(1 / zoom, color, alpha);
+      for (let x = Math.floor(view.x / step) * step; x <= view.right; x += step) g.lineBetween(x, view.y, x, view.bottom);
+      for (let y = Math.floor(view.y / step) * step; y <= view.bottom; y += step) g.lineBetween(view.x, y, view.right, y);
+    };
+    lines(OUTPOST.largeGrid, 0x3a5a78, 0.22);
+    const [from, to] = OUTPOST.gridZoom, fade = Math.max(0, Math.min(1, (zoom - from) / (to - from))), alpha = this.buildMode ? 0.34 : fade * fade * (3 - 2 * fade) * 0.2;
+    if (alpha <= 0.005) return;
+    // Zoomed far out in Build Mode, draw every 2nd/4th line so the grid stays aligned but bounded.
+    const step = OUTPOST.cell * Math.max(1, 2 ** Math.ceil(Math.log2(Math.max(1, view.width / OUTPOST.cell / 180))));
+    lines(step, this.buildMode ? 0xd9a441 : 0x5f86a8, alpha);
+  }
+  private drawOutposts(view: Phaser.Geom.Rectangle, now: number) {
+    const g = this.graphics, seen = new Set<number>(), size = OUTPOST.cell;
+    for (const outpost of this.model.outposts) {
+      seen.add(outpost.id);
+      const b = outpostBounds(outpost), inView = (b.maxX + 1) * size > view.x - 40 && b.minX * size < view.right + 40 && (b.maxY + 1) * size > view.y - 40 && b.minY * size < view.bottom + 40;
+      let entry = this.outpostSprites.get(outpost.id);
+      if (!inView) { entry?.image.setVisible(false); continue; }
+      if (!entry || entry.revision !== outpost.revision) {
+        // Static blocks are baked once per change, never redrawn per frame.
+        const baked = paintOutpost(outpost), key = `outpost-${outpost.id}`;
+        if (this.textures.exists(key)) this.textures.remove(key);
+        this.textures.addCanvas(key, baked.canvas)!.setFilter(Phaser.Textures.FilterMode.NEAREST);
+        const image = entry?.image ?? this.add.image(0, 0, key).setOrigin(0).setDepth(-0.6);
+        image.setTexture(key).setPosition(baked.x, baked.y); entry = { image, revision: outpost.revision }; this.outpostSprites.set(outpost.id, entry);
+      }
+      entry.image.setVisible(true);
+      for (const s of outpost.structures) {
+        const x = s.cx * size, y = s.cy * size;
+        if (s.progress < 1) { g.fillStyle(0x05070c); g.fillRect(x + 1, y + size - 4, size - 2, 3); g.fillStyle(0xf2d489); g.fillRect(x + 2, y + size - 3, (size - 4) * s.progress, 1); }
+        else if (s.kind === 'outpostCore') { g.fillStyle(0xffd27a, 0.25 + Math.sin(now * 3) * 0.15); g.fillCircle(x + size / 2, y + size / 2, 4.5); }
+      }
+    }
+    for (const [id, entry] of this.outpostSprites) if (!seen.has(id)) { entry.image.destroy(); if (this.textures.exists(`outpost-${id}`)) this.textures.remove(`outpost-${id}`); this.outpostSprites.delete(id); }
+  }
+  private drawBuildPreview(now: number) {
+    const g = this.graphics, builder = this.model.builder, p = this.model.player;
+    this.buildGhost.setVisible(this.buildMode && Boolean(builder) && !this.paused);
+    if (!this.buildMode || !builder || this.paused) return;
+    const aim = this.cameras.main.getWorldPoint(this.input.activePointer.x, this.input.activePointer.y), cx = cellOf(aim.x), cy = cellOf(aim.y), size = OUTPOST.cell, ok = !this.buildHover, color = ok ? 0x5dff9a : 0xff4d6d;
+    g.lineStyle(1, 0xd9a441, 0.35 + Math.sin(now * 4) * 0.1); g.strokeCircle(p.x, p.y, builder.range);
+    this.buildGhost.setTexture(`structure-${this.buildKind}`).setPosition(cellCenter(cx), cellCenter(cy)).setRotation(this.buildRot * Math.PI / 2);
+    g.fillStyle(color, 0.28); g.fillRect(cx * size, cy * size, size, size); g.lineStyle(1.5, color, 0.95); g.strokeRect(cx * size, cy * size, size, size);
+  }
   private switchModel(model: GameModel) {
     for (const sprite of this.asteroidSprites) sprite.destroy(); this.asteroidSprites = [];
     for (const cache of this.asteroidCache.values()) this.textures.remove(cache.key); this.asteroidCache.clear();
     this.effects.clear();this.audio.setLoop('mine',0);this.audio.setLoop('tractor',0);
+    this.buildMode = false; for (const [id, entry] of this.outpostSprites) { entry.image.destroy(); if (this.textures.exists(`outpost-${id}`)) this.textures.remove(`outpost-${id}`); } this.outpostSprites.clear();
     this.model = model; this.building = false; this.mapOpen = false; this.paused = false; this.movingModule = false; this.selectedCell = { x: 0, y: 0 };this.detailMode='module';this.buildCenter={x:0,y:0};
     this.lastBullet = -1; this.builderContent = ''; this.hudElapsed = 100; this.mapElapsed = 200; this.saveElapsed = 0;
     this.baseLabels.forEach((label, i) => label.setPosition(model.bases[i].x, model.bases[i].y - 172));
@@ -369,6 +482,7 @@ class SpaceScene extends Phaser.Scene {
     }
     const visible = (p: { x: number; y: number }) => p.x >= view.x - 80 && p.y >= view.y - 80 && p.x <= view.right + 80 && p.y <= view.bottom + 80;
     g.lineStyle(2, 0x34526a); g.strokeRect(0, 0, WORLD.width, WORLD.height);
+    this.drawGrids(view, this.cameras.main.zoom); this.drawOutposts(view, now);
     this.model.bases.forEach((base, i) => {
       const inView = base.x > view.x - 300 && base.x < view.right + 300 && base.y > view.y - 300 && base.y < view.bottom + 300;
       this.baseLabels[i].setVisible(inView);
@@ -516,6 +630,7 @@ class SpaceScene extends Phaser.Scene {
     }
     for (const link of this.model.miningLinks) drawEnergyBeam(g,link,this.effects.time,'mining',this.effects.enabled);
     drawParticles(this.effectsGraphics,this.effects);
+    this.drawBuildPreview(now);
     if (!this.building && !this.paused) {
       const pointer = this.input.activePointer;
       const aim = this.cameras.main.getWorldPoint(pointer.x, pointer.y);

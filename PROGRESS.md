@@ -1,5 +1,12 @@
 # Progress
 
+## Outpost construction, phases 1-3 (local branch claude/outpost-construction, uncommitted)
+- Phase 1: Build module, a new five-level ship module that cannot be installed before Core level 4. Levels raise construction range and speed, level 3 adds a cost discount, level 5 unlocks the Industrial Fabricator (auto-repairs nearby outpost blocks from carried iron and energy).
+- Phase 2: a large world grid is always visible again and a fine construction grid, aligned to world coordinates at the ship tile size, fades in when zoomed in. Build Mode (F or the on-screen button) forces the grid on, opens a brass build panel with the block catalog and costs, shows a snapped preview that is green when valid and red with the reason when not, places on left click (hold to drag walls), rotates with R and exits on right click, Esc or F. Weapons and mining are suspended while building.
+- Phase 3: Outpost Core, wall and reinforced wall. The core founds an outpost; other blocks must touch an existing block inside the core's construction area. Adjacent blocks join visually (brass frame on open sides, riveted seams and copper pipes between neighbours). Blocks are built from carried cargo over time, show wear when damaged, stop hostile shots, and collapse if cut off from the core. Any number of outposts; they save and load, and asteroid/enemy arrivals are kept out of them.
+- 148 tests pass (7 new in tests/outposts.test.ts); build passes. Browser checked Build Mode, the grids, an 18-block outpost with scaffolding and damage, and a save/load round trip, with no runtime errors.
+- Not done yet (later phases): turrets, power, storage, drones, docking, repair and upgrade stations, building upgrade levels, enemy raids, away-from-player simulation, sounds beyond the existing build cue. Ships and asteroids currently pass over outpost blocks; only hostile shots are blocked.
+
 ## Latest — moving asteroid belts and gentle ambient drift
 - Seeded static, drifting, elliptical orbital and looping figure-eight flowing belts. Shared motion is analytical in saved game time; individual bounded variation and slow independent rotation keep formations cohesive.
 - About 20% of eligible non-belt rocks have sustained 1.5–3.5 units/s drift; starter deposits/base approaches stay protected. Moving belt speeds are configurable (large 2–8, small 5–12 parameter ranges).

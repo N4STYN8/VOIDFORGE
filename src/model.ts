@@ -6,11 +6,12 @@ import { freshAbility,state,tick,activate,onFire,onHit,onMiningHit,onDamageTaken
 import { dangerAt, bossSites, ChunkWorld, SeedRandom, randomWorldSeed, type WorldSnapshot } from './world.ts';
 import { segmentPolygonHit, segmentCircleHit } from './asteroidGeometry.ts';
 import { clearLineOfSight, avoidMovingOre, nextEnemyState, type EnemyState } from './enemyAI.ts';
+import { cellOf, cellCenter, structureAt, outpostFor, connectedIds, outpostCenter, outpostRadius, structureOnSegment, maxHealth, wear, NEIGHBOURS, type Outpost, type Structure } from './outposts.ts';
 import { ensureAsteroidGeometry,asteroidLocal,asteroidWorld, miningImpact, mineMaterial, type Asteroid } from './mining.ts';
 export type { Asteroid } from './mining.ts';
 import type { EffectEvent } from './effectEvents.ts';
 import { collideAsteroid, collide, type Body } from './collisions.ts';
-import { WORLD, SHIP, WEAPONS, ENEMIES, ENEMY_AI, ENEMY_SPAWN, HORDE, DANGER, BOSS, HEARING, type EnemyDefinition, type EnemyWeapon, COLLISION, ORE_COMBAT, PATROL, MODULE_DURABILITY, REPAIR, MODULES, BUILD_GRID, BASES, BASE_RADIUS, EXPLORATION, RESOURCES, type EnemyKind, CORE, ROCKET, WEAPON_TYPES, SHIP_SYSTEMS, VFX, type WeaponKind, equipment, upgradeCost, type EquipmentStats, type EquipmentKind, type ModuleKind, type Resource } from './data.ts';
+import { WORLD, SHIP, WEAPONS, ENEMIES, ENEMY_AI, ENEMY_SPAWN, HORDE, OUTPOST, STRUCTURES, type StructureKind, DANGER, BOSS, HEARING, type EnemyDefinition, type EnemyWeapon, COLLISION, ORE_COMBAT, PATROL, MODULE_DURABILITY, REPAIR, MODULES, BUILD_GRID, BASES, BASE_RADIUS, EXPLORATION, RESOURCES, type EnemyKind, CORE, ROCKET, WEAPON_TYPES, SHIP_SYSTEMS, VFX, type WeaponKind, equipment, upgradeCost, type EquipmentStats, type EquipmentKind, type ModuleKind, type Resource } from './data.ts';
 export type ShipModule = { x: number; y: number; kind: ModuleKind; level: number; cooldown: number; integrity: number; ability?:AbilityState; targetIds?: number[]; boostRemaining?:number; boostCooldown?:number };
 export type Point = { x: number; y: number };
 export type Input = { x: number; y: number; aim: Point; fire: boolean; mine: boolean; dock: boolean; boost?:boolean; overclock?:boolean; view?: { x: number; y: number; width: number; height: number } };
@@ -52,6 +53,99 @@ export class GameModel {
   minedTarget: Asteroid | undefined; oreHits = 0; enemyHits = 0; kills = 0; deaths = 0; message = 'Welcome, pilot. Mine nearby asteroids and unload at the station.';
   /** Bosses currently on their return cooldown (main's population ledger decides when they come back). */
   get defeatedBosses(): EnemyKind[] { return (this.sites ??= bossSites(this.world.spec)).filter(site => !this.population.bossReady(site.kind, this.world.time)).map(site => site.kind); }
+  /** Player-built outposts; saved with the world. */
+  outposts: Outpost[] = [];
+  /** The best intact Build module on the ship, or undefined when construction is unavailable. */
+  get builder() {
+    const module = this.modules.filter(m => m.kind === 'builder' && m.integrity > 0).sort((a, b) => b.level - a.level)[0];
+    if (!module) return undefined;
+    const stats = MODULES.builder.levels[module.level - 1];
+    return { level: module.level, range: stats.buildRange ?? 0, speed: stats.buildSpeed ?? 1, discount: stats.buildDiscount ?? 0 };
+  }
+  /** Why Build Mode is unavailable right now, if it is. */
+  get buildModeError(): string | undefined {
+    if (this.dead) return 'Ship destroyed.';
+    if (!this.builder) return this.modules.some(m => m.kind === 'builder') ? 'The Build module is disabled. Repair it at a station.' : `Install a Build module (Core level ${OUTPOST.coreLevel}) to construct outposts.`;
+    if (this.energy < OUTPOST.energyPerBlock) return 'Not enough energy to run the Build module.';
+  }
+  /** Carried-cargo price of a block after the Build module's discount. */
+  structureCost(kind: StructureKind): Record<Resource, number> {
+    const discount = 1 - (this.builder?.discount ?? 0) / 100, base = STRUCTURES[kind].cost;
+    return Object.fromEntries((Object.keys(base) as Resource[]).map(ore => [ore, Math.ceil(base[ore] * discount)])) as Record<Resource, number>;
+  }
+  /** Why a block cannot be placed in this construction-grid cell; undefined when it can. */
+  placeError(kind: StructureKind, cx: number, cy: number): string | undefined {
+    const unavailable = this.buildModeError; if (unavailable) return unavailable;
+    if (!Number.isSafeInteger(cx) || !Number.isSafeInteger(cy)) return 'Outside the construction grid.';
+    const x = cellCenter(cx), y = cellCenter(cy), point = { x, y }, half = OUTPOST.cell / 2;
+    if (x < 200 || y < 200 || x > WORLD.width - 200 || y > WORLD.height - 200) return 'Too close to the edge of the sector.';
+    if (dist(point, this.player) > this.builder!.range) return 'Out of construction range. Move closer.';
+    if (structureAt(this.outposts, cx, cy)) return 'That cell is already built on.';
+    if (this.bases.some(base => dist(base, point) < OUTPOST.baseClearance)) return 'Too close to a station.';
+    if (this.asteroids.some(a => dist(a, point) < a.radius + half)) return 'An asteroid is in the way.';
+    if (dist(point, this.player) < SHIP.radius + half || this.modules.some(m => dist(this.modulePoint(m), point) < 8 + half)) return 'Your ship is in the way.';
+    if (this.enemies.some(e => e.health > 0 && dist(e, point) < ENEMIES[e.kind ?? 'raider'].radius + half)) return 'A ship is in the way.';
+    if (kind === 'outpostCore') {
+      if (this.outposts.some(outpost => dist(outpostCenter(outpost), point) < OUTPOST.coreSpacing)) return 'Too close to another outpost core.';
+    } else if (!outpostFor(this.outposts, cx, cy)) {
+      return this.outposts.length ? 'Blocks must touch an existing outpost block, inside that outpost\'s construction area.' : 'Place an Outpost Core first.';
+    }
+    const price = this.structureCost(kind), missing = (Object.keys(price) as Resource[]).filter(ore => this.cargo[ore] < price[ore]);
+    if (missing.length) return `Not enough carried ${missing.join(' and ')}.`;
+  }
+  /** Builds a block from carried cargo. Returns false and sets `message` when it cannot. */
+  placeStructure(kind: StructureKind, cx: number, cy: number, rot = 0): boolean {
+    const error = this.placeError(kind, cx, cy);
+    if (error) { this.message = error; return false; }
+    const price = this.structureCost(kind);
+    for (const ore of Object.keys(price) as Resource[]) this.cargo[ore] -= price[ore];
+    this.energy -= OUTPOST.energyPerBlock;
+    const structure: Structure = { id: this.id++, kind, cx, cy, rot: ((rot % 4) + 4) % 4, level: 1, health: STRUCTURES[kind].health, progress: 0 };
+    let outpost = kind === 'outpostCore' ? undefined : outpostFor(this.outposts, cx, cy);
+    if (!outpost) { outpost = { id: this.id++, name: `Outpost ${this.outposts.length + 1}`, cx, cy, structures: [], revision: 0 }; this.outposts.push(outpost); }
+    outpost.structures.push(structure); outpost.revision++;
+    this.message = kind === 'outpostCore' ? `${outpost.name} founded. Build outward from the core.` : `${STRUCTURES[kind].label} under construction.`;
+    this.cue('build', { x: cellCenter(cx), y: cellCenter(cy) });
+    return true;
+  }
+  /** Applies damage to a block. Destroyed blocks are removed, along with anything they were holding to the core. */
+  damageStructure(outpost: Outpost, structure: Structure, amount: number) {
+    if (amount <= 0 || structure.health <= 0) return;
+    const before = wear(structure); structure.health -= amount;
+    if (structure.health > 0) { if (wear(structure) !== before) outpost.revision++; return; }
+    const lost = structure.kind === 'outpostCore' ? [...outpost.structures] : [structure];
+    outpost.structures = outpost.structures.filter(s => !lost.includes(s)); outpost.revision++;
+    if (structure.kind !== 'outpostCore') { const held = connectedIds(outpost); lost.push(...outpost.structures.filter(s => !held.has(s.id))); outpost.structures = outpost.structures.filter(s => held.has(s.id)); }
+    for (const s of lost) this.addBlast({ x: cellCenter(s.cx), y: cellCenter(s.cy), radius: 18, life: 0.2 });
+    if (!outpost.structures.length) { this.outposts = this.outposts.filter(o => o !== outpost); this.message = `${outpost.name} has been destroyed.`; }
+    this.cue('moduleLost', { x: cellCenter(structure.cx), y: cellCenter(structure.cy) });
+  }
+  private updateOutposts(dt: number) {
+    const builder = this.builder, p = this.player;
+    for (const outpost of this.outposts) {
+      const near = builder !== undefined && dist(outpostCenter(outpost), p) < builder.range * OUTPOST.awayRange + outpostRadius(outpost);
+      for (const s of outpost.structures) {
+        if (s.progress >= 1) continue;
+        // Construction runs at the Build module's speed while the ship is close, and slowly on its own otherwise.
+        s.progress = Math.min(1, s.progress + dt * (near ? builder!.speed : OUTPOST.awaySpeed) / STRUCTURES[s.kind].buildTime);
+        if (s.progress >= 1) outpost.revision++;
+      }
+    }
+    // Level-5 Industrial Fabricator: repairs one damaged block at a time from carried iron and ship energy.
+    if (!builder || builder.level < 5 || this.dead) return;
+    const fab = OUTPOST.fabricator;
+    for (const outpost of this.outposts) for (const s of outpost.structures) {
+      if (s.progress < 1 || s.health >= maxHealth(s) || dist({ x: cellCenter(s.cx), y: cellCenter(s.cy) }, p) > builder.range) continue;
+      const repair = Math.min(fab.hpPerSecond * dt, maxHealth(s) - s.health), iron = repair * fab.ironPerHp, energy = fab.energyPerSecond * dt;
+      this.fabricatorDebt += iron;
+      const whole = Math.floor(this.fabricatorDebt);
+      if (this.cargo.iron < whole || this.energy < energy) { this.fabricatorDebt -= iron; return; }
+      this.cargo.iron -= whole; this.fabricatorDebt -= whole; this.energy -= energy;
+      const before = wear(s); s.health += repair; if (wear(s) !== before) outpost.revision++;
+      return;
+    }
+  }
+  private fabricatorDebt = 0;
   /** Horde event state: seconds until the next alert, remaining alert time, approach direction and the size of the horde in play. */
   horde = { timer: HORDE.interval[0][1] + HORDE.firstDelay, warning: 0, angle: 0, total: 0 };
   get hordeCount() { return this.enemies.filter(e => e.horde && e.health > 0).length; }
@@ -79,7 +173,7 @@ export class GameModel {
       player: { ...this.player }, modules: structuredClone(this.modules), coreAbility:{...this.coreAbility},novaFields:structuredClone(this.novaFields), coreLevel: this.coreLevel, shield: this.shield, energy: this.energy, heat: this.heat, empPulses: structuredClone(this.empPulses),
       cargo: { ...this.cargo }, stored: { ...this.stored }, bases: structuredClone(this.bases), explored: [...this.explored],
       enemies: structuredClone(this.enemies), squads: structuredClone(this.squads), drops: structuredClone(this.drops), bullets: structuredClone(this.bullets), detachedModules: structuredClone(this.detachedModules),
-      kills: this.kills, horde: { ...this.horde }, deaths: this.deaths, id: this.id, rng: this.rng.state, spawnTimer: this.spawnTimer, shieldDelay: this.shieldDelay, impactTimer: this.impactTimer };
+      kills: this.kills, outposts: structuredClone(this.outposts), horde: { ...this.horde }, deaths: this.deaths, id: this.id, rng: this.rng.state, spawnTimer: this.spawnTimer, shieldDelay: this.shieldDelay, impactTimer: this.impactTimer };
   }
   static fromSave(value: unknown) {
     const data = value as GameSave;
@@ -93,7 +187,7 @@ export class GameModel {
     if ([...Object.values(m.cargo), ...Object.values(m.stored)].some(n => !Number.isFinite(n) || n < 0)) throw new Error('Invalid resource quantities in save.');
     m.bases = structuredClone(data.bases); m.explored = new Set(data.explored);
     m.enemies = structuredClone(data.enemies ?? []); m.squads = structuredClone(data.squads ?? []); m.drops = structuredClone(data.drops ?? []); m.bullets = structuredClone(data.bullets ?? []); m.detachedModules = structuredClone(data.detachedModules ?? []);
-    m.kills = data.kills; if (data.horde) m.horde = { ...m.horde, ...data.horde }; m.deaths = data.deaths; m.id = data.id; m.rng.state = data.rng; m.spawnTimer = data.population?data.spawnTimer:POPULATION.tick; m.shieldDelay = data.shieldDelay; m.impactTimer = data.impactTimer;
+    m.kills = data.kills; if (data.horde) m.horde = { ...m.horde, ...data.horde }; m.outposts = structuredClone(data.outposts ?? []); m.deaths = data.deaths; m.id = data.id; m.rng.state = data.rng; m.spawnTimer = data.population?data.spawnTimer:POPULATION.tick; m.shieldDelay = data.shieldDelay; m.impactTimer = data.impactTimer;
     m.asteroids = m.world.activate(m.player, [], true); const overflow=m.cargoUsed>m.cargoCapacity;m.spillCargo();m.message = overflow?'World restored. Excess cargo was preserved as nearby pickups.':`World restored. Seed: ${m.seed}`; return m;
   }
   private get aggregate(){
@@ -202,6 +296,7 @@ export class GameModel {
   buildError(kind: ModuleKind, x: number, y: number): string | undefined {
     if (this.dead || !this.atStation) return 'Return to the station to install modules.';
     if (!Number.isSafeInteger(x) || !Number.isSafeInteger(y) || Math.abs(x) * BUILD_GRID.cellSize > WORLD.width / 2 || Math.abs(y) * BUILD_GRID.cellSize > WORLD.height / 2) return 'Outside the build grid.';
+    if (kind === 'builder' && this.coreLevel < OUTPOST.coreLevel) return `The Build module requires Core level ${OUTPOST.coreLevel}.`;
     if ((x === 0 && y === 0) || this.modules.some(m => m.x === x && m.y === y)) return 'That cell is occupied.';
     if (Math.abs(x) + Math.abs(y) !== 1 && !this.modules.some(m => Math.abs(m.x - x) + Math.abs(m.y - y) === 1)) return 'Attach to the core or an installed module.';
     const def = MODULES[kind];
@@ -483,9 +578,9 @@ export class GameModel {
     }
   }
   private updatePopulation(view:Input['view'],regenerate=true){
-    const blockers=[{...this.player,radius:SHIP.radius},...this.modules.map(m=>({...this.modulePoint(m),radius:12})),...this.enemies.map(e=>({...e,radius:ENEMIES[e.kind??'raider'].radius}))];
+    const blockers=[{...this.player,radius:SHIP.radius},...this.modules.map(m=>({...this.modulePoint(m),radius:12})),...this.enemies.map(e=>({...e,radius:ENEMIES[e.kind??'raider'].radius})),...this.outposts.map(o=>({...outpostCenter(o),radius:outpostRadius(o)+40}))];
     if(regenerate)this.world.replenish(this.player,this.asteroids,view,blockers);
-    const next=this.population.update(this.world.time,this.player,view,this.asteroids,this.bases,this.enemies,this.squads,()=>this.id++,blockers.slice(0,this.modules.length+1));
+    const next=this.population.update(this.world.time,this.player,view,this.asteroids,this.bases,this.enemies,this.squads,()=>this.id++,[...blockers.slice(0,this.modules.length+1),...blockers.slice(blockers.length-this.outposts.length)]);
     this.enemies=next.enemies;this.squads=next.squads;
   }
   respawn() {
@@ -820,6 +915,7 @@ export class GameModel {
     if (danger > this.lastDanger && !safe && !this.dead) this.message = `Entering ${DANGER.labels[danger - 1].toLowerCase()} threat space. Richer ore, stronger patrols.`;
     this.lastDanger = danger;
     this.updateHorde(dt, danger, safe);
+    this.updateOutposts(dt);
     for (const site of this.bossSites) if (!site.defeated && dist(p, site) < BOSS.wake && !this.enemies.some(e => e.kind === site.kind)) this.spawnBoss(site);
     const visibleEnemies = new Set(this.enemies.filter(e => !safe && dist(e, p) <= ENEMIES[e.kind ?? 'raider'].detection && clearLineOfSight(e, p, this.asteroids)).map(e => e.id));
     const alertedSquads = new Set(this.enemies.filter(e => e.squad !== undefined && visibleEnemies.has(e.id)).map(e => e.squad));
@@ -1006,6 +1102,11 @@ export class GameModel {
       const start = { x: b.x, y: b.y }; b.x += b.vx * dt; b.y += b.vy * dt;
       const view = input.view ?? { x: 0, y: 0, width: WORLD.width, height: WORLD.height }, margin = b.enemy ? ENEMY_AI.shotMargin : 12;
       if (b.x < view.x - margin || b.y < view.y - margin || b.x > view.x + view.width + margin || b.y > view.y + view.height + margin) { b.life = 0; continue; }
+      if (b.enemy && this.outposts.length) {
+        // Hostile fire is stopped by, and damages, finished outpost blocks. The player's own shots pass over them.
+        const struck = structureOnSegment(this.outposts, start, b);
+        if (struck) { b.life = 0; this.effect({ type: 'impact', ...struck.point, radius: 12, color: 0xffb070, weapon: b.weapon }); this.damageStructure(struck.outpost, struck.structure, b.damage ?? WEAPONS.enemy.damage); continue; }
+      }
       for(let hit=0;hit<(b.enhanced?SPECIAL.rail.targets:1);hit++){
       let oreHit: { asteroid: Asteroid; point: Point; t: number } | undefined;
       for (const asteroid of this.asteroids) {
@@ -1071,6 +1172,6 @@ export type GameSave = {
   version: 1; seed: string; population?:EnemyPopulationSnapshot;world: WorldSnapshot; player: GameModel['player']; modules: ShipModule[];
   coreAbility?:AbilityState;novaFields?:GameModel['novaFields'];coreLevel: number; shield: number; energy?:number; heat?:number; empPulses?:GameModel['empPulses']; cargo: Record<Resource, number>; stored: Record<Resource, number>;
   bases: GameModel['bases']; explored: string[]; enemies: Enemy[]; squads: GameModel['squads']; drops: Drop[];
-  bullets: Bullet[]; detachedModules: GameModel['detachedModules']; kills: number; horde?: GameModel['horde']; deaths: number; id: number; rng: number;
+  bullets: Bullet[]; detachedModules: GameModel['detachedModules']; kills: number; outposts?: Outpost[]; horde?: GameModel['horde']; deaths: number; id: number; rng: number;
   spawnTimer: number; shieldDelay: number; impactTimer: number;
 };
