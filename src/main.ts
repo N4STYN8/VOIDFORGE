@@ -38,6 +38,7 @@ class SpaceScene extends Phaser.Scene {
   private commandInput=new Set<CockpitAction>();
   private effects = new EffectPool();
   private saveElapsed = 0;
+  private outfitterWasOpen=false;private energyWarned=false;private heatWarned=false;
   private sessionControls = document.createElement('section');
   private hudContent='';
   /** Relay connection, lobby state and remote ships. Presentation and transport only; the model stays local. */
@@ -192,7 +193,7 @@ class SpaceScene extends Phaser.Scene {
     this.outpostPanel.addEventListener('click', event => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button'), outpost = this.panelOutpost; if (!button || !outpost) return;
       const moved = button.dataset.outpost === 'deposit' ? this.model.depositToOutpost(outpost) : this.model.withdrawFromOutpost(outpost);
-      this.audio.play(moved ? 'collect' : 'fail'); button.blur(); this.renderOutpostPanel();
+      if(!moved)this.audio.play('fail'); button.blur(); this.renderOutpostPanel();
     });
     this.buildToggle.id = 'build-toggle'; this.buildToggle.hidden = true; this.buildToggle.textContent = `Build mode · ${OUTPOST.key}`;
     this.buildToggle.addEventListener('pointerdown', event => event.stopPropagation());
@@ -215,7 +216,7 @@ class SpaceScene extends Phaser.Scene {
     });
     this.builder.addEventListener('change',event=>{const select=event.target as HTMLSelectElement;if(select.id==='module-category'){this.catalogCategory=select.value;this.renderBuilder();}if(select.id==='ship-name'){this.model.renameShip(select.value);this.renderBuilder();}});
     this.builder.addEventListener('keydown',event=>{if(event.key==='Escape'){this.building=false;this.builder.hidden=true;restoreKeyboard();}});
-    const action=(success:boolean)=>{this.actionFailed=!success;this.audio.play(success?'build':'fail');return success;};
+    const action=(success:boolean)=>{this.actionFailed=!success;if(!success)this.audio.play('fail');return success;};
     moduleDrag(this.builder, {
       active: value=>{this.moduleDragActive=value;},
       error: (source,x,y)=>source.kind?this.model.buildError(source.kind,x,y):this.model.moveError(source.x!,source.y!,x,y),
@@ -321,7 +322,7 @@ class SpaceScene extends Phaser.Scene {
       continue:async()=>{if(!this.sessionStarted){const saved=await loadSavedGame();if(!saved)throw new Error('No valid saved game could be loaded. Start a new voyage or import a backup.');this.switchModel(saved);}this.beginSession();},
       newGame:async seed=>{const next=seed?new GameModel(seed):new GameModel();if(this.sessionStarted){const error=await saveGameConfirmed(this.model);if(error)throw new Error(error);}if(!await backupSavedGame())throw new Error('Backup failed. Export your current save before starting a new world.');this.switchModel(next);this.beginSession();const error=await saveGameConfirmed(next);if(error)this.model.message=error;},
       settings:()=>this.settings.show(),
-      sound:kind=>{if(kind!=='hover')this.audio.unlock();this.audio.play(kind==='hover'?'uiHover':kind==='warning'?'uiWarning':'uiClick');},
+      sound:kind=>{if(kind!=='hover'&&kind!=='open')this.audio.unlock();this.audio.play(({hover:'uiHover',click:'uiClick',warning:'uiWarning',open:'uiOpen',confirm:'uiConfirm',cancel:'uiCancel',launch:'uiLaunch'} as const)[kind]);},
       multiplayer:async()=>{if(!this.sessionStarted){const saved=await loadSavedGame();if(!saved)throw new Error('Start a new voyage first, then open Multiplayer to use its pilot.');this.switchModel(saved);}this.beginSession();this.setNetOpen(true);},
     },Boolean(startModel));
     this.settings.addMainMenu(()=>{if(this.menu.open)return;void this.returnToMenu();});
@@ -346,13 +347,13 @@ class SpaceScene extends Phaser.Scene {
       else if (this.building) this.building = false;
       else this.paused = !this.paused;
     }
-    if (Phaser.Input.Keyboard.JustDown(this.keys.R)) { if (this.buildMode) this.buildRot = (this.buildRot + 1) % 4; else if (this.model.rebuildDue && this.model.dead) { this.switchModel(rebuildAtHome(this.model)); saveGame(this.model, this.saveFailed); } else this.model.respawn(); }
+    if (Phaser.Input.Keyboard.JustDown(this.keys.R)) { if (this.buildMode) this.buildRot = (this.buildRot + 1) % 4; else if (this.model.rebuildDue && this.model.dead) { this.switchModel(rebuildAtHome(this.model));this.audio.play('respawn'); saveGame(this.model, this.saveFailed); } else this.model.respawn(); }
     if (Phaser.Input.Keyboard.JustDown(this.keys[OUTPOST.key]) && !this.building && !this.mapOpen && !this.settings.open) this.toggleBuildMode();
     if (this.buildMode && (this.model.buildModeError && !this.model.builder || this.building || this.mapOpen)) this.buildMode = false;
     if (Phaser.Input.Keyboard.JustDown(this.keys.N)){this.audio.toggleMute();this.settings.sync();}
     if(Phaser.Input.Keyboard.JustDown(this.keys.V)){this.effects.enabled=!this.effects.enabled;this.settings.persist();}
     const beforeHull = this.model.player.health, beforeShield = this.model.shield, beforeKills = this.model.kills, beforeHits = this.model.enemyHits, beforeOreHits = this.model.oreHits;
-    if (Phaser.Input.Keyboard.JustDown(this.keys.G) && !this.paused && !this.building && !this.settings.open) { if (this.model.unlockBase()) this.audio.play('build'); }
+    if (Phaser.Input.Keyboard.JustDown(this.keys.G) && !this.paused && !this.building && !this.settings.open) { if (this.model.unlockBase()) this.audio.play('build');else this.audio.play('fail'); }
     const boost=Phaser.Input.Keyboard.JustDown(this.keys.SHIFT)||this.commandInput.has('boost');
     const dock = Phaser.Input.Keyboard.JustDown(this.keys.E)||this.commandInput.has('dock');
     const pointer = this.input.activePointer;
@@ -376,13 +377,19 @@ class SpaceScene extends Phaser.Scene {
       } else { go(); return; }
     }
     if (!this.paused && !this.building && !this.settings.open) {
-      for(const event of this.model.effects){if(event.type==='cue'&&event.cue)this.audio.play(event.cue,event.pitch,event.volume);else if(event.type==='muzzle'&&event.weapon&&!event.silent)this.audio.playWeapon(event.weapon,event.level===5?.8:1);if(event.type==='arc')this.audio.play('pulse');if(event.type==='collection')this.audio.play('collect');if(event.type==='shield')this.audio.play('shield');}
+      for(const event of this.model.effects){if(event.type==='cue'&&event.cue)this.audio.play(event.cue,event.pitch,event.volume);else if(event.type==='muzzle'&&event.weapon&&!event.silent)this.audio.playWeapon(event.weapon,event.pitch??1,event.volume??1,event.level??1,Boolean(event.ultimate));if(event.type==='arc')this.audio.play('pulse');if(event.type==='shield')this.audio.play('shield');}
+      const picked=this.model.effects.filter(e=>e.type==='collection').reduce((n,e)=>n+(e.amount??1),0);if(picked)this.audio.pickup(picked);
+      if(!this.model.powerLimited&&this.model.energy>this.model.maxEnergy*.35)this.energyWarned=false;if(!this.model.heatLimited&&this.model.heat<this.model.heatCapacity*.55)this.heatWarned=false;
+      if((this.model.powerLimited||this.model.energy<this.model.maxEnergy*.12)&&!this.energyWarned){this.audio.play('lowEnergy');this.energyWarned=true;}if((this.model.heatLimited||this.model.heat>this.model.heatCapacity*.9)&&!this.heatWarned){this.audio.play('overheat');this.heatWarned=true;}
       // Hull hits crunch, shield hits ring (the shield cue comes from its own event), and losing the ship has its own sound.
       if (this.model.dead && beforeHull > 0) this.audio.play('death'); else if (this.model.player.health < beforeHull) this.audio.play('hull');
       if (this.model.oreHits > beforeOreHits) this.audio.play('impact');
       if (this.model.enemyHits > beforeHits) this.audio.play('hit');
       if (this.model.kills > beforeKills) this.audio.play('explosion');
     }
+    // UI actions can happen while the simulation is paused. Drain their queue exactly once.
+    for(const event of this.model.actionSounds.splice(0)){if(event.cue==='deposit')this.audio.deposit(event.amount??0);else if(event.cue)this.audio.play(event.cue,event.pitch??1,event.volume??1);}
+    if(this.building!==this.outfitterWasOpen){this.audio.play(this.building?'outfitterOpen':'outfitterClose');this.outfitterWasOpen=this.building;}
     this.commandInput.clear();
     const audible=!this.paused&&!this.building&&!this.settings.open&&!this.model.dead;
     this.audio.setLoop('mine',audible?this.model.miningLinks.length:0);this.audio.setLoop('tractor',audible?this.model.tractorLinks.length:0);
@@ -850,7 +857,7 @@ class SpaceScene extends Phaser.Scene {
   }
   private disconnectForMenu(){if(this.net.status!=='offline'||this.net.staysOnline){this.menuNetworkTransition=true;try{this.net.goOffline();this.link.frame(this.model,performance.now()/1000);}finally{this.menuNetworkTransition=false;}}this.netStarted=false;}
   private beginSession(){this.scene.setVisible(true);this.sessionStarted=true;if(!this.netStarted){this.netStarted=true;this.startNet();}this.paused=false;this.input.keyboard!.resetKeys();this.input.keyboard!.enabled=true;this.input.keyboard!.enableGlobalCapture();this.commandInput.clear();this.saveElapsed=0;}
-  private openMenu(){this.setNetOpen(false);this.disconnectForMenu();this.scene.setVisible(false);this.building=false;this.mapOpen=false;this.buildMode=false;this.builder.hidden=true;this.mapWindow.hidden=true;document.body.classList.remove('chart-open');this.audio.setLoop('mine',0);this.audio.setLoop('tractor',0);this.input.keyboard!.resetKeys();this.input.keyboard!.enabled=false;this.input.keyboard!.disableGlobalCapture();this.menu.show(this.sessionStarted||Boolean(startModel));}
+  private openMenu(){this.outfitterWasOpen=false;this.setNetOpen(false);this.disconnectForMenu();this.scene.setVisible(false);this.building=false;this.mapOpen=false;this.buildMode=false;this.builder.hidden=true;this.mapWindow.hidden=true;document.body.classList.remove('chart-open');this.audio.setLoop('mine',0);this.audio.setLoop('tractor',0);this.input.keyboard!.resetKeys();this.input.keyboard!.enabled=false;this.input.keyboard!.disableGlobalCapture();this.menu.show(this.sessionStarted||Boolean(startModel));}
   private async returnToMenu(){
     const paused=this.paused;this.paused=true;this.input.keyboard!.enabled=false;this.input.keyboard!.disableGlobalCapture();
     try{const choice=await this.menu.confirmReturn();if(choice==='cancel'){this.paused=paused;return;}

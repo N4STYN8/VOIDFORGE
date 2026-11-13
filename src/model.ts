@@ -126,6 +126,7 @@ export class GameModel {
     const price = this.shipPrice; for (const ore of Object.keys(price) as Resource[]) this.stored[ore] -= price[ore];
     const used = new Set([this.shipName, ...this.hangar.map(s => s.name)]); let n = this.fleetSize + 1; while (used.has(`Ship ${n}`)) n++;
     this.hangar.push({ id: this.id++, name: `Ship ${n}`, coreLevel: 1, modules: starterModules(), health: CORE.levels[0].hull ?? 100, paint: this.fleetSize % FLEET.paints.length });
+    this.sound('moduleInstall');
     this.message = `Ship ${n} bought. Select it in the outfitter to fly it.`;
     return true;
   }
@@ -136,12 +137,14 @@ export class GameModel {
   /** Swaps the flown ship with one from the hangar. Carried cargo is unloaded to station storage first, so nothing is lost if the other hold is smaller. */
   switchShip(id: number): boolean {
     const error = this.switchShipError(id); if (error) { this.message = error; return false; }
+    const deposited=this.cargoUsed;
     for (const ore of Object.keys(this.cargo) as Resource[]) { this.stored[ore] += this.cargo[ore]; this.cargo[ore] = 0; }
     const index = this.hangar.findIndex(s => s.id === id), next = this.hangar[index];
     this.hangar[index] = { id: this.id++, name: this.shipName, coreLevel: this.coreLevel, modules: this.modules, health: this.player.health, paint: this.shipPaint };
     this.shipName = next.name; this.shipPaint = paintIndex(next.paint); this.coreLevel = next.coreLevel; this.modules = next.modules;
     this.coreAbility = freshAbility(); this.novaFields = []; this.empPulses = []; this.miningLinks = []; this.tractorLinks = [];
     this.player.health = Math.max(1, Math.min(next.health, this.maxHealth)); this.shield = this.maxShield; this.energy = this.maxEnergy; this.heat = 0; this.shieldDelay = 0;
+    if(deposited>0)this.sound('deposit',this.player,deposited);else this.sound('dock');
     this.message = `Now flying ${this.shipName}. Cargo was unloaded to station storage.`;
     return true;
   }
@@ -209,7 +212,7 @@ export class GameModel {
     if (STRUCTURES[kind].turret) structure.angle = structure.rot * Math.PI / 2;
     outpost.structures.push(structure); outpost.revision++;
     this.message = kind === 'outpostCore' ? `${outpost.name} founded. Build outward from the core.` : `${STRUCTURES[kind].label} under construction.`;
-    this.cue('build', { x: cellCenter(cx), y: cellCenter(cy) });
+    this.sound('moduleInstall', { x: cellCenter(cx), y: cellCenter(cy) });
     return true;
   }
   /** Applies damage to a block. Destroyed blocks are removed, along with anything they were holding to the core. */
@@ -227,6 +230,7 @@ export class GameModel {
         if (amount <= 0) return;
       }
     }
+    if(amount>0)this.sound('structureHit',{x:cellCenter(structure.cx),y:cellCenter(structure.cy)});
     const before = wear(structure); structure.health -= amount;
     if (structure.health > 0) { if (wear(structure) !== before) outpost.revision++; return; }
     const lost = structure.kind === 'outpostCore' ? [...outpost.structures] : [structure];
@@ -264,6 +268,7 @@ export class GameModel {
     const stored = outpost.stored ??= emptyStore(); let room = outpostStats(outpost).storageCapacity - storedTotal(outpost), moved = 0;
     for (const ore of Object.keys(this.cargo) as Resource[]) { const amount = Math.max(0, Math.min(this.cargo[ore], room)); this.cargo[ore] -= amount; stored[ore] += amount; room -= amount; moved += amount; }
     this.message = moved ? `Stored ${moved} minerals at ${outpost.name}.` : room <= 0 ? `${outpost.name} storage is full.` : 'No cargo to store.';
+    if(moved>0)this.sound('deposit',outpostCenter(outpost),moved);
     return moved;
   }
   /** Moves stored minerals into the ship until its hold is full. Returns the amount moved. */
@@ -272,6 +277,7 @@ export class GameModel {
     const stored = outpost.stored ??= emptyStore(); let room = this.cargoCapacity - this.cargoUsed, moved = 0;
     for (const ore of Object.keys(stored) as Resource[]) { const amount = Math.max(0, Math.min(stored[ore], room)); stored[ore] -= amount; this.cargo[ore] += amount; room -= amount; moved += amount; }
     this.message = moved ? `Loaded ${moved} minerals from ${outpost.name}.` : room <= 0 ? 'Cargo hold is full.' : `${outpost.name} storage is empty.`;
+    if(moved>0)this.sound('cargoLoad');
     return moved;
   }
   /** Minerals available for outpost work: carried cargo plus that outpost's storage. */
@@ -299,7 +305,7 @@ export class GameModel {
     const error = this.upgradeStructureError(outpost, s); if (error) { this.message = error; return false; }
     this.payOutpost(outpost, this.structureUpgradeCost(outpost, s));
     const before = maxHealth(s); s.level++; s.health += maxHealth(s) - before; outpost.revision++;
-    this.message = `${STRUCTURES[s.kind].label} upgraded to level ${s.level}.`; this.cue('build', { x: cellCenter(s.cx), y: cellCenter(s.cy) });
+    this.message = `${STRUCTURES[s.kind].label} upgraded to level ${s.level}.`; this.sound(s.level>=5?'upgradeUltimate':'moduleUpgrade', { x: cellCenter(s.cx), y: cellCenter(s.cy) });
     this.spillOutpostOverflow(outpost);
     return true;
   }
@@ -314,7 +320,7 @@ export class GameModel {
   repairStructure(outpost: Outpost, s: Structure): boolean {
     const error = this.repairStructureError(outpost, s); if (error) { this.message = error; return false; }
     this.payOutpost(outpost, this.structureRepairCost(s)); s.health = maxHealth(s); outpost.revision++;
-    this.message = `${STRUCTURES[s.kind].label} repaired.`; this.cue('build', { x: cellCenter(s.cx), y: cellCenter(s.cy) });
+    this.message = `${STRUCTURES[s.kind].label} repaired.`; this.sound('repair', { x: cellCenter(s.cx), y: cellCenter(s.cy) });
     return true;
   }
   /** The outpost whose finished Docking station the ship is close enough to use, if any. */
@@ -335,6 +341,7 @@ export class GameModel {
     for (const ore of ores) { const carried = Math.min(this.cargo[ore], price[ore]); this.cargo[ore] -= carried; stored[ore] -= price[ore] - carried; }
     this.player.health = this.maxHealth; this.shield = this.maxShield;
     for (const m of this.modules) m.integrity = this.moduleMaxIntegrity(m);
+    this.sound('repair');
     this.message = `Docked at ${outpost.name}: stored ${moved} minerals and repaired the ship from outpost stores.`;
   }
   /** Drones whose hangar is gone are lost; whatever they carried is released as pickups. */
@@ -477,7 +484,7 @@ export class GameModel {
       const debt = (outpost.repairDebt ?? 0) + repair * OUTPOST.repairIronPerHp, whole = Math.floor(debt);
       if (stored.iron < Math.ceil(debt) || (outpost.energy ?? 0) < energy) { if ((outpost.energy ?? 0) < energy) outpost.shortage = true; continue; }
       stored.iron -= whole; outpost.repairDebt = debt - whole; outpost.energy = (outpost.energy ?? 0) - energy;
-      const before = wear(worst); worst.health += repair; if (wear(worst) !== before) outpost.revision++;
+      const before = wear(worst); worst.health += repair;if(repair>0)this.sound('repair',{x:cellCenter(worst.cx),y:cellCenter(worst.cy)}); if (wear(worst) !== before) outpost.revision++;
     }
   }
   /** Raids: a countdown per outpost. Near the ship a raid party arrives (with warning if there is radar); far away it is banked and settled later. */
@@ -567,7 +574,7 @@ export class GameModel {
       outpost.shieldDelay = Math.max(0, (outpost.shieldDelay ?? 0) - dt); outpost.shield = Math.min(outpost.shield ?? 0, stats.shieldCapacity);
       if (stats.shieldCapacity > 0 && outpost.shieldDelay <= 0 && outpost.shield < stats.shieldCapacity) {
         const gain = Math.min(stats.shieldRegen * dt, stats.shieldCapacity - outpost.shield), cost = gain * OUTPOST.shieldEnergyPerPoint;
-        if (outpost.energy >= cost) { outpost.energy -= cost; outpost.shield += gain; } else outpost.shortage = true;
+        if (outpost.energy >= cost) { if(outpost.shield<=0&&gain>0)this.sound('shieldReady',outpostCenter(outpost));outpost.energy -= cost; outpost.shield += gain; } else outpost.shortage = true;
       }
       outpost.command = Math.max(0, (outpost.command ?? 0) - dt); outpost.commandCooldown = Math.max(0, (outpost.commandCooldown ?? 0) - dt);
       this.updateRaids(outpost, dt, active);
@@ -589,7 +596,7 @@ export class GameModel {
         if (s.progress >= 1) continue;
         // Construction runs at the Build module's speed while the ship is close, and slowly on its own otherwise.
         s.progress = Math.min(1, s.progress + dt * (near ? builder!.speed : OUTPOST.awaySpeed) / STRUCTURES[s.kind].buildTime);
-        if (s.progress >= 1) outpost.revision++;
+        if (s.progress >= 1) {outpost.revision++;this.sound('constructionDone',{x:cellCenter(s.cx),y:cellCenter(s.cy)});if(STRUCTURES[s.kind].shield)this.sound('shieldReady',{x:cellCenter(s.cx),y:cellCenter(s.cy)});}
       }
     }
     // Level-5 Industrial Fabricator: repairs one damaged block at a time from carried iron and ship energy.
@@ -602,7 +609,7 @@ export class GameModel {
       const whole = Math.floor(this.fabricatorDebt);
       if (this.cargo.iron < Math.ceil(this.fabricatorDebt) || !this.operate(energy,4*dt)) { this.fabricatorDebt -= iron; return; }
       this.cargo.iron -= whole; this.fabricatorDebt -= whole;
-      const before = wear(s); s.health += repair; if (wear(s) !== before) outpost.revision++;
+      const before = wear(s); s.health += repair;if(repair>0)this.sound('repair',{x:cellCenter(s.cx),y:cellCenter(s.cy)}); if (wear(s) !== before) outpost.revision++;
       return;
     }
   }
@@ -686,6 +693,12 @@ export class GameModel {
     if (this.heat + heat > this.heatCapacity + 1e-8) { this.heatLimited = true; return false; }
     this.energy = Math.max(0, this.energy - energy); this.heat = Math.min(this.heatCapacity, this.heat + heat); return true;
   }
+  /** Action sounds survive simulation effect resets, including paused/outfitter operations. Never serialized. */
+  actionSounds:EffectEvent[]=[];
+  private sound(cue:NonNullable<EffectEvent['cue']>,at:Point=this.player,amount?:number){
+    const volume=Math.min(1,Math.max(0,1-dist(at,this.player)/HEARING.range)*1.4);
+    if(volume>0&&this.actionSounds.length<32)this.actionSounds.push({type:'cue',cue,...at,volume,amount});
+  }
   private effectView?: Input['view'];
   /** Sound-only event: heard off screen too, quieter with distance, deeper for larger ships. */
   private cue(cue: NonNullable<EffectEvent['cue']>, at: Point = this.player, size = SHIP.radius) {
@@ -709,7 +722,7 @@ export class GameModel {
   }
   private collectDrop(drop: Drop, point: Point) {
     const take = Math.max(0, Math.min(drop.amount, this.cargoCapacity - this.cargoUsed));
-    if (take > 0) { this.cargo[drop.ore] += take; drop.amount -= take; this.effect({ type:'collection', ...point, color: RESOURCES[drop.ore].color, radius:12 }); }
+    if (take > 0) { this.cargo[drop.ore] += take; drop.amount -= take; this.effect({ type:'collection',amount:take, ...point, color: RESOURCES[drop.ore].color, radius:12 }); }
   }
   get maxShield() { return this.bonus('shield'); }
   get shieldRecharge() { return this.bonus('recharge'); }
@@ -757,6 +770,7 @@ export class GameModel {
     }
     this.player.health += this.maxHealth - oldHull;
     this.shield += this.maxShield - oldShield;
+    this.sound((core?this.coreLevel:m!.level)>=5?'upgradeUltimate':'moduleUpgrade');
     this.message = `${equipment(kind).label} upgraded to level ${core ? this.coreLevel : m!.level}.`;
     return true;
   }
@@ -777,6 +791,7 @@ export class GameModel {
     this.modules.push({ invested:{...MODULES[kind].cost}, x, y, kind, level: 1, cooldown: 0, integrity: MODULE_DURABILITY[kind][0] });
     this.player.health += this.maxHealth - oldHull;
     this.shield += this.maxShield - oldShield;
+    this.sound('moduleInstall');
     this.message = `${MODULES[kind].label} installed.`;
     return true;
   }
@@ -803,7 +818,7 @@ export class GameModel {
     if (error) { this.message=error; return false; }
     const m=this.modules.find(m=>m.x===x&&m.y===y)!,other=this.modules.find(m=>m.x===toX&&m.y===toY);
     if (other) { other.x = x; other.y = y; }
-    m.x = toX; m.y = toY; this.message = other ? 'Modules swapped.' : 'Module moved. Ship layout updated.'; return true;
+    m.x = toX; m.y = toY;this.sound('moduleMove'); this.message = other ? 'Modules swapped.' : 'Module moved. Ship layout updated.'; return true;
   }
   moduleRefund(m: ShipModule) {
     const paid = {...(m.invested??legacyInvestment(m.kind,m.level))};
@@ -825,6 +840,7 @@ export class GameModel {
     this.player.health = Math.min(this.maxHealth, this.player.health - (oldMax - this.maxHealth));
     this.shield = Math.min(this.shield, this.maxShield);this.energy=Math.min(this.energy,this.maxEnergy);
     for (const ore of Object.keys(refund) as Resource[]) this.stored[ore] += refund[ore];
+    this.sound('moduleRemove');
     this.message = `${MODULES[m.kind].label} removed; refund added to base storage.`; return true;
   }
   get repairCost(): Record<Resource, number> {
@@ -837,6 +853,7 @@ export class GameModel {
     if ((Object.keys(cost) as Resource[]).some(ore => this.cargo[ore] + this.stored[ore] < cost[ore])) return 'Not enough minerals to repair.';
   }
   repairShip(): boolean {
+    const damaged=this.player.health<this.maxHealth||this.modules.some(m=>m.integrity<this.moduleMaxIntegrity(m));
     const error = this.repairError(); if (error) { this.message = error; return false; }
     for (const ore of Object.keys(this.repairCost) as Resource[]) {
       const amount = this.repairCost[ore], carried = Math.min(this.cargo[ore], amount);
@@ -844,6 +861,7 @@ export class GameModel {
     }
     this.player.health = this.maxHealth; this.shield = this.maxShield;
     for (const m of this.modules) m.integrity = this.moduleMaxIntegrity(m);
+    if(damaged)this.sound('repair');
     this.message = 'Ship repaired; mineral cost paid.'; return true;
   }
   private breakModule(m: ShipModule) {
@@ -872,7 +890,7 @@ export class GameModel {
     if(this.modules.some(m=>m.kind==='armor'&&m.level>=5&&(m.ability?.active??0)>0))amount*=1-SPECIAL.armor.reduction;
     if(this.modules.some(m=>m.kind==='shield'&&m.level>=5&&(m.ability?.active??0)>0))amount*=1-SPECIAL.shield.reduction;
     if(fortress&&incomingAmount>=SPECIAL.armor.threshold&&(fortress.ability?.cooldown??0)<=0&&this.ultimateTimers.armor<=0&&this.operate(SPECIAL.armor.power,SPECIAL.armor.heat)){
-      onDamageTaken(fortress,incomingAmount);this.ultimateTimers.armor=SPECIAL.armor.cooldown;this.effect({type:'shield',...this.player,color:MODULES.armor.color,radius:38});
+      onDamageTaken(fortress,incomingAmount);this.cue('fortress');this.ultimateTimers.armor=SPECIAL.armor.cooldown;this.effect({type:'shield',...this.player,color:MODULES.armor.color,radius:38});
     }
     const absorbed = Math.min(this.shield, amount), damage = amount - absorbed;
     if (absorbed > 0) this.effect({type:'shield',...(hit??this.player),radius:22,color:0x71e1ff});
@@ -880,10 +898,10 @@ export class GameModel {
       const attacker=this.enemies.find(e=>e.id===attackerId&&e.health>0);
       if(attacker){this.hitEnemy(attacker,absorbed*SPECIAL.shield.fraction);this.arc(hit??this.player,attacker,0xa4edff);}
     }
-    this.shield -= absorbed; this.player.health = Math.max(0, this.player.health - damage);
+    this.shield -= absorbed;if(absorbed>0&&this.shield<=0)this.cue('shieldDown'); this.player.health = Math.max(0, this.player.health - damage);
     this.shieldDelay = 3;
     const aegis=this.modules.find(m=>m.kind==='shield'&&m.level>=5);
-    if(aegis&&amount>0&&(aegis.ability?.cooldown??0)<=0&&this.ultimateTimers.shield<=0&&this.operate(SPECIAL.shield.power,SPECIAL.shield.heat)){activate(state(aegis),SPECIAL.shield.duration,SPECIAL.shield.cooldown);this.ultimateTimers.shield=SPECIAL.shield.cooldown;this.effect({type:'shield',...this.player,color:MODULES.shield.color,radius:48});}
+    if(aegis&&amount>0&&(aegis.ability?.cooldown??0)<=0&&this.ultimateTimers.shield<=0&&this.operate(SPECIAL.shield.power,SPECIAL.shield.heat)){activate(state(aegis),SPECIAL.shield.duration,SPECIAL.shield.cooldown);this.cue('aegis');this.ultimateTimers.shield=SPECIAL.shield.cooldown;this.effect({type:'shield',...this.player,color:MODULES.shield.color,radius:48});}
     if (damage <= 0 || !hit) return;
     const positions = (Object.keys(MODULES) as ModuleKind[]).flatMap(kind => this.modulePositions(kind));
     const nearest = positions.sort((a, b) => dist(a, hit) - dist(b, hit))[0];
@@ -1277,7 +1295,7 @@ export class GameModel {
     if (!this.dead || this.rebuildDue) return;
     const base = this.nearestUnlockedBase;
     this.player = { x: base.x, y: base.y + 130, vx: 0, vy: 0, health: this.maxHealth, angle: -Math.PI / 2 };
-    this.respawnState();
+    this.respawnState();this.sound('respawn');
     this.message = 'Respawned. Your dropped cargo remains at the wreck location.';
   }
   /** Resets transient ship systems after a respawn or rebuild; the position is set by the caller. */
@@ -1501,13 +1519,13 @@ export class GameModel {
     tick(this.coreAbility,dt);for(const key of Object.keys(this.ultimateTimers) as (keyof typeof this.ultimateTimers)[])this.ultimateTimers[key]=Math.max(0,this.ultimateTimers[key]-dt);
     for(const m of this.modules)if(m.level>=5){const a=state(m);tick(a,dt);if(m.kind==='cannon')a.sustained=input.fire&&!this.atStation?a.sustained+dt:0;}
     if(input.overclock&&this.coreLevel>=5&&this.coreAbility.cooldown<=0&&this.operate(SPECIAL.core.power,SPECIAL.core.heat)){
-      activate(this.coreAbility,SPECIAL.core.duration,SPECIAL.core.cooldown);this.effect({type:'shield',...this.player,color:CORE.color,radius:40});
+      activate(this.coreAbility,SPECIAL.core.duration,SPECIAL.core.cooldown);this.cue('overclock');this.effect({type:'shield',...this.player,color:CORE.color,radius:40});
     }
     for(const m of this.modules)if(m.kind==='cooler'&&m.level>=5&&(m.ability?.cooldown??0)<=0&&this.ultimateTimers.cooler<=0&&this.heat>=this.heatCapacity*SPECIAL.cooler.threshold&&this.operate(SPECIAL.cooler.power,0)&&onOverheat(m,this.heat,this.heatCapacity)){
-      this.ultimateTimers.cooler=SPECIAL.cooler.cooldown;this.heat=Math.max(0,this.heat-this.heatCapacity*SPECIAL.cooler.fraction);this.effect({type:'shield',...this.modulePoint(m),color:MODULES.cooler.color,radius:55});
+      this.cue('coolingSurge');this.ultimateTimers.cooler=SPECIAL.cooler.cooldown;this.heat=Math.max(0,this.heat-this.heatCapacity*SPECIAL.cooler.fraction);this.effect({type:'shield',...this.modulePoint(m),color:MODULES.cooler.color,radius:55});
     }
     for(const m of this.modules)if(m.kind==='reactor'&&m.level>=5){
-      if(onEnergyDeficit(m,this.energy,this.maxEnergy,this.powerDemand,this.basePowerGeneration))this.effect({type:'shield',...this.modulePoint(m),color:MODULES.reactor.color,radius:25});
+      if(onEnergyDeficit(m,this.energy,this.maxEnergy,this.powerDemand,this.basePowerGeneration)){this.cue('reactorOverdrive');this.effect({type:'shield',...this.modulePoint(m),color:MODULES.reactor.color,radius:25});}
       if(state(m).active>0){this.heat=Math.min(this.heatCapacity,this.heat+SPECIAL.reactor.heat*dt);}
     }
     this.shieldDelay = Math.max(0, this.shieldDelay - dt);
@@ -1517,7 +1535,7 @@ export class GameModel {
     if ((this.shieldDelay <= 0||this.modules.some(m=>m.kind==='shield'&&(m.ability?.active??0)>0)) && this.shield < this.maxShield) for (const m of this.modules) if (m.kind === 'shield') {
       const stats = MODULES.shield.levels[m.level - 1], field=m.level>=5&&(m.ability?.active??0)>0, amount = Math.min(this.maxShield - this.shield, stats.recharge! * dt*this.commandOutput*(field?SPECIAL.shield.regen:1));
       const fraction = amount / (stats.recharge!*this.commandOutput*(field?SPECIAL.shield.regen:1))*(field?SPECIAL.shield.cost:1);
-      if (this.operate((stats.power ?? 0) * fraction, (stats.heat ?? 0) * fraction)) this.shield += amount;
+      if (this.operate((stats.power ?? 0) * fraction, (stats.heat ?? 0) * fraction)) {if(this.shield<=0&&amount>0)this.cue('shieldReady');this.shield += amount;}
     }
     let engines=0,powered=0;
     for(const m of this.modules)if(m.kind==='engine'){
@@ -1527,7 +1545,7 @@ export class GameModel {
       const running=Boolean(input.x||input.y||m.boostRemaining>0||activate);
       if(!running||this.operate((running?(stats.power??0)*dt:0)+(activate?(stats.boostPower??0):0),(running?(stats.heat??0)*dt:0)+(activate?(stats.boostHeat??0):0))){
         powered++;
-        if(activate){if(m.level>=5&&this.ultimateTimers.warp<=0){onBoost(m);this.ultimateTimers.warp=SPECIAL.engine.phaseCooldown;}m.boostRemaining=stats.boostDuration!;m.boostCooldown=stats.boostCooldown!;this.effect({type:'muzzle',...this.modulePoint(m),angle:this.player.angle+Math.PI,color:MODULES.engine.color});}
+        if(activate){this.cue(m.level>=5?'warp':'boost');if(m.level>=5&&this.ultimateTimers.warp<=0){onBoost(m);this.ultimateTimers.warp=SPECIAL.engine.phaseCooldown;}m.boostRemaining=stats.boostDuration!;m.boostCooldown=stats.boostCooldown!;this.effect({type:'muzzle',...this.modulePoint(m),angle:this.player.angle+Math.PI,color:MODULES.engine.color});}
       }
     }
     this.engineRatio=engines?powered/engines:1;
@@ -1560,7 +1578,7 @@ export class GameModel {
       if(!this.operate((stats.power??0)*cost.power,(stats.heat??0)*cost.heat)){if(m.ability)m.ability.sustained=0;continue;}
       const special=onFire(m);
       const source=this.modulePoint(m),angle=Math.atan2(input.aim.y-source.y,input.aim.x-source.x);
-      this.effect({type:'muzzle',x:source.x+Math.cos(angle)*10,y:source.y+Math.sin(angle)*10,angle,weapon,level:m.level,color:type.color});
+      this.effect({type:'muzzle',x:source.x+Math.cos(angle)*10,y:source.y+Math.sin(angle)*10,angle,weapon,level:m.level,ultimate:Boolean(special.penetrating||special.overcharged||special.supernova||special.swarm||special.rate>2||m.level>=5&&(weapon==='flak'||weapon==='emp')),color:type.color});
       if(weapon==='emp')this.empPulses.push({...source,radius:0,maxRadius:stats.empRange!*(m.level>=5?SPECIAL.emp.radius:1),damage:stats.damage!*this.commandOutput,stun:stats.stun!,hits:[],cascade:m.level===5,secondary:0});
       else {const pellets=weapon==='flak'&&m.level>=5?SPECIAL.flak.pellets:type.pellets;for(let pellet=0;pellet<pellets;pellet++){
         const direction=angle+(pellets>1?(pellet/(pellets-1)-.5)*type.spread:0);
@@ -1600,7 +1618,9 @@ export class GameModel {
         if (beams.length && !this.operate((stats.power??0)*dt*efficiency,(stats.heat??0)*dt*efficiency)) continue;
         this.miningLinks.push({ from: { x: source.x, y: source.y }, to: impact, targetId: target.id, level:source.level,moduleX:source.moduleX,moduleY:source.moduleY });
         this.minedTarget ??= target; this.miningPoint ??= impact;
-        const removed = this.take(target, (source.rate * dt+onMiningHit(module,dt))*this.commandOutput, impact);
+        const excavation=onMiningHit(module,dt);
+        const removed = this.take(target, (source.rate * dt+excavation)*this.commandOutput, impact);
+        if(removed>0&&excavation>0)this.cue('excavator');
         if (removed > 0) {
           this.releaseOre(impact, target.ore, removed,{x:target.vx*BELT_MOTION.dropInheritance,y:target.vy*BELT_MOTION.dropInheritance});
           this.emitDebris(impact, { x: impact.x - target.x, y: impact.y - target.y }, RESOURCES[target.ore].color, target.id + target.amount);
@@ -1632,7 +1652,7 @@ export class GameModel {
       }
       if (!ids.length) continue;
       if (!this.operate((stats.power??0)*dt*(sweep?SPECIAL.tractor.cost:1),(stats.heat??0)*dt*(sweep?SPECIAL.tractor.cost:1))) { for(const id of ids)claimed.delete(id); ids.length=0;continue; }
-      if(module.level>=5&&activate(state(module),SPECIAL.tractor.duration,SPECIAL.tractor.cooldown))this.effect({type:'shield',...source,color:MODULES.tractor.color,radius:32});
+      if(module.level>=5&&activate(state(module),SPECIAL.tractor.duration,SPECIAL.tractor.cooldown)){this.cue('vortex');this.effect({type:'shield',...source,color:MODULES.tractor.color,radius:32});}
       for (const id of ids) {
         const drop=dropsById.get(id)!; const distance=dist(source,drop),step=Math.min(distance,stats.pull!*dt*this.commandOutput*(sweep?SPECIAL.tractor.speed:1));
         if(distance>0){drop.x+=(source.x-drop.x)/distance*step;drop.y+=(source.y-drop.y)/distance*step;}
@@ -1643,9 +1663,11 @@ export class GameModel {
     for (const drop of this.drops) if (drop.amount > 0 && !claimed.has(drop.id) && dist(p,drop)<this.pickupRange) this.collectDrop(drop,p);
     this.drops = this.drops.filter(d => d.amount > 0);
     if (input.dock && this.atStation) {
+      const deposited=this.cargoUsed;
       for (const ore of Object.keys(this.cargo) as Resource[]) { this.stored[ore] += this.cargo[ore]; this.cargo[ore] = 0; }
+      if(deposited>0)this.sound('deposit',this.player,deposited);else this.sound('dock');
       if (this.repairShip()) this.message = 'Cargo stored. Ship repaired; minerals paid.';
-      else this.message = 'Cargo stored. Insufficient minerals for repairs; check the shop (Q).';
+      else {this.sound('fail');this.message = 'Cargo stored. Insufficient minerals for repairs; check the shop (Q).';}
     } else if (input.dock) { const outpost = this.dockAt(); if (outpost) this.dockAtOutpost(outpost); else this.message = 'Move within 220m of the green station, or to an outpost Docking station, to dock.'; }
     this.enemyHazards=[];
     this.enemyBeams=this.enemyBeams.filter(beam=>(beam.life-=dt)>0).slice(-12);

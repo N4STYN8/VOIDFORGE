@@ -1,7 +1,7 @@
 import {materialIcon} from './materialSymbols.ts';
 import {MenuBackdrop} from './menuBackdrop.ts';
 import './mainMenu.css';
-type Actions={continue:()=>Promise<void>;newGame:(seed:string)=>Promise<void>;multiplayer:()=>Promise<void>;settings:()=>void;sound:(kind:'hover'|'click'|'warning')=>void};
+type Actions={continue:()=>Promise<void>;newGame:(seed:string)=>Promise<void>;multiplayer:()=>Promise<void>;settings:()=>void;sound:(kind:'hover'|'click'|'warning'|'open'|'confirm'|'cancel'|'launch')=>void};
 export class MainMenu{
  private root=document.createElement('main');private dialog=document.createElement('dialog');private backdrop:MenuBackdrop;private busy=false;
  get open(){return !this.root.hidden;}
@@ -12,7 +12,7 @@ export class MainMenu{
   for(const surface of [this.root,this.dialog]){
     surface.addEventListener('pointerover',event=>{const button=(event.target as HTMLElement).closest<HTMLButtonElement>('button');if(button&&!button.disabled&&!button.contains(event.relatedTarget as Node|null))this.actions.sound('hover');});
     surface.addEventListener('focusin',event=>{if((event.target as HTMLElement).matches('button:not(:disabled)'))this.actions.sound('hover');});
-    surface.addEventListener('click',event=>{const button=(event.target as HTMLElement).closest<HTMLButtonElement>('button');if(button&&!button.disabled&&!this.busy)this.actions.sound(button.dataset.menu==='new'||button.hasAttribute('data-tutorial-start')?'warning':'click');},{capture:true});
+    surface.addEventListener('click',event=>{const button=(event.target as HTMLElement).closest<HTMLButtonElement>('button');if(button&&!button.disabled&&!this.busy)this.actions.sound(button.hasAttribute('data-start')||button.dataset.choice==='save'?'confirm':button.hasAttribute('data-cancel')||button.hasAttribute('data-close')||button.dataset.choice==='cancel'||button.dataset.choice==='discard'?'cancel':button.dataset.menu==='new'||button.hasAttribute('data-tutorial-start')?'warning':'click');},{capture:true});
   }
 
   this.root.addEventListener('click',e=>{const action=(e.target as HTMLElement).closest<HTMLElement>('[data-menu]')?.dataset.menu;if(!action||this.busy)return;
@@ -21,11 +21,11 @@ export class MainMenu{
   });
   this.show(hasSave);
  }
- show(canContinue=true){this.message('');document.body.classList.remove('flight-enter');this.root.hidden=false;document.body.classList.add('main-menu-open');const b=this.root.querySelector<HTMLButtonElement>('[data-menu="continue"]')!;b.disabled=!canContinue;b.querySelector('small')!.textContent=canContinue?'Resume your voyage':'No saved game';this.backdrop.start();requestAnimationFrame(()=>this.root.querySelector<HTMLButtonElement>(canContinue?'[data-menu="continue"]':'[data-menu="new"]')!.focus());}
- hide(){this.root.hidden=true;document.body.classList.remove('main-menu-open');document.body.classList.add('flight-enter');this.dialog.close();this.backdrop.stop();(document.activeElement as HTMLElement)?.blur();}
+ show(canContinue=true){this.actions.sound('open');this.message('');document.body.classList.remove('flight-enter');this.root.hidden=false;document.body.classList.add('main-menu-open');const b=this.root.querySelector<HTMLButtonElement>('[data-menu="continue"]')!;b.disabled=!canContinue;b.querySelector('small')!.textContent=canContinue?'Resume your voyage':'No saved game';this.backdrop.start();requestAnimationFrame(()=>this.root.querySelector<HTMLButtonElement>(canContinue?'[data-menu="continue"]':'[data-menu="new"]')!.focus());}
+ hide(){this.actions.sound('launch');this.root.hidden=true;document.body.classList.remove('main-menu-open');document.body.classList.add('flight-enter');this.dialog.close();this.backdrop.stop();(document.activeElement as HTMLElement)?.blur();}
  private async run(action:()=>Promise<void>){this.busy=true;this.root.setAttribute('aria-busy','true');this.message('Connecting to Forge…');try{await action();this.hide();}catch(error){this.message(error instanceof Error?error.message:'Unable to launch. Your saved world has not been replaced.');}finally{this.busy=false;this.root.removeAttribute('aria-busy');}}
  private message(text:string){this.root.querySelector('.menu-message')!.textContent=text;}
- private panel(title:string,html:string){this.dialog.innerHTML=`<header><h2>${title}</h2><button data-close aria-label="Close panel">×</button></header>${html}`;this.dialog.querySelector('[data-close]')!.addEventListener('click',()=>this.dialog.close());if(!this.dialog.open)this.dialog.showModal();}
+ private panel(title:string,html:string){this.actions.sound('open');this.dialog.innerHTML=`<header><h2>${title}</h2><button data-close aria-label="Close panel">×</button></header>${html}`;this.dialog.querySelector('[data-close]')!.addEventListener('click',()=>this.dialog.close());if(!this.dialog.open)this.dialog.showModal();}
  newWorld(seed=''){
   this.panel('Start a new game?',`<div class="new-world-warning"><strong>Warning: this replaces your current voyage.</strong><p>Your active world, ship upgrades, minerals and outposts will be replaced by a fresh start. An existing save is backed up before replacement.</p></div><p>Choose Cancel to keep playing your current world. Nothing changes until you confirm below.</p><label>World seed <small>(optional)</small><input id="menu-seed" maxlength="80" placeholder="Random seed"></label><div class="menu-dialog-actions"><button data-cancel>Cancel</button><button data-start>Confirm new game</button></div>`);
   this.dialog.querySelector<HTMLInputElement>('input')!.value=seed;this.dialog.querySelector<HTMLButtonElement>('[data-cancel]')!.focus();this.dialog.querySelector('[data-cancel]')!.addEventListener('click',()=>this.dialog.close());this.dialog.querySelector('[data-start]')!.addEventListener('click',()=>{const seed=this.dialog.querySelector<HTMLInputElement>('input')!.value.trim();this.dialog.close();void this.run(()=>this.actions.newGame(seed));});
