@@ -1,5 +1,7 @@
 # Tasks
 
+- [x] Reduce asteroid gunfire knockback and verify sustained-fire collision damage
+
 ## Five-level module system — completed
 - [x] Universal five-tier data, costs, durability, save validation, texture generation and unique core
 - [x] All sixteen functional level-5 abilities with shared hooks and independent saved timers
