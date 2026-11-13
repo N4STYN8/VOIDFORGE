@@ -22,6 +22,11 @@
 - Chunk size and 5×5 active window remain unchanged; partial boundary chunks reject out-of-world candidates. Map wheel zoom now reaches 24×.
 - 67 tests pass, including legacy ID/depletion migration, deterministic outer chunks, edge clipping and save restoration. Browser checked an old save at 59,000/59,000, movement, map zoom and save/reload without runtime errors. Production build passes.
 
+## Module graphics refresh
+- Added chamfered, beveled metal housings, inset equipment, corner fasteners and tier indicators. Every module has distinct hardware: gun barrels/rails, mining lenses, purple tractor forks, shield plates, cargo straps, radiators and engine nozzles.
+- Uses the existing shared procedural drawModule and cached textures in flight, outfitter and detached salvage; no gameplay or collision changes, shaders or downloaded assets.
+- 67 tests and production build pass. Browser verified all catalog textures load, outfitter/flight render without errors and inspected the outfitter screenshot.
+
 ## Verification
 - 65 tests passing, including prior world/geometry/combat tests and new unlimited module combinations, exact tractor behavior, full cargo, no duplication, energy/heat/mass, weapon origins, EMP, Shift, pool cleanup and effect-disabled equivalence.
 - Production build passes; expected Phaser bundle warning only (~368 KB gzip).

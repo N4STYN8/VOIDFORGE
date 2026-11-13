@@ -21,6 +21,8 @@
 
 - [x] Tenfold world area, scaled new geography, legacy persistence and local chunk streaming
 
+- [x] Clearer procedural module hardware, beveled hull plates and tier markers
+
 ## Publishing
 - [x] Prepare public repository connection and test/build/Pages workflow
 - [x] Push tested source to N4STYN8/VOIDFORGE
