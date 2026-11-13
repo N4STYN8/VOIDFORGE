@@ -2,7 +2,7 @@ import { fixtureModel } from './fixtures.ts';
 import { closestBoundary, containsPoint } from '../src/asteroidGeometry.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { WORLD, ENEMIES } from '../src/data.ts';
+import { WORLD, ENEMIES, MODULES } from '../src/data.ts';
 import { GameModel, type Input } from '../src/model.ts';
 const idle = (patch: Partial<Input> = {}): Input => ({ x: 0, y: 0, aim: { x: 3380, y: 3330 }, fire: false, mine: false, dock: false, ...patch });
 test('thrust accelerates, diagonal speed is capped, and world boundaries stop velocity', () => {
@@ -50,7 +50,7 @@ test('projectiles destroy enemies and drop collectible resources', () => {
   const m = fixtureModel(); m.player.x = 4000; m.player.y = 4000;
   m.enemies = [{ id: 900, x: 4150, y: 4000, health: 60, cooldown: 100, angle: 0 }];
   for (let i = 0; i < 35; i++) m.update(0.05, idle({ fire: true, aim: { x: 4150, y: 4000 } }));
-  assert.equal(m.kills, 1); assert.equal(m.drops.length, 1); assert.equal(m.enemyHits, 3);
+  assert.equal(m.kills, 1); assert.equal(m.drops.length, 1); assert.equal(m.enemyHits, 5);
   m.player.x = m.drops[0].x; m.player.y = m.drops[0].y; m.update(0.01, idle()); assert.equal(m.cargo.iron, 6);
 });
 test('death drops cargo once and respawn preserves station storage', () => {
@@ -174,7 +174,7 @@ test('rockets explode on contact and damage multiple enemies once with limited f
   assert.equal(m.installModule('rocket', -1, 0), true);
   m.modules = m.modules.filter(m => m.kind === 'rocket');
   m.player.x = 4000; m.player.y = 4000;
-  m.enemies = [{ id: 998, x: 4150, y: 4000, health: 60, cooldown: 100, angle: 0 }, { id: 999, x: 4190, y: 4020, health: 60, cooldown: 100, angle: 0 }];
+  m.enemies = [{ id: 998, x: 4150, y: 4000, health: 30, cooldown: 100, angle: 0 }, { id: 999, x: 4190, y: 4020, health: 30, cooldown: 100, angle: 0 }];
   m.update(0.01, idle({ fire: true, aim: { x: 4150, y: 4000 } }));
   assert.equal(m.bullets.length, 1); assert.equal(m.bullets[0].rocket, true);
   m.update(0.01, idle({ fire: true })); assert.equal(m.bullets.length, 1);
@@ -337,20 +337,20 @@ test('weapon hits push ore in the shot direction with mass resistance and bounde
     const m=fixtureModel();m.player.x=5000;m.player.y=4800;m.enemies=[];
     const rock={id:9100,x:5100,y:5000,vx:0,vy:0,radius,ore:'iron' as const,amount:1000,health:1000};m.asteroids=[rock];
     m.bullets=[{id:9101,x:5000,y:5000,vx:2000,vy:0,life:1,enemy,damage:20}];m.update(.05,idle());
-    assert.equal(m.bullets.length,0);assert.ok(rock.vx>0&&rock.vx<40);assert.equal(rock.vy,0);assert.equal(rock.amount,998);return {m,rock};
+    assert.equal(m.bullets.length,0);assert.ok(rock.vx>0&&rock.vx<4);assert.equal(rock.vy,0);assert.equal(rock.amount,998);return {m,rock};
   };
   const small=shot(25),large=shot(45),hostile=shot(35,true);
   assert.ok(small.rock.vx>large.rock.vx);assert.ok(hostile.rock.vx>0);
   const x=small.rock.x;small.m.update(.05,idle());assert.ok(small.rock.x>x);
   for(let i=0;i<20;i++){
     small.m.bullets=[{id:9200+i,x:small.rock.x-80,y:small.rock.y,vx:2000,vy:0,life:1,enemy:false,damage:20}];small.m.update(.05,idle());
-    assert.ok(Math.hypot(small.rock.vx,small.rock.vy)<=120.0001);
+    assert.ok(Math.hypot(small.rock.vx,small.rock.vy)<=12.0001);
   }
 });
 
-test('a shot-propelled asteroid damages and kills an enemy, awarding loot once',()=>{
+test('weak shots preserve collision-driven rock momentum and enemy damage rewards',()=>{
   const m=fixtureModel();m.player.x=5000;m.player.y=4800;
-  const rock={id:9300,x:5100,y:5000,vx:0,vy:0,radius:35,ore:'iron' as const,amount:100,health:100};m.asteroids=[rock];
+  const rock={id:9300,x:5100,y:5000,vx:80,vy:0,radius:35,ore:'iron' as const,amount:100,health:100};m.asteroids=[rock];
   m.enemies=[{id:9301,kind:'scout',x:5160,y:5000,health:1,cooldown:100,angle:0,disabledFor:10}];
   m.bullets=Array.from({length:4},(_,i)=>({id:9302+i,x:5000,y:5000,vx:2000,vy:0,life:1,enemy:false,damage:20}));m.update(.05,idle());
   assert.equal(m.enemies[0].health,1);assert.ok(rock.vx>40);
@@ -367,5 +367,12 @@ test('explosions push nearby asteroids outward without exceeding shot speed limi
   m.bullets=[{id:9402,x:5000,y:5000,vx:2000,vy:0,life:1,enemy:false,weapon:'rocket',rocket:true,splash:100,damage:65}];
   m.update(.05,idle());assert.equal(m.bullets.length,0);
   assert.ok(m.asteroids[0].vx>0);assert.ok(m.asteroids[1].vx>0&&m.asteroids[1].vy>0);
-  assert.ok(m.asteroids.every(a=>Math.hypot(a.vx,a.vy)<=120.0001));
+  assert.ok(m.asteroids.every(a=>Math.hypot(a.vx,a.vy)<=12.0001));
+});
+
+
+test('starter weapons are weaker while later tiers retain their damage',()=>{
+ const kinds=['cannon','pulse','rail','plasma','rocket','flak','emp'] as const;
+ const first=[12,11,45,27,39,4,9],second=[30,28,110,70,95,11,25];
+ for(let i=0;i<kinds.length;i++){assert.equal(MODULES[kinds[i]].levels[0].damage,first[i]);assert.equal(MODULES[kinds[i]].levels[1].damage,second[i]);}
 });

@@ -1,5 +1,13 @@
 # Tasks
 
+## Latest balance and editor fixes
+- [x] Further reduce gunfire asteroid displacement and cap stacked weapon pushes
+- [x] Weaken all L1 weapons while retaining later-tier stats
+- [x] Add denser saved asteroid belts/clusters without resetting original deposits
+- [x] Raise regional enemy targets and local entity budgets
+- [x] Preserve outfitter scroll positions through drag/drop and refresh
+- [x] 103 tests/build; exact browser scroll check and 36-enemy ~60 FPS stress check
+
 ## Renewable populations — completed
 - [x] Central cooldown/threat/density/safety/local-budget configuration
 - [x] Seeded asteroid replacement slots, fresh finite reserves, safe offscreen arrivals and bounded records

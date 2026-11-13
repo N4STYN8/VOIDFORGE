@@ -296,7 +296,13 @@ class SpaceScene extends Phaser.Scene {
     this.builder.hidden = !this.building;
     if (!this.building || this.moduleDragActive) return;
     const content=outfitterMarkup(this.model,{selectedModule:this.selectedModule,selectedCell:this.selectedCell,mode:this.detailMode,query:this.catalogQuery,category:this.catalogCategory,center:this.buildCenter,radius:this.gridRadius,moving:this.movingModule,failed:this.actionFailed},this.iconUrls);
-    if (content !== this.builderContent) { this.builder.innerHTML = content; this.builderContent = content; }
+    if (content !== this.builderContent) {
+      const scrolls=['.catalog-list','.detail-body','.grid-scroll'].map(selector=>{const element=this.builder.querySelector<HTMLElement>(selector);return {selector,top:element?.scrollTop??0,left:element?.scrollLeft??0};});
+      const top=this.builder.scrollTop,left=this.builder.scrollLeft;
+      this.builder.innerHTML=content;this.builderContent=content;
+      for(const saved of scrolls){const element=this.builder.querySelector<HTMLElement>(saved.selector);if(element){element.scrollTop=saved.top;element.scrollLeft=saved.left;}}
+      this.builder.scrollTop=top;this.builder.scrollLeft=left;
+    }
   }
   private directionToStation() {
     const p = this.model.player;

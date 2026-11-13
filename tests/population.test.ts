@@ -7,9 +7,9 @@ import { GameModel,type Enemy } from '../src/model.ts';
 import { mineMaterial,miningImpact,type Asteroid } from '../src/mining.ts';
 import { ENEMIES } from '../src/data.ts';
 function depleted(seed='regeneration-test'){
- const world=new ChunkWorld(seed),home=world.spec.bases[0];let rocks=world.activate(home,[]);
+ const world=new ChunkWorld(seed),home=world.spec.bases[0];world.spec.populationFields={belts:[],clusters:[]};let rocks=world.activate(home,[]);
  const old=rocks.find(a=>a.id===1)!;mineMaterial(old,1e6,miningImpact(old,home,old));world.destroy(old.id,old);rocks=rocks.filter(a=>a.id!==old.id);
- const region=[...world.regions.values()].find(r=>r.slots.some(s=>s.sourceId===old.id))!;return {world,home,rocks,old,region,slot:region.slots[0]};
+ const region=[...world.regions.values()].find(r=>r.slots.some(s=>s.sourceId===old.id))!;return {world,home,rocks,old,region,slot:region.slots.find(slot=>slot.sourceId===old.id)!};
 }
 function arrive(f:ReturnType<typeof depleted>){for(let i=0;i<15&&!f.slot.current;i++){f.world.advance(Math.max(0,f.slot.due-f.world.time)+.01);f.world.replenish(f.home,f.rocks);}}
 
@@ -79,10 +79,10 @@ test('regional threats, elite intervals, spawn safety, and active/dormant entity
  const p={x:world.spec.bases[0].x,y:world.spec.bases[0].y},pop=new EnemyPopulation(world.spec);let enemies:Enemy[]=[],squads:GameModel['squads']=[],id=30000;
  const view={x:p.x-600,y:p.y-400,width:1200,height:800};
  for(let t=0;t<3600;t+=5){const result=pop.update(t,p,view,[],world.spec.bases.map((b,i)=>({...b,unlocked:i===0})),enemies,squads,()=>id++);enemies=result.enemies;squads=result.squads;}
- assert.ok(enemies.length<=24&&enemies.length>0);const count=enemies.length;for(let t=4000;t<4500;t+=5){const result=pop.update(t,p,view,[],world.spec.bases.map(b=>({...b,unlocked:true})),enemies,squads,()=>id++);enemies=result.enemies;squads=result.squads;}assert.equal(enemies.length,count);
+ assert.ok(enemies.length<=POPULATION.enemyBudget&&enemies.length>0);const count=enemies.length;for(let t=4000;t<4500;t+=5){const result=pop.update(t,p,view,[],world.spec.bases.map(b=>({...b,unlocked:true})),enemies,squads,()=>id++);enemies=result.enemies;squads=result.squads;}assert.equal(enemies.length,count);
  for(const e of enemies){assert.ok(outsideView(e,view,p,ENEMIES[e.kind!].radius));for(const b of world.spec.bases)assert.ok(Math.hypot(e.x-b.x,e.y-b.y)>300);}
  const saved=pop.snapshot(),again=new EnemyPopulation(world.spec,saved);const result=again.update(4505,p,view,[],world.spec.bases.map(b=>({...b,unlocked:true})),enemies,squads,()=>id++);assert.equal(result.enemies.length,count);
- const far={x:p.x>30000?2000:59000,y:p.y>30000?2000:59000};const parked=again.update(4510,far,undefined,[],world.spec.bases.map(b=>({...b,unlocked:true})),enemies,squads,()=>id++);assert.ok([...again.regions.values()].some(r=>r.sleeping.length));assert.ok(parked.enemies.length<=24);
+ const far={x:p.x>30000?2000:59000,y:p.y>30000?2000:59000};const parked=again.update(4510,far,undefined,[],world.spec.bases.map(b=>({...b,unlocked:true})),enemies,squads,()=>id++);assert.ok([...again.regions.values()].some(r=>r.sleeping.length));assert.ok(parked.enemies.length<=POPULATION.enemyBudget);
  const wake=again.update(6000,p,view,[],world.spec.bases.map(b=>({...b,unlocked:true})),parked.enemies,parked.squads,()=>id++);assert.ok(wake.enemies.some(e=>enemies.some(old=>old.id===e.id)));
 });
 
@@ -109,4 +109,18 @@ test('elite defeat cooldowns remain 5–10 minutes and safe blocked entry points
  pop.recordDefeat(elite,100);const due=pop.regions.get(id)!.eliteDue;assert.ok(due>=400&&due<=700);
  let counter=100;for(let t=0;t<7200;t+=5){const result=pop.update(t,player,{x:0,y:0,width:100000,height:100000},[],world.spec.bases.map(b=>({...b,unlocked:true})),[],[],()=>counter++);assert.equal(result.enemies.length,0);}
  assert.equal(counter,100);
+});
+
+
+test('additional belts increase field populations without changing legacy rocks or spawning on camera',()=>{
+ const world=new ChunkWorld('denser-fields'),legacy=structuredClone(world.spec);delete legacy.populationFields;
+ const home=world.spec.bases[0];assert.ok(world.spec.populationFields!.belts.length>=3);assert.ok(world.spec.populationFields!.clusters.length>=9);
+ let extra=0;
+ for(let x=0;x<20;x+=2)for(let y=0;y<20;y+=3){const before=generateChunk(legacy,x,y),after=generateChunk(world.spec,x,y);assert.deepEqual(after.filter(a=>a.id<200000000),before);extra+=after.filter(a=>a.id>=200000000).length;}
+ assert.ok(extra>0);
+ const active=world.activate(home,[]);assert.ok(!active.some(a=>a.id>=200000000));
+ const view={x:home.x-400,y:home.y-300,width:800,height:600};world.advance(6);world.replenish(home,active,view);
+ assert.ok(active.some(a=>a.id<0));for(const a of active.filter(a=>a.id<0))assert.ok(outsideView(a,view,home,a.radius));
+ const snapshot=JSON.parse(JSON.stringify(world.snapshot(active))),restored=new ChunkWorld(world.spec.seed,snapshot),loaded=restored.activate(home,[],true);
+ assert.deepEqual(restored.snapshot(loaded),snapshot);assert.equal(new Set(loaded.map(a=>a.id)).size,loaded.length);
 });

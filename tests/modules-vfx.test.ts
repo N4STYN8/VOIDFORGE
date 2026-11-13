@@ -79,8 +79,8 @@ test('EMP pulses hit enemies once and temporarily disable their AI',()=>{
   const m=prepared();m.removeModule(1,0);m.installModule('emp',1,0);m.player.x=5000;m.player.y=5000;
   m.enemies=[{id:9,x:5060,y:5000,health:100,cooldown:100,angle:0}];
   m.update(.05,{...idle,fire:true});for(let i=0;i<5;i++)m.update(.05,idle);
-  assert.equal(m.enemies[0].health,85);assert.ok(m.enemies[0].disabledFor!>0);
-  const x=m.enemies[0].x;for(let i=0;i<10;i++)m.update(.05,idle);assert.equal(m.enemies[0].x,x);assert.equal(m.enemies[0].health,85);
+  assert.equal(m.enemies[0].health,91);assert.ok(m.enemies[0].disabledFor!>0);
+  const x=m.enemies[0].x;for(let i=0;i<10;i++)m.update(.05,idle);assert.equal(m.enemies[0].x,x);assert.equal(m.enemies[0].health,91);
 });
 test('old v1 saves load with safe power defaults; new saves retain energy, heat and target slots',()=>{
   const m=tractorShip(2);m.energy=45;m.heat=20;const saved=m.toSave();

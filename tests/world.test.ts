@@ -64,7 +64,7 @@ test('expanded world streams deterministic outer regions, clips edges, and avoid
 
 test('legacy expansion keeps old chunk IDs and depleted rocks while adding persistent outer geography',()=>{
   const original=new ChunkWorld('legacy-expansion'),spec=structuredClone(original.spec);
-  delete spec.generationSize;delete spec.expansion;
+  delete spec.generationSize;delete spec.expansion;delete spec.populationFields;
   // Restrict a legacy-style specimen to its former bounds.
   spec.bases.forEach((b,i)=>{b.x=3200+i*2000;b.y=3200;});spec.starter=[];
   spec.belts=[{x:9000,y:9000,angle:0,length:15000,width:3000,curve:0,phase:0,density:.9,ore:'crystal'}];spec.clusters=[];
@@ -72,7 +72,7 @@ test('legacy expansion keeps old chunk IDs and depleted rocks while adding persi
   for(const rock of before)assert.ok(rock.id>=10000+(7*16+7)*128&&rock.id<10000+(7*16+7)*128+64);
   const destroyed=before[0].id,snapshot={spec,changes:[[destroyed,null]] as [number,null][],surveyed:[]};
   const migrated=new ChunkWorld(spec.seed,snapshot);
-  assert.deepEqual(generateChunk(migrated.spec,7,7),before);
+  assert.deepEqual(generateChunk(migrated.spec,7,7).filter(a=>a.id<200000000),before);
   assert.ok(migrated.spec.expansion?.belts.length);
   assert.ok(!migrated.activate({x:9000,y:9000},[]).some(a=>a.id===destroyed));
   const saved=migrated.snapshot([]),again=new ChunkWorld(spec.seed,saved);

@@ -1,5 +1,13 @@
 # Progress
 
+## Latest — gentler gunfire, weaker starters, denser space and stable outfitter scrolling
+- Weapon asteroid impulse reduced another 90% (3→0.3), resting-rock shot speed cap 120→12. Repeated volleys cannot accumulate high speed; existing ship/collision momentum is preserved.
+- L1 damage reduced ~40% across all seven weapons: cannon 12, pulse 11, rail 45, plasma 27, missile 39, flak 4/pellet, EMP 9. Tiers 2–5 and firing intervals unchanged.
+- Added a saved seeded belt/cluster layer with up to 32 extra asteroid candidates per chunk. Original asteroid IDs, shapes, positions, depletion and upgrades remain intact. Additional deposits enter through safe scheduled offscreen arrivals, including existing worlds; no reset required.
+- Enemy targets increased to 5/10/16 for low/medium/high threat; active enemy budget 24→36, asteroid local budget 1,800→2,400. Cooldowns and gradual spawn rates retained.
+- Outfitter refreshes restore catalog, grid, detail and outer scroll positions after placement/upgrades/dragging. Browser drag/drop test preserved catalog scroll exactly (647→647).
+- 103 tests pass; production build passes. Browser stress test with 33 modules and 36 enemies runs ~60 FPS with no runtime errors. Next: human balance feedback on starter combat and field/patrol density.
+
 ## Latest — renewable regional populations
 - Depleted asteroid slots replenish at different seeded positions using the existing field generator: common 2–5 minutes (ice 3–5), crystal/radioactive 8–15. New shape/size/yield, same resource class, gentle drift, no visible/overlapping/ship/base spawns; blocked arrivals defer.
 - Field targets follow original per-chunk seeded density. Gradual scheduled arrivals, 1,800 local asteroid budget, sparse slot reuse across repeated generations; original tombstones and modified geometry remain saved.

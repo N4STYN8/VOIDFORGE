@@ -17,8 +17,8 @@ const shot=(kind:ModuleKind,extra:Partial<Bullet>={}):Bullet=>({id:991,x:5100,y:
 function incoming(m:GameModel,damage:number,attackerId?:number){m.bullets=[shot('cannon',{x:m.player.x-60,y:m.player.y,vx:1800,enemy:true,damage,attackerId})];m.update(.05,{...idle,aim:{x:m.player.x+100,y:m.player.y}});}
 function run(m:GameModel,frames:number,input=idle){for(let i=0;i<frames;i++)m.update(.05,input);}
 
-test('all 16 types upgrade through five real tiers with exact costs and legacy statistics intact',()=>{
- assert.equal(Object.keys(MODULES).length+1,16);assert.equal(MODULES.cargo.levels[2].cargo,200);assert.equal(MODULES.cannon.levels[0].damage,20);
+test('all 16 types upgrade through five real tiers with exact costs and established higher-tier statistics',()=>{
+ assert.equal(Object.keys(MODULES).length+1,16);assert.equal(MODULES.cargo.levels[2].cargo,200);assert.equal(MODULES.cannon.levels[0].damage,12);
  for(const kind of ['core',...Object.keys(MODULES)] as EquipmentKind[]){
   const m=fixtureModel();m.modules=[];m.stored={iron:1e6,copper:1e6,crystal:1e6,ice:1e6,radioactive:1e6};
   if(kind!=='core'){for(let i=1;i<5;i++)assert.ok(m.upgradeModule(0,0));assert.ok(m.installModule(kind,1,0));}

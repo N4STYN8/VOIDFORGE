@@ -461,10 +461,11 @@ export class GameModel {
   private pushOre(asteroid:Asteroid,damage:number,direction:Point){
     const length=Math.hypot(direction.x,direction.y);
     if(length<1e-8||damage<=0)return;
+    const previousSpeed=Math.hypot(asteroid.vx,asteroid.vy),limit=Math.max(previousSpeed,ORE_COMBAT.maxShotSpeed);
     const mass=Math.max(1,(asteroid.radius/20)**2),impulse=damage*ORE_COMBAT.impulsePerDamage/mass;
     asteroid.vx+=direction.x/length*impulse;asteroid.vy+=direction.y/length*impulse;
     const speed=Math.hypot(asteroid.vx,asteroid.vy);
-    if(speed>ORE_COMBAT.maxShotSpeed){asteroid.vx*=ORE_COMBAT.maxShotSpeed/speed;asteroid.vy*=ORE_COMBAT.maxShotSpeed/speed;}
+    if(speed>limit){asteroid.vx*=limit/speed;asteroid.vy*=limit/speed;}
   }
   private shootOre(asteroid: Asteroid, damage: number, point: Point, weapon?: WeaponKind, direction?: Point) {
     this.pushOre(asteroid,damage,direction??{x:asteroid.x-point.x,y:asteroid.y-point.y});

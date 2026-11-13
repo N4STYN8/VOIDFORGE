@@ -47,7 +47,7 @@
 ## Next staged expansion
 The newer six enemy classes, tactical AI expansion, seeded danger regions and three bosses are queued after the outfitter stage. Current four classes/patrol AI remain in place; this update does not claim those later stages are complete.
 
-Shots push asteroids along projectile travel; explosive hits push outward. Impulse scales with damage and inversely with rock mass, capped at 120 units/s from gunfire. Weapons remove material at 10% of nominal damage and recover 35% of removed ore; mining remains efficient. Moving rocks can damage and kill enemies through normal impact contacts.
+Shots push asteroids along projectile travel; explosive hits push outward. Impulse scales with damage and inversely with rock mass, capped at 12 units/s from gunfire for resting rocks (existing collision momentum is preserved). Weapons remove material at 10% of nominal damage and recover 35% of removed ore; mining remains efficient. Moving rocks can damage and kill enemies through normal impact contacts.
 
 ## Level-5 abilities
 Normal statistics improve at every level; abilities unlock at level 5. Costs for tiers 4/5 also require ice/radioactive minerals. All definitions and tuning live in abilityConfig.ts/data.ts.
@@ -70,6 +70,8 @@ Normal statistics improve at every level; abilities unlock at level 5. Costs for
 
 ## Renewable populations
 Each original asteroid is a finite deposit; depletion persists. Its field slot can receive a new deposit of the same resource class, using salted seeded chunk generation at a different non-overlapping position. Common ore renews after 2–5 minutes, ice 3–5, crystal/radioactive 8–15. Camera/ship/base obstruction defers arrival rather than forcing it. Field targets follow the original seeded per-chunk population; no global world count limit.
-Population updates run every 5 seconds of active game time. At most 2 rocks and 3 enemies arrive per update; local budgets are 1,800 asteroids and 24 enemies, independent of world population targets. Rocks arrive with 1–4 units/s drift. Reloading preserves timers; paused/closed games do not advance the population clock.
-Enemy regions span 3,600 units and derive low/medium/high threat from seeded field richness and rare ores. Targets are 3/6/9 enemies, respectively, using existing raider/scout patrols and tank/sniper guards. Normal recovery takes 1–3 minutes; guards 5–10. Enemies enter offscreen at least 900 units away, outside ore, ships and structures. Distant enemies become dormant instead of dying or granting loot.
+Population updates run every 5 seconds of active game time. At most 2 rocks and 3 enemies arrive per update; local budgets are 2,400 asteroids and 36 enemies, independent of world population targets. Rocks arrive with 1–4 units/s drift. Reloading preserves timers; paused/closed games do not advance the population clock.
+Enemy regions span 3,600 units and derive low/medium/high threat from seeded field richness and rare ores. Targets are 5/10/16 enemies, respectively, using existing raider/scout patrols and tank/sniper guards. Normal recovery takes 1–3 minutes; guards 5–10. Enemies enter offscreen at least 900 units away, outside ore, ships and structures. Distant enemies become dormant instead of dying or granting loot.
 Boss encounter content is not implemented. The persistent encounter ledger is ready to gate repeat defeats for 20–30 minutes and grant a unique progression reward only once; it does not create new bosses.
+
+Starter weapon damage is now 12/11/45/27/39/4/9 for autocannon/pulse/rail/plasma/missile/flak pellet/EMP. Higher levels keep their established damage. Weapon asteroid impulse is 0.3 per damage divided by rock mass. Additional seeded belts and clusters add up to 32 candidate deposits per chunk through the existing safe population scheduler, preserving original geography and depleted rocks.
