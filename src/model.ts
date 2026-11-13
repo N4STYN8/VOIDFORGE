@@ -1,3 +1,5 @@
+import { SPECIAL } from './abilityConfig.ts';
+import { freshAbility,state,tick,activate,onFire,onHit,onMiningHit,onDamageTaken,onBoost,onEnergyDeficit,onOverheat,type AbilityState } from './abilities.ts';
 import { ChunkWorld, SeedRandom, randomWorldSeed, type WorldSnapshot } from './world.ts';
 import { segmentPolygonHit, segmentCircleHit } from './asteroidGeometry.ts';
 import { clearLineOfSight } from './enemyAI.ts';
@@ -6,12 +8,12 @@ export type { Asteroid } from './mining.ts';
 import type { EffectEvent } from './effectEvents.ts';
 import { collideAsteroid, collide, type Body } from './collisions.ts';
 import { WORLD, SHIP, WEAPONS, ENEMIES, COLLISION, ORE_COMBAT, PATROL, MODULE_DURABILITY, REPAIR, MODULES, BUILD_GRID, BASES, BASE_RADIUS, EXPLORATION, RESOURCES, type EnemyKind, CORE, ROCKET, WEAPON_TYPES, SHIP_SYSTEMS, VFX, type WeaponKind, equipment, upgradeCost, type EquipmentStats, type EquipmentKind, type ModuleKind, type Resource } from './data.ts';
-export type ShipModule = { x: number; y: number; kind: ModuleKind; level: number; cooldown: number; integrity: number; targetIds?: number[]; boostRemaining?:number; boostCooldown?:number };
+export type ShipModule = { x: number; y: number; kind: ModuleKind; level: number; cooldown: number; integrity: number; ability?:AbilityState; targetIds?: number[]; boostRemaining?:number; boostCooldown?:number };
 export type Point = { x: number; y: number };
-export type Input = { x: number; y: number; aim: Point; fire: boolean; mine: boolean; dock: boolean; boost?:boolean; view?: { x: number; y: number; width: number; height: number } };
+export type Input = { x: number; y: number; aim: Point; fire: boolean; mine: boolean; dock: boolean; boost?:boolean; overclock?:boolean; view?: { x: number; y: number; width: number; height: number } };
 export type Enemy = Point & { disabledFor?: number; vx?: number; vy?: number; impactCooldown?: number; kind?: EnemyKind; squad?: number; slot?: number; patrolAngle?: number; id: number; health: number; cooldown: number; angle: number };
 export type Drop = Point & { id: number; ore: Resource; amount: number };
-export type Bullet = Point & { id: number; vx: number; vy: number; life: number; enemy: boolean; damage?: number; rocket?: boolean; splash?: number; weapon?: WeaponKind; level?: number };
+export type Bullet = Point & { id: number; vx: number; vy: number; life: number; enemy: boolean; damage?: number; rocket?: boolean; splash?: number; weapon?: WeaponKind; level?: number; attackerId?:number; penetrating?:number; hitIds?:number[]; enhanced?:boolean; guided?:boolean; fragment?:boolean; age?:number };
 const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 export class GameModel {
@@ -30,11 +32,13 @@ export class GameModel {
   set cargoCapacity(value:number){this.cargoOverride=value;}
   private statsCache?: {source:ShipModule[];count:number;core:number;values:EquipmentStats;mass:number;power:number;heat:number;weapons:number};
   private engineRatio = 1;
-  empPulses: (Point & { radius:number; maxRadius:number; damage:number; stun:number; hits:number[] })[] = [];
+  empPulses: (Point & { radius:number; maxRadius:number; damage:number; stun:number; hits:number[];cascade?:boolean;secondary?:number })[] = [];
   effects: EffectEvent[] = [];
   shield = 0;
   private shieldDelay = 0;
   coreLevel = 1;
+  coreAbility=freshAbility();
+  novaFields:(Point & {radius:number;life:number;damage:number})[]=[];
   blasts: (Point & { radius: number; life: number })[] = [];
   cargo: Record<Resource, number> = { iron: 0, copper: 0, crystal: 0, ice: 0, radioactive: 0 };
   stored: Record<Resource, number> = { iron: 0, copper: 0, crystal: 0, ice: 0, radioactive: 0 };
@@ -64,7 +68,7 @@ export class GameModel {
   get chartedAsteroids() { return [...this.world.surveyed.values()]; }
   toSave(): GameSave {
     return { version: 1, seed: this.seed, world: this.world.snapshot(this.asteroids),
-      player: { ...this.player }, modules: structuredClone(this.modules), coreLevel: this.coreLevel, shield: this.shield, energy: this.energy, heat: this.heat, empPulses: structuredClone(this.empPulses),
+      player: { ...this.player }, modules: structuredClone(this.modules), coreAbility:{...this.coreAbility},novaFields:structuredClone(this.novaFields), coreLevel: this.coreLevel, shield: this.shield, energy: this.energy, heat: this.heat, empPulses: structuredClone(this.empPulses),
       cargo: { ...this.cargo }, stored: { ...this.stored }, bases: structuredClone(this.bases), explored: [...this.explored],
       enemies: structuredClone(this.enemies), squads: structuredClone(this.squads), drops: structuredClone(this.drops), bullets: structuredClone(this.bullets), detachedModules: structuredClone(this.detachedModules),
       kills: this.kills, deaths: this.deaths, id: this.id, rng: this.rng.state, spawnTimer: this.spawnTimer, shieldDelay: this.shieldDelay, impactTimer: this.impactTimer };
@@ -73,7 +77,8 @@ export class GameModel {
     const data = value as GameSave;
     if (!data || data.version !== 1 || typeof data.seed !== 'string' || !data.world || data.world.spec?.version !== 1 || data.world.spec.seed !== data.seed || !data.player || !Number.isFinite(data.player.x) || !Number.isFinite(data.player.y) || !Array.isArray(data.modules) || !Array.isArray(data.bases) || data.bases.length !== BASES.length || !Array.isArray(data.explored) || !Array.isArray(data.world.changes) || !Array.isArray(data.world.surveyed)) throw new Error('Unsupported or invalid save file.');
     const m = new GameModel(data.seed, { world: data.world });
-    if (![1, 2, 3].includes(data.coreLevel) || data.modules.some(block => !MODULES[block.kind] || !Number.isInteger(block.level) || block.level < 1 || block.level > 3 || !Number.isFinite(block.integrity))) throw new Error('Invalid ship data in save.');
+    if (!Number.isInteger(data.coreLevel) || data.coreLevel<1 || data.coreLevel>CORE.levels.length || data.modules.some(block => !MODULES[block.kind] || !Number.isInteger(block.level) || block.level < 1 || block.level > MODULES[block.kind].levels.length || !Number.isFinite(block.integrity))) throw new Error('Invalid ship data in save.');
+    m.coreAbility={...freshAbility(),...data.coreAbility};m.novaFields=structuredClone(data.novaFields??[]).slice(-SPECIAL.plasma.maxFields);
     m.player = { ...data.player }; m.modules = structuredClone(data.modules); m.coreLevel = data.coreLevel; m.shield = data.shield; m.energy = Math.max(0,Math.min(data.energy ?? m.maxEnergy,m.maxEnergy)); m.heat = data.heat ?? 0; m.empPulses = structuredClone(data.empPulses ?? []);
     const empty = () => Object.fromEntries((Object.keys(RESOURCES) as Resource[]).map(ore => [ore, 0])) as Record<Resource, number>;
     m.cargo = { ...empty(), ...data.cargo }; m.stored = { ...empty(), ...data.stored };
@@ -104,10 +109,12 @@ export class GameModel {
   get boostReady(){return this.modules.filter(m=>m.kind==='engine'&&m.level>=2&&(m.boostCooldown??0)<=0).length;}
   private burst(stat:'burstSpeed'|'burstThrust'){return this.modules.reduce((sum,m)=>sum+((m.boostRemaining??0)>0?(MODULES[m.kind].levels[m.level-1][stat]??0):0),0)*this.engineRatio;}
   get maxEnergy() { return CORE.levels[this.coreLevel - 1].energyCapacity! + this.bonus('energyCapacity'); }
-  get powerGeneration() { return CORE.levels[this.coreLevel - 1].generation! + this.bonus('generation'); }
+  get basePowerGeneration(){return CORE.levels[this.coreLevel-1].generation!+this.bonus('generation');}
+  get powerGeneration() { return this.basePowerGeneration+this.modules.reduce((sum,m)=>sum+(m.kind==='reactor'&&m.level>=5&&(m.ability?.active??0)>0?MODULES.reactor.levels[m.level-1].generation!*SPECIAL.reactor.bonus:0),0); }
   get coolingRate() { return CORE.levels[this.coreLevel - 1].cooling! + this.bonus('cooling'); }
   get heatCapacity() { return CORE.levels[this.coreLevel - 1].heatCapacity! + this.bonus('heatCapacity'); }
   private operate(energy: number, heat: number): boolean {
+    if(this.coreLevel>=5&&this.coreAbility.active>0){energy*=SPECIAL.core.costMultiplier;heat*=SPECIAL.core.costMultiplier;}
     if (this.energy + 1e-8 < energy) { this.powerLimited = true; return false; }
     if (this.heat + heat > this.heatCapacity + 1e-8) { this.heatLimited = true; return false; }
     this.energy = Math.max(0, this.energy - energy); this.heat = Math.min(this.heatCapacity, this.heat + heat); return true;
@@ -155,6 +162,7 @@ export class GameModel {
     const core = x === 0 && y === 0;
     if (!m && !core) return 'Select an installed module.';
     const kind: EquipmentKind = core ? 'core' : m!.kind, level = core ? this.coreLevel : m!.level;
+    if (level >= equipment(kind).levels.length) return 'Maximum level reached.';
     if (!core && level + 1 > this.coreLevel) return `Upgrade your core / hull to level ${level + 1} first.`;
     if (level >= equipment(kind).levels.length) return 'Maximum level reached.';
     const cost = upgradeCost(kind, level);
@@ -284,9 +292,16 @@ export class GameModel {
       }
     }
   }
-  private damagePlayer(amount: number, hit?: Point) {
+  private damagePlayer(amount: number, hit?: Point, attackerId?:number) {
+    if(this.modules.some(m=>m.kind==='engine'&&m.level>=5&&(m.ability?.phase??0)>0))return;
+    if(this.modules.some(m=>m.kind==='armor'&&m.level>=5&&(m.ability?.active??0)>0))amount*=1-SPECIAL.armor.reduction;
+    for(const m of this.modules)if(m.kind==='armor'&&onDamageTaken(m,amount))this.effect({type:'shield',...this.player,color:MODULES.armor.color,radius:28});
     const absorbed = Math.min(this.shield, amount), damage = amount - absorbed;
     if (absorbed > 0) this.effect({type:'shield',...(hit??this.player),radius:22,color:0x71e1ff});
+    if(absorbed>0&&attackerId!==undefined&&this.modules.some(m=>m.kind==='shield'&&m.level>=5)){
+      const attacker=this.enemies.find(e=>e.id===attackerId&&e.health>0);
+      if(attacker){this.hitEnemy(attacker,absorbed*SPECIAL.shield.fraction);this.arc(hit??this.player,attacker,0xa4edff);}
+    }
     this.shield -= absorbed; this.player.health = Math.max(0, this.player.health - damage);
     this.shieldDelay = 3;
     if (damage <= 0 || !hit) return;
@@ -351,7 +366,7 @@ export class GameModel {
     if (!this.dead) return;
     const base = this.nearestUnlockedBase;
     this.player = { x: base.x, y: base.y + 130, vx: 0, vy: 0, health: this.maxHealth, angle: -Math.PI / 2 };
-    this.energy = this.maxEnergy; this.heat = 0; this.empPulses = [];
+    this.energy = this.maxEnergy; this.heat = 0; this.empPulses = [];this.novaFields=[];this.coreAbility.active=0;for(const m of this.modules)if(m.ability){m.ability.active=0;m.ability.phase=0;m.ability.sustained=0;}
     this.impactTimer = 0; this.shield = this.maxShield; this.shieldDelay = 0;
     this.revealExploration();
     this.bullets = []; this.message = 'Respawned. Your dropped cargo remains at the wreck location.';
@@ -359,7 +374,7 @@ export class GameModel {
   private shoot(source: Point, angle: number, enemy: boolean, override?: typeof WEAPONS.enemy) {
     const w = override ?? (enemy ? WEAPONS.enemy : WEAPONS.player);
     if(enemy)this.effect({type:'muzzle',...source,angle,color:0xff7770,weapon:'cannon'});
-    this.bullets.push({ id: this.id++, x: source.x + Math.cos(angle) * (enemy ? 23 : 10), y: source.y + Math.sin(angle) * (enemy ? 23 : 10), vx: Math.cos(angle) * w.speed, vy: Math.sin(angle) * w.speed, life: w.lifetime, enemy, damage: w.damage });
+    this.bullets.push({ id: this.id++, x: source.x + Math.cos(angle) * (enemy ? 23 : 10), y: source.y + Math.sin(angle) * (enemy ? 23 : 10), vx: Math.cos(angle) * w.speed, vy: Math.sin(angle) * w.speed, life: w.lifetime, enemy, damage: w.damage,attackerId:enemy?(source as Enemy).id:undefined });
   }
   private impact(speed: number, label: string, hit?: Point): number {
     if (speed <= COLLISION.safeSpeed || this.impactTimer > 0) return 0;
@@ -471,10 +486,27 @@ export class GameModel {
     this.oreHits++; this.addBlast({ ...point, radius: 10, life: 0.1 },weapon);
     if (asteroid.amount <= 0) this.destroyAsteroid(asteroid.id);
   }
+  private hitEnemy(enemy:Enemy,damage:number){
+    if(enemy.health<=0||damage<=0)return;
+    this.enemyHits++;enemy.health-=damage;if(enemy.health<=0)this.enemyDestroyed(enemy);
+  }
+  private arc(from:Point,to:Point,color:number){this.effect({type:'arc',...from,toX:to.x,toY:to.y,color});}
+  private fragment(b:Bullet,point:Point){
+    if(b.weapon!=='flak'||b.level!==5||b.fragment)return;
+    const available=SPECIAL.flak.maxActive-this.bullets.filter(b=>b.fragment&&b.life>0).length;
+    for(let i=0;i<Math.min(SPECIAL.flak.count,available);i++){
+      const angle=Math.atan2(b.vy,b.vx)+(i===0?-.5:.5);
+      this.bullets.push({id:this.id++,...point,vx:Math.cos(angle)*600,vy:Math.sin(angle)*600,life:1,age:0,enemy:false,damage:(b.damage??0)*SPECIAL.flak.fraction,weapon:'flak',level:5,fragment:true});
+    }
+  }
   private explodeRocket(bullet: Bullet, point: Point) {
     this.addBlast({ ...point, radius: bullet.splash ?? 65, life: 0.18 },bullet.weapon);
     for (const e of this.enemies) if (e.health > 0 && dist(e, point) <= (bullet.splash ?? 65) + ENEMIES[e.kind ?? 'raider'].radius) {
-      this.enemyHits++; e.health -= bullet.damage ?? 65; if (e.health <= 0) this.enemyDestroyed(e);
+      this.hitEnemy(e,bullet.damage??65);
+    }
+    if(bullet.weapon==='plasma'&&bullet.level===5){
+      if(this.novaFields.length>=SPECIAL.plasma.maxFields)this.novaFields.shift();
+      this.novaFields.push({...point,radius:bullet.splash??95,life:SPECIAL.plasma.duration,damage:(bullet.damage??0)*SPECIAL.plasma.fraction});
     }
     for (const asteroid of [...this.asteroids]) if (dist(asteroid, point) < (bullet.splash ?? 65) + asteroid.radius) this.shootOre(asteroid, bullet.damage ?? 65, miningImpact(asteroid, point, asteroid),bullet.weapon,{x:asteroid.x-point.x,y:asteroid.y-point.y});
   }
@@ -487,6 +519,18 @@ export class GameModel {
     this.minedTarget = undefined; this.miningPoint = undefined;
     if (this.dead) return;
     dt = Math.min(dt, 0.05);
+    tick(this.coreAbility,dt);
+    for(const m of this.modules)if(m.level>=5){const a=state(m);tick(a,dt);if(m.kind==='cannon')a.sustained=input.fire&&!this.atStation?a.sustained+dt:0;}
+    if(input.overclock&&this.coreLevel>=5&&this.coreAbility.cooldown<=0&&this.operate(SPECIAL.core.power,SPECIAL.core.heat)){
+      activate(this.coreAbility,SPECIAL.core.duration,SPECIAL.core.cooldown);this.effect({type:'shield',...this.player,color:CORE.color,radius:40});
+    }
+    for(const m of this.modules)if(m.kind==='cooler'&&onOverheat(m,this.heat,this.heatCapacity)){
+      this.heat=Math.max(0,this.heat-this.heatCapacity*SPECIAL.cooler.fraction);this.effect({type:'shield',...this.modulePoint(m),color:MODULES.cooler.color,radius:45});
+    }
+    for(const m of this.modules)if(m.kind==='reactor'&&m.level>=5){
+      if(onEnergyDeficit(m,this.energy,this.maxEnergy,this.powerDemand,this.basePowerGeneration))this.effect({type:'shield',...this.modulePoint(m),color:MODULES.reactor.color,radius:25});
+      if(state(m).active>0){this.heat=Math.min(this.heatCapacity,this.heat+SPECIAL.reactor.heat*dt);}
+    }
     this.shieldDelay = Math.max(0, this.shieldDelay - dt);
     this.energy = Math.min(this.maxEnergy, this.energy + this.powerGeneration * dt);
     this.heat = Math.max(0, this.heat - this.coolingRate * dt);
@@ -504,7 +548,7 @@ export class GameModel {
       const running=Boolean(input.x||input.y||m.boostRemaining>0||activate);
       if(!running||this.operate((running?(stats.power??0)*dt:0)+(activate?(stats.boostPower??0):0),(running?(stats.heat??0)*dt:0)+(activate?(stats.boostHeat??0):0))){
         powered++;
-        if(activate){m.boostRemaining=stats.boostDuration!;m.boostCooldown=stats.boostCooldown!;this.effect({type:'muzzle',...this.modulePoint(m),angle:this.player.angle+Math.PI,color:MODULES.engine.color});}
+        if(activate){onBoost(m);m.boostRemaining=stats.boostDuration!;m.boostCooldown=stats.boostCooldown!;this.effect({type:'muzzle',...this.modulePoint(m),angle:this.player.angle+Math.PI,color:MODULES.engine.color});}
       }
     }
     this.engineRatio=engines?powered/engines:1;
@@ -532,18 +576,27 @@ export class GameModel {
       const weapon=MODULES[m.kind].weapon;
       if (!input.fire || this.atStation || m.cooldown > 0 || !weapon) continue;
       const stats=MODULES[m.kind].levels[m.level-1],type=WEAPON_TYPES[weapon];
-      if(!this.operate(stats.power??0,stats.heat??0))continue;
+      if(!this.operate(stats.power??0,stats.heat??0)){if(m.ability)m.ability.sustained=0;continue;}
+      const special=onFire(m);
       const source=this.modulePoint(m),angle=Math.atan2(input.aim.y-source.y,input.aim.x-source.x);
       this.effect({type:'muzzle',x:source.x+Math.cos(angle)*10,y:source.y+Math.sin(angle)*10,angle,weapon,level:m.level,color:type.color});
-      if(weapon==='emp')this.empPulses.push({...source,radius:0,maxRadius:stats.empRange!,damage:stats.damage!,stun:stats.stun!,hits:[]});
+      if(weapon==='emp')this.empPulses.push({...source,radius:0,maxRadius:stats.empRange!,damage:stats.damage!,stun:stats.stun!,hits:[],cascade:m.level===5,secondary:0});
       else for(let pellet=0;pellet<type.pellets;pellet++){
         const direction=angle+(type.pellets>1?(pellet/(type.pellets-1)-.5)*type.spread:0);
         this.shoot(source,direction,false);
         const bullet=this.bullets[this.bullets.length-1];
         bullet.damage=stats.damage;bullet.weapon=weapon;bullet.level=m.level;bullet.splash=stats.splash;bullet.rocket=weapon==='rocket';
+        if(special.penetrating){bullet.penetrating=SPECIAL.rail.targets;bullet.enhanced=true;bullet.hitIds=[];}
         bullet.vx=Math.cos(direction)*type.speed;bullet.vy=Math.sin(direction)*type.speed;
       }
-      m.cooldown=stats.cooldown!;
+      if(special.swarm){
+        const available=SPECIAL.rocket.maxActive-this.bullets.filter(b=>b.guided&&b.life>0).length;
+        for(let i=0;i<Math.min(available,SPECIAL.rocket.count);i++){
+          const direction=angle+(i-1)*.24;this.shoot(source,direction,false);const b=this.bullets[this.bullets.length-1];
+          Object.assign(b,{weapon:'rocket',level:5,rocket:true,guided:true,age:0,damage:stats.damage!*SPECIAL.rocket.fraction,splash:stats.splash!*.45,vx:Math.cos(direction)*WEAPON_TYPES.rocket.speed,vy:Math.sin(direction)*WEAPON_TYPES.rocket.speed});
+        }
+      }
+      m.cooldown=stats.cooldown!/special.rate;
     }
     if(input.mine&&this.cargoUsed>=this.cargoCapacity)this.message='Cargo full. Unload at a base (E) or install another cargo hold (Q).';
     if (input.mine&&this.cargoUsed<this.cargoCapacity) {
@@ -560,10 +613,11 @@ export class GameModel {
         assigned.add(target.id);
         const impact = miningImpact(target, source, target);
         const stats = MODULES.miner.levels[source.level - 1];
-        if (beams.length && !this.operate((stats.power??0)*dt,(stats.heat??0)*dt)) continue;
+        const module=this.modules.find(m=>m.x===source.moduleX&&m.y===source.moduleY&&m.kind==='miner'),efficiency=source.level>=5?SPECIAL.miner.efficiency:1;
+        if (beams.length && !this.operate((stats.power??0)*dt*efficiency,(stats.heat??0)*dt*efficiency)) continue;
         this.miningLinks.push({ from: { x: source.x, y: source.y }, to: impact, targetId: target.id, level:source.level,moduleX:source.moduleX,moduleY:source.moduleY });
         this.minedTarget ??= target; this.miningPoint ??= impact;
-        const removed = mineMaterial(target, source.rate * dt, impact);
+        const removed = mineMaterial(target, source.rate * dt+onMiningHit(module,dt), impact);
         if (removed > 0) {
           this.releaseOre(impact, target.ore, removed);
           this.emitDebris(impact, { x: impact.x - target.x, y: impact.y - target.y }, RESOURCES[target.ore].color, target.id + target.amount);
@@ -575,15 +629,17 @@ export class GameModel {
     for (const module of this.modules) if (module.kind === 'tractor') {
       const stats = MODULES.tractor.levels[module.level-1];
       const source = this.modulePoint(module), slots = stats.targets!;
+      const sweep=module.level>=5&&((state(module).active>0)||(state(module).cooldown<=0));
+      const range=stats.tractor!*(sweep?SPECIAL.tractor.rangeMultiplier:1);
       const ids = (module.targetIds ??= []);
       let count = 0;
       if (this.cargoUsed < this.cargoCapacity) for (const id of ids) {
         const drop = dropsById.get(id);
-        if (drop && drop.amount > 0 && !claimed.has(id) && dist(source,drop) <= stats.tractor! && count < slots) { ids[count++] = id; claimed.add(id); }
+        if (drop && drop.amount > 0 && !claimed.has(id) && dist(source,drop) <= range && count < slots) { ids[count++] = id; claimed.add(id); }
       }
       ids.length = count;
       while (ids.length < slots && this.cargoUsed < this.cargoCapacity) {
-        let nearest: Drop | undefined, distance = stats.tractor!;
+        let nearest: Drop | undefined, distance = range;
         for (const drop of this.drops) if (drop.amount > 0 && !claimed.has(drop.id)) {
           const d = dist(source,drop); if (d <= distance) { nearest=drop;distance=d; }
         }
@@ -591,6 +647,7 @@ export class GameModel {
       }
       if (!ids.length) continue;
       if (!this.operate((stats.power??0)*dt,(stats.heat??0)*dt)) { for(const id of ids)claimed.delete(id); ids.length=0;continue; }
+      if(module.level>=5&&activate(state(module),SPECIAL.tractor.duration,SPECIAL.tractor.cooldown))this.effect({type:'shield',...source,color:MODULES.tractor.color,radius:32});
       for (const id of ids) {
         const drop=dropsById.get(id)!; const distance=dist(source,drop),step=Math.min(distance,stats.pull!*dt);
         if(distance>0){drop.x+=(source.x-drop.x)/distance*step;drop.y+=(source.y-drop.y)/distance*step;}
@@ -656,17 +713,34 @@ export class GameModel {
     for(const pulse of this.empPulses){
       pulse.radius=Math.min(pulse.maxRadius,pulse.radius+WEAPON_TYPES.emp.speed*dt);
       for(const enemy of this.enemies)if(enemy.health>0&&!pulse.hits.includes(enemy.id)&&dist(enemy,pulse)<=pulse.radius+ENEMIES[enemy.kind??'raider'].radius){
-        pulse.hits.push(enemy.id);enemy.disabledFor=Math.max(enemy.disabledFor??0,pulse.stun);this.enemyHits++;enemy.health-=pulse.damage;
+        pulse.hits.push(enemy.id);enemy.disabledFor=Math.max(enemy.disabledFor??0,pulse.stun);this.hitEnemy(enemy,pulse.damage);
         this.effect({type:'impact',x:enemy.x,y:enemy.y,weapon:'emp',radius:20,color:WEAPON_TYPES.emp.color});
-        if(enemy.health<=0)this.enemyDestroyed(enemy);
+        if(pulse.cascade&&(pulse.secondary??0)<SPECIAL.emp.maxSecondary){
+          const nearby=this.enemies.filter(e=>e!==enemy&&e.health>0&&!pulse.hits.includes(e.id)&&dist(e,enemy)<=SPECIAL.emp.range).sort((a,b)=>dist(a,enemy)-dist(b,enemy));
+          for(const secondary of nearby.slice(0,SPECIAL.emp.maxSecondary-(pulse.secondary??0))){
+            pulse.secondary=(pulse.secondary??0)+1;pulse.hits.push(secondary.id);secondary.disabledFor=Math.max(secondary.disabledFor??0,pulse.stun*SPECIAL.emp.stunFraction);
+            this.hitEnemy(secondary,pulse.damage*SPECIAL.emp.fraction);this.arc(enemy,secondary,MODULES.emp.color);
+          }
+        }
       }
     }
     this.empPulses=this.empPulses.filter(pulse=>pulse.radius<pulse.maxRadius);
-    for (const b of this.bullets) {
+    for(const e of this.enemies)if(e.health>0){
+      let damage=0;for(const field of this.novaFields)if(dist(e,field)<=field.radius+ENEMIES[e.kind??'raider'].radius)damage=Math.max(damage,field.damage*Math.min(dt,field.life));
+      this.hitEnemy(e,damage);
+    }
+    this.novaFields=this.novaFields.filter(field=>(field.life-=dt)>0);
+    for (const b of [...this.bullets]) {
       if (b.life <= 0) continue;
+      if(b.guided||b.fragment){b.age=(b.age??0)+dt;if(b.age>(b.guided?SPECIAL.rocket.lifetime:SPECIAL.flak.lifetime)){b.life=0;continue;}}
+      if(b.guided){
+        const target=this.enemies.filter(e=>e.health>0&&dist(e,b)<=SPECIAL.rocket.range).sort((a,c)=>dist(a,b)-dist(c,b))[0];
+        if(target){const angle=Math.atan2(b.vy,b.vx),desired=Math.atan2(target.y-b.y,target.x-b.x),difference=Math.atan2(Math.sin(desired-angle),Math.cos(desired-angle)),next=angle+clamp(difference,-SPECIAL.rocket.turnRate*dt,SPECIAL.rocket.turnRate*dt),speed=Math.hypot(b.vx,b.vy);b.vx=Math.cos(next)*speed;b.vy=Math.sin(next)*speed;}
+      }
       const start = { x: b.x, y: b.y }; b.x += b.vx * dt; b.y += b.vy * dt;
       const view = input.view ?? { x: 0, y: 0, width: WORLD.width, height: WORLD.height };
       if (b.x < view.x - 12 || b.y < view.y - 12 || b.x > view.x + view.width + 12 || b.y > view.y + view.height + 12) { b.life = 0; continue; }
+      for(let hit=0;hit<(b.enhanced?SPECIAL.rail.targets:1);hit++){
       let oreHit: { asteroid: Asteroid; point: Point; t: number } | undefined;
       for (const asteroid of this.asteroids) {
         if (segmentCircleHit(start, b, asteroid, asteroid.radius + 4) === undefined) continue;
@@ -680,22 +754,26 @@ export class GameModel {
           targetT = segmentCircleHit(start, b, p, SHIP.radius + 4) ?? Infinity;
           for (const kind of Object.keys(MODULES) as ModuleKind[]) for (const block of this.modulePositions(kind)) targetT = Math.min(targetT, segmentCircleHit(start, b, block, 12) ?? Infinity);
         }
-      } else for (const e of this.enemies) if (e.health > 0) {
+      } else for (const e of this.enemies) if (e.health > 0&&!b.hitIds?.includes(e.id)) {
         const t = segmentCircleHit(start, b, e, ENEMIES[e.kind ?? 'raider'].radius + (b.rocket ? 7 : 4));
         if (t !== undefined && t < targetT) { target = e; targetT = t; }
       }
       if (oreHit && oreHit.t <= targetT) {
-        b.life = 0;
+        b.life = 0;this.fragment(b,oreHit.point);
         if ((b.splash ?? 0)>0) this.explodeRocket(b, oreHit.point); else this.shootOre(oreHit.asteroid, b.damage ?? (b.enemy ? WEAPONS.enemy.damage : WEAPONS.player.damage), oreHit.point,b.weapon,{x:b.vx,y:b.vy});
       } else if (Number.isFinite(targetT)) {
         b.life = 0; const point = { x: start.x + (b.x - start.x) * targetT, y: start.y + (b.y - start.y) * targetT };
-        if (b.enemy) this.damagePlayer(b.damage ?? WEAPONS.enemy.damage, point);
+        this.fragment(b,point);
+        if (b.enemy) this.damagePlayer(b.damage ?? WEAPONS.enemy.damage, point,b.attackerId);
         else if ((b.splash ?? 0)>0) this.explodeRocket(b, point);
         else if (target) {
-          this.enemyHits++; target.health -= b.damage ?? WEAPONS.player.damage;
-          if (target.health <= 0) this.enemyDestroyed(target);
+          this.hitEnemy(target,b.damage??WEAPONS.player.damage);
+          const chain=onHit(b,target,this.enemies);if(chain){this.hitEnemy(chain.target,chain.damage);this.arc(target,chain.target,MODULES.pulse.color);}
+          if(b.enhanced){(b.hitIds??=[]).push(target.id);b.penetrating=(b.penetrating??1)-1;b.damage=(b.damage??0)*SPECIAL.rail.falloff;if(b.penetrating>0)b.life=1;}
           this.addBlast({ ...point, radius: b.weapon==='rail'?35:12, life: 0.1 },b.weapon);
         }
+      } else break;
+      if(b.life<=0)break;
       }
     }
     this.bullets = this.bullets.filter(b => b.life > 0); this.enemies = this.enemies.filter(e => e.health > 0);
@@ -725,7 +803,7 @@ export class GameModel {
 
 export type GameSave = {
   version: 1; seed: string; world: WorldSnapshot; player: GameModel['player']; modules: ShipModule[];
-  coreLevel: number; shield: number; energy?:number; heat?:number; empPulses?:GameModel['empPulses']; cargo: Record<Resource, number>; stored: Record<Resource, number>;
+  coreAbility?:AbilityState;novaFields?:GameModel['novaFields'];coreLevel: number; shield: number; energy?:number; heat?:number; empPulses?:GameModel['empPulses']; cargo: Record<Resource, number>; stored: Record<Resource, number>;
   bases: GameModel['bases']; explored: string[]; enemies: Enemy[]; squads: GameModel['squads']; drops: Drop[];
   bullets: Bullet[]; detachedModules: GameModel['detachedModules']; kills: number; deaths: number; id: number; rng: number;
   spawnTimer: number; shieldDelay: number; impactTimer: number;

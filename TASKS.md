@@ -1,5 +1,14 @@
 # Tasks
 
+## Five-level module system — completed
+- [x] Universal five-tier data, costs, durability, save validation, texture generation and unique core
+- [x] All sixteen functional level-5 abilities with shared hooks and independent saved timers
+- [x] Exact five-tier tractor/cargo progression; finite ore, exclusive claims and non-recursive damage
+- [x] Bounded guided missiles, fragments and nova fields; recognizable lightweight feedback
+- [x] UI comparisons, ability names/descriptions/cooldowns, unlock and maximum indicators
+- [x] 90 regression tests; build; actual browser upgrade and ~60 FPS L5 large-ship combat check
+- [ ] Human balance pass on advanced economy and special-ability power/heat interactions
+
 ## Current completed stage — module freedom, effects and outfitter
 - [x] Remove per-type and total module-count caps; expandable connected-layout editor
 - [x] Reactors, cooling, power/heat operation limits and mass-based handling
@@ -32,7 +41,7 @@
 - [x] Push tested source to N4STYN8/VOIDFORGE
 - [x] Enable Pages, await deployment and verify the live game
 
-## Next coherent stage from the latest staged brief
+## Next feature stage — enemy/boss brief
 - [ ] Six enemy classes with distinct loadouts, silhouettes, shields, loot and sounds
 - [ ] Tactical state machine: flanking, lead shots, obstacle avoidance, range control and retreat
 - [ ] Seeded danger regions linked to rich resource geography and map warnings

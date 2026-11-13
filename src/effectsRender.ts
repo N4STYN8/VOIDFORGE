@@ -6,6 +6,7 @@ export function drawParticles(g:Phaser.GameObjects.Graphics,pool:EffectPool){
   if(!pool.enabled)return;
   for(const p of pool.particles){if(!p.active)continue;
     const alpha=p.opacity*Math.pow(Math.max(0,p.life/p.duration),p.fade),s=Math.max(.1,p.size);
+    if(p.kind==='arc'){g.lineStyle(1.5,p.color,alpha);const mx=p.x+p.vx*.5-p.vy*.06,my=p.y+p.vy*.5+p.vx*.06;g.lineBetween(p.x,p.y,mx,my);g.lineBetween(mx,my,p.x+p.vx,p.y+p.vy);continue;}
     if(p.kind==='ring'){g.lineStyle(1.5,p.color,alpha);g.strokeCircle(p.x,p.y,s);}
     else if(p.kind==='spark'){g.lineStyle(1.4,p.color,alpha);g.lineBetween(p.x,p.y,p.x-Math.cos(p.rotation)*s*2,p.y-Math.sin(p.rotation)*s*2);}
     else if(p.kind==='debris'){
@@ -31,11 +32,12 @@ export function drawEnergyBeam(g:Phaser.GameObjects.Graphics,link:GameModel['min
 export function drawProjectile(g:Phaser.GameObjects.Graphics,b:Bullet,enabled:boolean,time:number){
   const kind=b.weapon??(b.rocket?'rocket':'cannon'),type=WEAPON_TYPES[kind],color=b.enemy?0xff7770:type.color;
   const speed=Math.hypot(b.vx,b.vy)||1,ux=b.vx/speed,uy=b.vy/speed,trail=enabled?type.trail:5;
+  if(b.enhanced&&enabled){g.lineStyle(4,0xffffff,.7);g.lineBetween(b.x,b.y,b.x-ux*190,b.y-uy*190);}
   if(kind==='rail'&&enabled)for(let i=3;i>=0;i--){g.lineStyle(i===0?2:1,color,.12+(3-i)*.13);g.lineBetween(b.x-ux*trail*i/4,b.y-uy*trail*i/4,b.x-ux*trail*(i+1)/4,b.y-uy*trail*(i+1)/4);}
   else if(enabled&&trail>5){g.lineStyle(kind==='pulse'?5:4,color,.12);g.lineBetween(b.x,b.y,b.x-ux*trail,b.y-uy*trail);}
   if(kind==='rocket'){
     g.lineStyle(2,0xffbe75,.7);g.lineBetween(b.x-ux*7,b.y-uy*7,b.x-ux*trail,b.y-uy*trail);
-    g.save();g.translateCanvas(b.x,b.y);g.rotateCanvas(Math.atan2(b.vy,b.vx));g.fillStyle(0xe6dbca);g.fillRect(-7,-3,11,6);g.fillStyle(0xff7853);g.fillTriangle(4,-3,9,0,4,3);g.fillStyle(0xffd39c);g.fillTriangle(-7,-2,-13,0,-7,2);g.restore();
+    g.save();g.translateCanvas(b.x,b.y);g.rotateCanvas(Math.atan2(b.vy,b.vx));if(b.guided)g.scaleCanvas(.6,.6);g.fillStyle(0xe6dbca);g.fillRect(-7,-3,11,6);g.fillStyle(0xff7853);g.fillTriangle(4,-3,9,0,4,3);g.fillStyle(0xffd39c);g.fillTriangle(-7,-2,-13,0,-7,2);g.restore();
   }else if(kind==='plasma'){
     const r=5+(enabled?Math.sin(time*20+b.id)*.7:0);
     if(enabled)for(const [scale,alpha]of [[2,.04],[1.5,.12]])for(let i=0;i<8;i++){const a=i*Math.PI/4,c=(i+1)*Math.PI/4;g.fillStyle(color,alpha);g.fillTriangle(b.x,b.y,b.x+Math.cos(a)*r*scale,b.y+Math.sin(a)*r*scale,b.x+Math.cos(c)*r*scale,b.y+Math.sin(c)*r*scale);}

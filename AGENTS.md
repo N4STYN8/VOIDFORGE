@@ -7,7 +7,7 @@ Start sessions by reading AGENTS.md, PROGRESS.md and TASKS.md. Inspect only rele
 Keep simulation independent of Phaser/DOM. Definitions and costs belong in src/data.ts. Geometry, mining, collision, world generation, persistence and rendering have separate files; extend those boundaries. New equipment/resources/enemies must be data-driven.
 
 User requirements:
-- Latest cargo rule: base capacity is 120; cargo holds add 60/120/200 by level. Full cargo pauses mining/collection; never delete overflow minerals.
+- Latest cargo rule: base capacity is 120; cargo holds add 60/120/200/300/500 by level. Full cargo pauses mining/collection; never delete overflow minerals.
 - Ship blocks match build layout; north-facing shipyard preview with core centered. Q opens the shop; B is an alias.
 - Latest module rule: no arbitrary per-type or total count caps. Core tiers still unlock item upgrade levels; placement, attachment, mass, power, heat and resources are the constraints.
 - M opens the explored-only map; minimap click also opens it; wheel zooms; N mutes.
@@ -22,8 +22,10 @@ End sessions by updating PROGRESS.md and TASKS.md, recording decisions in ARCHIT
 
 Latest staged brief: finish the three-panel outfitter/readability stage before expanding enemy classes, danger regions or bosses. Those are explicit later stages, not permission to rebuild all systems at once. Equipment/actions must display real configuration values and clear install vs upgrade states.
 
-Use the shared EffectPool for particles. Effects never change simulation state/RNG. Maintain a bounded particle budget and independent tractor target slots. Tractor levels are 1/2/3 targets at 150/225/300 px/s, aimed toward the actual module. Purple/magenta tractor beams must remain distinct from mining beams.
+Use the shared EffectPool for particles. Effects never change simulation state/RNG. Maintain a bounded particle budget and independent tractor target slots. Tractor levels are 1/2/3/4/5 targets at 150/225/300/375/450 px/s, aimed toward the actual module. Purple/magenta tractor beams must remain distinct from mining beams.
 
 Shift activates short level-2+ engine bursts with power/heat costs and cooldowns. Default Phaser Canvas rendering is intentional after measured heavy-combat gains; keep the background viewport-sized and sprites cached.
 
 Publishing is authorized to the public N4STYN8/VOIDFORGE repository and GitHub Pages. Main pushes must run tests/build before deployment; pull requests validate without publishing. Never commit credentials, browser save files or local QA screenshots.
+
+All 16 existing equipment types now have five levels; preserve levels 1–3 and per-installed-item upgrades. Core stays unique and gates tiers. Level-5 ability configuration is in abilityConfig.ts; reusable gameplay hooks in abilities.ts. Keep cascade/reflection non-recursive, flak one-generation, special projectile/field budgets bounded, and extraction strictly from finite ore. C triggers Command Overclock; Shift triggers Phase Dash on L5 boosters.

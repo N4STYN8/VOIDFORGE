@@ -63,3 +63,5 @@ kbd { display:inline-block; min-width:16px; text-align:center; background:#1d324
 .setting-row input { width:100%; accent-color:#81dbe8; } .setting-row select { padding:8px; color:#dce7f0; background:#1b2d40; border:1px solid #49657b; }
 .setting-check { display:flex; align-items:center; gap:8px; margin:14px 0; font-size:13px; } .setting-check input { accent-color:#81dbe8; }
 .settings-saved { border-top:1px solid #31485c; padding-top:12px; } #session-controls>[data-settings] { width:100%; margin-top:8px; }
+
+.ability-details { margin-top:16px; padding:12px; border:1px solid #5c6682; background:#19233a; } .ability-details>small { color:#b6c5f6; font-size:10px; } .ability-details h4 { margin:5px 0; color:#dcdbff; font-size:14px; } .ability-details p { font-size:11px; color:#c0cee1; }

@@ -45,6 +45,26 @@ export const MODULES: Record<ModuleKind, EquipmentDefinition> = {
   cooler: { label: 'Cooling system', color: 0x9edfff, mass: 4, cost: cost(20,10,0,10), description: 'Adds heat dissipation and thermal capacity. Cooling systems combine.', levels: [{cooling:18,heatCapacity:25},{cooling:30,heatCapacity:40},{cooling:48,heatCapacity:65}] },
 };
 export const CORE: EquipmentDefinition = { label: 'Core', color: 0x73c9ee, mass: 12, cost: cost(30,15), description: 'Core tiers unlock item tiers and improve hull, power and cooling. No module-count cap.', levels: [{hull:100,generation:40,energyCapacity:100,cooling:12,heatCapacity:100},{hull:150,generation:60,energyCapacity:160,cooling:16,heatCapacity:140},{hull:225,generation:90,energyCapacity:240,cooling:22,heatCapacity:200}] };
+export const MAX_MODULE_LEVEL=5;
+const ADVANCED_LEVELS:Record<EquipmentKind,[EquipmentStats,EquipmentStats]>={
+ core:[{hull:320,generation:125,energyCapacity:340,cooling:30,heatCapacity:280},{hull:450,generation:170,energyCapacity:480,cooling:40,heatCapacity:380}],
+ cannon:[{damage:62,cooldown:.125,power:7,heat:3.2},{damage:82,cooldown:.11,power:9,heat:4}],
+ pulse:[{damage:58,cooldown:.16,power:9,heat:5},{damage:78,cooldown:.14,power:12,heat:6.5}],
+ rail:[{damage:220,cooldown:.8,power:42,heat:32},{damage:295,cooldown:.7,power:54,heat:40}],
+ plasma:[{damage:145,cooldown:.55,splash:80,power:30,heat:25},{damage:195,cooldown:.5,splash:95,power:39,heat:32}],
+ rocket:[{damage:190,cooldown:1,splash:120,power:25,heat:24},{damage:250,cooldown:.9,splash:135,power:33,heat:31}],
+ flak:[{damage:22,cooldown:.5,power:24,heat:19},{damage:29,cooldown:.45,power:31,heat:25}],
+ emp:[{damage:56,cooldown:1.4,empRange:280,stun:4.5,power:48,heat:21},{damage:75,cooldown:1.2,empRange:320,stun:5,power:60,heat:27}],
+ miner:[{mining:35,power:25,heat:10},{mining:48,power:34,heat:14}],
+ tractor:[{tractor:550,pull:375,targets:4,power:12,heat:2.5},{tractor:650,pull:450,targets:5,power:16,heat:3}],
+ cargo:[{pickup:110,cargo:300},{pickup:140,cargo:500}],
+ armor:[{hull:135},{hull:195}],
+ shield:[{shield:180,recharge:17,power:11,heat:1.7},{shield:260,recharge:24,power:15,heat:2.3}],
+ engine:[{speed:100,acceleration:310,power:18,heat:11,burstSpeed:320,burstThrust:850,boostDuration:2.5,boostCooldown:4.5,boostPower:32,boostHeat:24},{speed:135,acceleration:420,power:24,heat:15,burstSpeed:420,burstThrust:1100,boostDuration:2.8,boostCooldown:4,boostPower:42,boostHeat:32}],
+ reactor:[{generation:150,energyCapacity:250},{generation:220,energyCapacity:360}],
+ cooler:[{cooling:70,heatCapacity:95},{cooling:100,heatCapacity:140}],
+};
+for(const [kind,levels]of Object.entries(ADVANCED_LEVELS)) (kind==='core'?CORE:MODULES[kind as ModuleKind]).levels.push(...levels);
 export const ROCKET = { speed: 330, lifetime: 3.2 };
 export const WEAPON_TYPES: Record<WeaponKind, {speed:number;pellets:number;spread:number;color:number;trail:number}> = {
   cannon:{speed:700,pellets:1,spread:0,color:0xffce70,trail:8}, pulse:{speed:1050,pellets:1,spread:0,color:0x6de4ff,trail:24},
@@ -53,11 +73,11 @@ export const WEAPON_TYPES: Record<WeaponKind, {speed:number;pellets:number;sprea
   emp:{speed:340,pellets:1,spread:0,color:0x729cff,trail:0},
 };
 export const SHIP_SYSTEMS = { referenceMass:20, collectionRadius:10, cargoCapacity:120 };
-export const VFX = { particleBudget:320, visibleMargin:100, maxEvents:256, beamColors:{tractor:[0xf095ff,0xd783ff,0xb98aff],mining:[0x75ebc3,0x83edff,0xf0f8b1]} };
+export const VFX = { particleBudget:320, visibleMargin:100, maxEvents:256, beamColors:{tractor:[0xf095ff,0xd783ff,0xb98aff,0xd2b0ff,0xf0c0ff],mining:[0x75ebc3,0x83edff,0xf0f8b1,0xb3ffe2,0xf7fff1]} };
 export function equipment(kind: EquipmentKind) { return kind === 'core' ? CORE : MODULES[kind]; }
 export function upgradeCost(kind: EquipmentKind, currentLevel: number): Record<Resource, number> {
   const base = equipment(kind).cost;
-  return { iron: Math.max(15, base.iron) * currentLevel, copper: Math.max(5, base.copper) * currentLevel, crystal: currentLevel >= 2 ? 5 * currentLevel : 0, ice: 0, radioactive: 0 };
+  return { iron: Math.max(15, base.iron) * currentLevel, copper: Math.max(5, base.copper) * currentLevel, crystal: currentLevel >= 2 ? 5 * currentLevel : 0, ice: currentLevel>=3?10*(currentLevel-2):0, radioactive:currentLevel>=4?10:0 };
 }
 export function statsLabel(stats: EquipmentStats) {
   return Object.entries(stats).map(([key, value]) => `${({ damage: 'Damage', cooldown: 'Shot interval (s)', mining: 'Ore/s', cargo:'Cargo capacity +',pickup: 'Pickup +m', hull: 'Hull', speed: 'Speed +', acceleration: 'Thrust +', splash: 'Blast radius', shield: 'Shield', recharge: 'Recharge/s', tractor: 'Beam range', pull: 'Pull speed', targets: 'Targets', power:'Energy',heat:'Heat',generation:'Power/s',energyCapacity:'Energy capacity',cooling:'Cooling/s',heatCapacity:'Heat capacity',empRange:'EMP radius',stun:'Disable (s)',burstSpeed:'Burst speed +',burstThrust:'Burst thrust +',boostDuration:'Burst duration (s)',boostCooldown:'Burst cooldown (s)',boostPower:'Burst energy',boostHeat:'Burst heat' } as Record<string, string>)[key]} ${value}`).join(' · ');
@@ -68,6 +88,7 @@ export const COLLISION = { restitution: 0.3, asteroidDrag: 0.4, safeSpeed: 40, d
 
 export const EXPLORATION = { cell: 480, radius: 850 };
 export const MODULE_DURABILITY: Record<ModuleKind, number[]> = { reactor:[60,90,130],cooler:[40,60,85],pulse:[40,60,85],rail:[55,80,110],plasma:[45,70,100],flak:[45,70,100],emp:[40,60,90],tractor:[40,60,85],cannon:[45,65,90],miner:[40,60,85],rocket:[50,75,105],cargo:[35,55,80],armor:[100,150,220],engine:[40,60,85],shield:[35,55,80] };
+for(const durability of Object.values(MODULE_DURABILITY))durability.push(Math.round(durability[2]*1.4),Math.round(durability[2]*1.9));
 export const REPAIR = { ironPerHull: 0.2, copperPerModule: 0.05, salvageFraction: 0.5, emergencyMining: 3 };
 export const PATROL = { groupSize: 3, spacing: 65, speed: 55, turnRate: 0.08, sharedDetectionMultiplier: 1.4 };
 export const ORE_COMBAT = { materialPerDamage: 0.1, recovery: 0.35, impulsePerDamage: 12, maxShotSpeed: 300 };

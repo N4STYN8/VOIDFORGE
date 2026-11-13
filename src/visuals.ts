@@ -65,7 +65,7 @@ export function drawModule(g: Phaser.GameObjects.Graphics, x: number, y: number,
   }
   // Distinct tier bars and restrained corner fasteners stay legible at flight scale.
   rect(-5,5,10,1,0x0b121b);
-  for(let i=0;i<level;i++)rect(-5+i*3.5,5,2.5,1,level===3?0xffd58c:level===2?0x83deff:0xa7c2d0);
+  for(let i=0;i<level;i++)rect(-5+i*(10/Math.max(3,level)),5,Math.min(2.5,8/level),1,level>=3?0xffd58c:level===2?0x83deff:0xa7c2d0);
   rect(-6,-6,1,1,0xc1d0d8);rect(5,5,1,1,0x788d9d);
   g.restore();
 }

@@ -1,6 +1,6 @@
 # VOIDFORGE
 
-A procedural 2D space mining, combat and modular ship game built with TypeScript, Phaser 3 and Vite. Graphics and sounds are generated locally; no accounts or paid APIs are required to play.
+A procedural 2D space mining, combat and modular ship game built with TypeScript, Phaser 3 and Vite. Graphics and effects are generated locally; background music is the bundled Deep Space Patrol track; no accounts or paid APIs are required to play.
 
 **Game:** https://n4styn8.github.io/VOIDFORGE/
 **Repository:** https://github.com/N4STYN8/VOIDFORGE
@@ -24,13 +24,16 @@ npm run preview
 ## Controls
 - WASD: thrust with drift; mouse: aim; left click: weapons outside safe zones.
 - Hold right click/Space: auto-mine. Multiple upgraded beams can split targets.
+- C: level-5 Core Command Overclock (6s efficiency boost, 30s cooldown).
 - Shift: brief level-2+ booster burst, with energy/heat costs and cooldown.
 - Q/B at an active base: outfitter. Search/filter the catalog; click or drag to install. Select blocks to upgrade, move/swap or remove. The grid faces north and pans/zooms.
 - E: unload and attempt mineral-priced repairs. G: unlock a nearby outpost. R: respawn after death.
 - M/minimap click: explored map. Wheel: map/playfield zoom. Drag the expanded map to pan.
-- Esc: close/pause. N: mute. V: enhanced effects. Audio settings contain master/effects sliders.
+- Esc: close/pause. N: mute. V: enhanced effects. Settings contain master/music/effects sliders and VFX controls.
 
-Base cargo holds 120 units; cargo modules add 60/120/200 per tier. Tractors pull 1/2/3 mineral pickups at 150/225/300 px/s. Repeated module types have no count caps; resources, connected layout, mass, power and cooling govern the ship.
+Base cargo holds 120 units; cargo modules add 60/120/200/300/500 per tier. Tractors pull 1/2/3/4/5 mineral pickups at 150/225/300/375/450 px/s. Repeated module types have no count caps; resources, connected layout, mass, power and cooling govern the ship.
+
+All 16 module types have five upgrade levels. Each level-5 module unlocks its own special ability, shown in the outfitter. Upgrade the unique Core to unlock higher item tiers.
 
 ## Worlds and saves
 Optional manual seeds reproduce geography; New world otherwise generates a fresh seed. Autosave runs every ten seconds and on hide/exit. Save/Load use browser storage; Export/Import uses portable JSON files and preserves carved/destroyed ore, upgrades, resources, discoveries and unlocked bases. **Export then import to transfer a localhost save to the live page.**

@@ -2,7 +2,7 @@ import { VFX, WEAPON_TYPES } from './data.ts';
 import type { EffectEvent } from './effectEvents.ts';
 import type { Bullet, GameModel } from './model.ts';
 export type EffectView = {x:number;y:number;width:number;height:number};
-export type Particle = {active:boolean;kind:'spark'|'debris'|'flash'|'ring'|'energy';x:number;y:number;vx:number;vy:number;life:number;duration:number;size:number;growth:number;color:number;opacity:number;fade:number;rotation:number;spin:number;priority:number};
+export type Particle = {active:boolean;kind:'arc'|'spark'|'debris'|'flash'|'ring'|'energy';x:number;y:number;vx:number;vy:number;life:number;duration:number;size:number;growth:number;color:number;opacity:number;fade:number;rotation:number;spin:number;priority:number};
 export type ParticleConfig = Partial<Omit<Particle,'active'|'duration'>> & {x:number;y:number;life:number};
 export class EffectPool {
   readonly particles: Particle[];
@@ -40,7 +40,7 @@ export class EffectPool {
     if(!this.on)return;this.time+=dt;this.emissionClock+=dt;
     for(let i=0;i<this.particles.length;i++){
       const p=this.particles[i];if(!p.active)continue;
-      p.life-=dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.size+=p.growth*dt;p.rotation+=p.spin*dt;
+      p.life-=dt;if(p.kind!=='arc'){p.x+=p.vx*dt;p.y+=p.vy*dt;}p.size+=p.growth*dt;p.rotation+=p.spin*dt;
       if(p.life<=0||(view&&!this.visible(p.x,p.y,view,180))){p.active=false;this.free.push(i);}
     }
   }
@@ -48,6 +48,7 @@ export class EffectPool {
     if(!this.on)return;
     for(const e of events){
       if(!this.visible(e.x,e.y,view))continue;
+      if(e.type==='arc'){this.spawn({kind:'arc',x:e.x,y:e.y,vx:(e.toX??e.x)-e.x,vy:(e.toY??e.y)-e.y,life:.2,color:e.color??0x9eefff,priority:2},view);continue;}
       const color=e.color??(e.weapon?WEAPON_TYPES[e.weapon].color:0xffbf80),angle=e.angle??0;
       if(e.type==='debris'){
         for(let i=0;i<(e.count??3);i++){const a=angle+(this.random()-.5)*1.5,speed=20+this.random()*45;this.spawn({kind:'debris',x:e.x,y:e.y,vx:Math.cos(a)*speed,vy:Math.sin(a)*speed,life:.45+this.random()*.25,size:1.5+this.random()*2,color,rotation:a,spin:2-this.random()*4},view);}continue;

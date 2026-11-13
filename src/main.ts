@@ -157,7 +157,7 @@ class SpaceScene extends Phaser.Scene {
     this.textures.addCanvas('starfield', tile);
     this.background=this.add.tileSprite(0,0,this.scale.width+160,this.scale.height+160,'starfield').setOrigin(0).setDepth(-2);
     this.asteroidBaker = this.add.graphics().setVisible(false);
-    for (const kind of ['core', ...Object.keys(MODULES)] as EquipmentKind[]) for (let level = 1; level <= 3; level++) {
+    for (const kind of ['core', ...Object.keys(MODULES)] as EquipmentKind[]) for (let level = 1; level <= equipment(kind).levels.length; level++) {
       const key = `icon-${kind}-${level}`, cache = this.add.graphics();
       drawModule(cache, 24, 24, -Math.PI / 2, kind, equipment(kind).color, level);
       cache.generateTexture(key, 48, 48); cache.destroy();
@@ -168,7 +168,7 @@ class SpaceScene extends Phaser.Scene {
     this.mapLabel = this.add.text(0, 0, 'SECTOR MAP / M', { fontFamily: 'monospace', fontSize: '9px', color: '#91afc5', letterSpacing: 1 }).setScrollFactor(0).setDepth(21);
     this.follow = this.add.zone(this.model.player.x, this.model.player.y, 1, 1);
     this.cameras.main.setBounds(0, 0, WORLD.width, WORLD.height).setZoom(1.35).startFollow(this.follow, true, 0.15, 0.15);
-    this.keys = this.input.keyboard!.addKeys('W,A,S,D,SPACE,E,R,ESC,B,Q,M,N,G,V,SHIFT') as Record<string, Phaser.Input.Keyboard.Key>;
+    this.keys = this.input.keyboard!.addKeys('W,A,S,D,SPACE,E,R,ESC,B,Q,M,N,G,V,SHIFT,C') as Record<string, Phaser.Input.Keyboard.Key>;
     this.input.on('wheel', (_pointer: Phaser.Input.Pointer, _objects: unknown, _dx: number, dy: number) => {
       if (!this.mapOpen && !this.building) this.cameras.main.setZoom(Phaser.Math.Clamp(this.cameras.main.zoom * Math.exp(-dy * 0.001), 0.55, 2.2));
     });
@@ -220,10 +220,10 @@ class SpaceScene extends Phaser.Scene {
     const bounds = this.cameras.main.worldView;
     if (!this.paused && !this.building && !this.mapOpen && !this.settings.open) this.model.update(delta / 1000, {
       x: Number(this.keys.D.isDown) - Number(this.keys.A.isDown), y: Number(this.keys.S.isDown) - Number(this.keys.W.isDown),
-      aim, fire: pointer.leftButtonDown(), boost, mine: pointer.rightButtonDown() || this.keys.SPACE.isDown, dock, view: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+      aim, fire: pointer.leftButtonDown(), overclock:Phaser.Input.Keyboard.JustDown(this.keys.C), boost, mine: pointer.rightButtonDown() || this.keys.SPACE.isDown, dock, view: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
     });
     if (!this.paused && !this.building && !this.mapOpen && !this.settings.open) {
-      for(const event of this.model.effects){if(event.type==='muzzle'&&event.weapon)this.audio.playWeapon(event.weapon);if(event.type==='collection')this.audio.play('collect');if(event.type==='shield')this.audio.play('shield');}
+      for(const event of this.model.effects){if(event.type==='muzzle'&&event.weapon)this.audio.playWeapon(event.weapon);if(event.type==='arc')this.audio.play('pulse');if(event.type==='collection')this.audio.play('collect');if(event.type==='shield')this.audio.play('shield');}
       if (this.model.player.health < beforeHull || this.model.shield < beforeShield) this.audio.play('impact');
       if (this.model.oreHits > beforeOreHits) this.audio.play('impact');
       if (this.model.enemyHits > beforeHits) this.audio.play('hit');
@@ -377,6 +377,13 @@ class SpaceScene extends Phaser.Scene {
       }
       for(;index<this.shipSprites.length;index++)this.shipSprites[index].setVisible(false);
     }else for(const sprite of this.shipSprites)sprite.setVisible(false);
+    for(const field of this.model.novaFields)if(visible(field)){
+      g.fillStyle(0x99ff80,this.effects.enabled?.09:.025);g.fillCircle(field.x,field.y,field.radius);
+      g.lineStyle(1,0xb1ff91,this.effects.enabled?.5:.2);g.strokeCircle(field.x,field.y,field.radius);
+    }
+    if(this.effects.enabled&&this.model.modules.some(m=>m.kind==='engine'&&(m.ability?.phase??0)>0)){
+      g.lineStyle(1,0x94ddff,.6);g.strokeCircle(p.x-p.vx*.07,p.y-p.vy*.07,18);g.strokeCircle(p.x-p.vx*.14,p.y-p.vy*.14,14);
+    }
     for (const link of this.model.miningLinks) drawEnergyBeam(g,link,this.effects.time,'mining',this.effects.enabled);
     drawParticles(this.effectsGraphics,this.effects);
     if (!this.building && !this.paused) {

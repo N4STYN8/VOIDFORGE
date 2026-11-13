@@ -1,5 +1,14 @@
 # Progress
 
+## Latest — five-level module system complete
+- All 16 existing types support levels 1–5, retaining tiers 1–3, per-item upgrades, unique centered core and unlimited module quantities. Added tier stats/costs/durability/icons and backward-compatible v1 saves.
+- All 16 L5 abilities are functional: overclock, fury, chain, piercing, nova, swarm, shrapnel, cascade, extraction, sweep, compression, reactive armor, reflection, phase dash, overdrive and purge. C activates the core; Shift activates boosters.
+- Tractor slots/speeds: 1–5 and 150/225/300/375/450. Cargo bonuses: 60/120/200/300/500. Editor separates normal comparisons from named L5 unlocks, descriptions, cooldowns and max-level status.
+- Shared ability hooks/configuration, exclusive collection, finite reserves, one-generation fragments, no recursive damage and bounded fields/projectiles. State/timers persist through saves.
+- 90 tests pass; production build passes. Browser verified actual L4→L5 upgrade and icons, HUD/controls and a 33-module L5 combat/mining fixture at ~60 FPS with no runtime errors.
+- No blocking bugs found. Remaining work: human balancing of advanced costs/power/heat and abilities; next feature stage is the queued enemy-class overhaul.
+
+
 ## 2026-11-12 — Module freedom, effects and readable outfitter
 - Removed arbitrary module-type and total slot caps. The north-facing editor pans/zooms and supports repeated equipment, attachment validation, catalog drag/drop, moves/swaps, upgrades and removal.
 - Added real mass, energy and heat operation rules, stacking reactors and cooling. All ship stats are data-driven and cached; individual items keep cooldowns and target/boost state.
@@ -38,7 +47,7 @@
 - Moving rocks use existing polygon contacts to damage/kill enemies, play hit feedback and award loot once. No new physics objects or save format changes.
 - 70 tests pass, including weapon/enemy-shot impulse, mass response, movement, speed caps, rocket blast direction and an end-to-end shot → rock → enemy kill/loot check. Production build passes.
 
-## Verification
+## Earlier-stage verification
 - 65 tests passing, including prior world/geometry/combat tests and new unlimited module combinations, exact tractor behavior, full cargo, no duplication, energy/heat/mass, weapon origins, EMP, Shift, pool cleanup and effect-disabled equivalence.
 - Production build passes; expected Phaser bundle warning only (~368 KB gzip).
 - Browser checks: 33-module ship with eight reactors, search using actual keyboard input, three panels, upgrade comparisons, HUD expansion, Shift burst, effects toggle and volume control; layouts inspected at 1440×1000, 1366×768, 1024×768 and 900×650. No runtime errors.

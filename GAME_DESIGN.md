@@ -24,7 +24,7 @@
 
 ## Shipyard and bases
 - Q (or B) opens the outfitter at an active base. Core stays at grid center; north is forward. Grid art and ship layout match. Drag or use Move to relocate/swap blocks; all blocks must stay connected. Removal refunds paid minerals in proportion to integrity.
-- Core levels provide 100/150/225 base hull and better energy/cooling. Equipment cannot exceed core level. There are no per-type or total module-count caps. Each equipment item supports three levels.
+- Core levels provide 100/150/225/320/450 base hull and better energy/cooling. Equipment cannot exceed core level. There are no per-type or total module-count caps. Each of the 16 equipment types supports five levels; only the core is unique.
 - Equipment: autocannon, pulse laser, railgun, plasma cannon, missile launcher, flak cannon, EMP emitter, mining beam, cargo hold, armor, tractor, shield, booster, reactor and cooler. Exact stats/costs/limits live in src/data.ts and are shown in the outfitter.
 - E unloads resources and attempts a paid repair. Repair charges iron for missing hull/module integrity and copper for damaged module integrity; failed payment never heals. Shop quotes the cost. Shield recharge is free.
 - G near a locked outpost activates it with its displayed mineral cost, using carried ore plus shared base storage. Seven bases exist per world, including the starting base. Active bases offer repair, storage, outfitting and nearby respawn.
@@ -36,8 +36,8 @@
 
 ## Module freedom, tractors and ship systems
 - Build grid pans/zooms beyond its viewport. Valid attached blocks can be installed repeatedly without type/count caps. Mass affects speed/thrust; reactors combine energy generation/storage and cooling systems combine dissipation/thermal capacity. Operating equipment consumes real energy and adds heat, pausing if unavailable or overheated.
-- Tractor levels: range 180/300/450; exactly 1/2/3 independent target slots; pull speed 150/225/300. Targets persist until lost, collected or out of range, are exclusively claimed, and pull toward the module's collection point. Cargo full stops collection.
-- Cargo holds add 60/120/200 capacity plus pickup reach. Full cargo stops mining. Removal that would overfill cargo is rejected; destruction/load overflow becomes nearby pickups, preserving quantities.
+- Tractor levels: range 180/300/450/550/650; exactly 1/2/3/4/5 independent target slots; pull speed 150/225/300/375/450. Targets persist until lost, collected or out of range, are exclusively claimed, and pull toward the module's collection point. Cargo full stops collection.
+- Cargo holds add 60/120/200/300/500 capacity plus pickup reach. Full cargo stops mining. Removal that would overfill cargo is rejected; destruction/load overflow becomes nearby pickups, preserving quantities.
 - Level-2/3 boosters keep cruise bonuses and add Shift bursts: +150/+240 raw speed and +400/+650 thrust for 1.8/2.2 seconds, with 6/5-second cooldowns and upfront energy/heat cost. Multiple boosters combine, subject to mass and power.
 - EMP emits a growing pulse that damages each enemy once and temporarily disables it. Other new weapons have independent projectiles/loadouts; no additional ammunition inventory is required.
 - Q outfitter has categorized/searchable catalog, north-facing construction grid, exact current → next comparisons, action costs/refunds, live ship overview and clear failure feedback. Flight HUD groups vitals and carried/stored minerals; secondary details expand.
@@ -48,3 +48,22 @@
 The newer six enemy classes, tactical AI expansion, seeded danger regions and three bosses are queued after the outfitter stage. Current four classes/patrol AI remain in place; this update does not claim those later stages are complete.
 
 Shots push asteroids along projectile travel; explosive hits push outward. Impulse scales with damage and inversely with rock mass, capped at 300 units/s from gunfire. Weapons remove material at 10% of nominal damage and recover 35% of removed ore; mining remains efficient. Moving rocks can damage and kill enemies through normal impact contacts.
+
+## Level-5 abilities
+Normal statistics improve at every level; abilities unlock at level 5. Costs for tiers 4/5 also require ice/radioactive minerals. All definitions and tuning live in abilityConfig.ts/data.ts.
+- Core: C Command Overclock, 6s at 25% lower module power/heat cost, 30s cooldown; costs 30 energy/10 heat.
+- Autocannon: Gatling Fury, up to +60% firing rate after 3s sustained fire, reset on release.
+- Pulse: Chain Lightning, one secondary at 40% damage within 160 units; no recursion.
+- Rail: Hypervelocity Round, every fourth shot penetrates 3 enemies at 0.7 successive damage.
+- Plasma: Nova fields last 3s at 20% shot damage/s; strongest overlapping field only, maximum 8.
+- Missiles: Swarm Strike, three 30%-damage guided missiles every 6s; global 24 guided missile cap, 4s lifetime.
+- Flak: Shrapnel Storm, two 25%-damage fragments per impact, one generation, global 96 fragments, 0.6s lifetime.
+- EMP: System Cascade spreads 35% damage/half stun to up to three secondaries per pulse; no recursion or double hits.
+- Mining: Deep Core Extraction uses 15% less operating energy/heat; extracts four extra ore from finite reserves every 2s of active mining.
+- Tractor: Magnetic Sweep adds 50% range for 3s every 10s, with five exclusive targets per module.
+- Cargo: Quantum Compression makes the L5 hold 500 capacity (normal 400 +100 compression, included in displayed value).
+- Armor: Reactive Armor triggers on 20+ damage, reducing subsequent hits by 35% for 3s; 10s cooldown per plate, reduction does not multiply.
+- Shields: Reflective Barrier returns 25% of absorbed projectile damage to the firing enemy; no recursion or multiplier from duplicate shields.
+- Boosters: Phase Dash avoids damage for the first 0.3s of a paid Shift burst.
+- Reactor: Emergency Overdrive adds 50% reactor output for 4s when low energy and peak demand exceeds base output; +12 heat/s, 14s cooldown.
+- Cooler: Cryogenic Purge removes 30% thermal capacity at 85% heat, 12s cooldown per module.
