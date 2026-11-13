@@ -226,3 +226,13 @@ Choices: own Node + WebSocket relay; sector grid; owners keep changes to their s
 - [x] Replace full-height compact frame with floating instruments and centered short console
 - [x] Verify toggle/full restoration, persisted preference, command identity/actions and five responsive sizes
 - [ ] User review of compact combat readability
+
+## Industrial audio audit
+- [x] Audit actual sound definitions/triggers and missing/lost deposit/outfitter events
+- [x] Layer successful unload by actual amount; cover empty, partial outpost and fleet transfers
+- [x] Aggregate pickups, add persistent cutting noise and safe loop cleanup
+- [x] Improve seven weapon identities/level scaling, paid ultimate/system warnings and outpost/UI feedback
+- [x] Bound mixing priorities, reserve critical voices and preserve music/settings/mute
+- [x] Verify model accounting, real browser audio rendering/cleanup and integrated multiplayer regression suite
+- [ ] Human listening on headphones/small speakers; tune bass and confirmation balance
+- [ ] Optional future remote-pilot shot-audio protocol (no relay changes in this release)

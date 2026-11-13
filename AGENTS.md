@@ -155,3 +155,8 @@ Save storage: saves go to IndexedDB and, when they fit, localStorage (src/persis
 
 Menu artwork exception authorized by the user's repeated request to match the supplied illustrated reference: use the local optimized src/assets/menu-forge-v2.webp for the main menu only. Do not substitute flat primitive portraits for this scene. Gameplay retains its existing procedural art. Keep labels/buttons in HTML and motion as bounded independent layers; no image API or external image host at runtime.
 When integrating menu and networking, preserve both lifecycles: no automatic relay connection from merely opening the menu, and no implicit disk save when the player selects Return without saving. The live menu now links to implemented lobby controls, not a Coming Soon mockup.
+
+## Industrial audio upgrade
+- Reuse the single GameAudio context/settings and SOUND_PROFILES. Layered cues reserve their whole source count before allocation; low/medium/critical admission budgets are 10/16/24 one-shots, with deposit precedence and lower-priority preemption. Keep loop nodes separate/bounded and disconnect all private nodes on end.
+- Completed UI/deposit/build/repair operations queue transient GameModel.actionSounds, drained once even while outfitter simulation is paused. Do not put those exclusively in reset-every-update visual effects. Do not serialize action sounds. EffectEvent.amount carries mineral quantity independently of particle count.
+- Deposit cues must follow actual successful transfers (including outpost partial deposits and fleet auto-unload), never proximity/empty cargo. Preserve resource accounting. Pickup aggregation and warning hysteresis/cooldowns prevent spam; keep mining noise as a persistent loop, not per-frame one-shots.
