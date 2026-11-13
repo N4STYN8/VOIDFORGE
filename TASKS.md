@@ -1,5 +1,14 @@
 # Tasks
 
+## Renewable populations — completed
+- [x] Central cooldown/threat/density/safety/local-budget configuration
+- [x] Seeded asteroid replacement slots, fresh finite reserves, safe offscreen arrivals and bounded records
+- [x] Regional enemy recovery and existing-archetype patrols; dormant actor persistence
+- [x] Persisted game-time deadlines/counters; unloaded catch-up and migration without reload duplication
+- [x] Boss cooldown/unique-reward ledger (actual boss encounters still pending)
+- [x] 101 tests, build, browser replacement/mining/save checks and ~60 FPS heavy combat
+- [ ] Human playtest of regional regeneration pacing and threat balance
+
 - [x] Reduce asteroid gunfire knockback and verify sustained-fire collision damage
 
 ## Five-level module system — completed

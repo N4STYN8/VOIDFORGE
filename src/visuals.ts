@@ -77,7 +77,7 @@ export function drawAsteroid(g: Phaser.GameObjects.Graphics, a: Asteroid, origin
   const shades = a.ore === 'ice' ? [0x748b9c, 0x92b4c9, 0x5d7285, 0x647b91] : [0x63656c, 0x555860, 0x40464f, 0x4b505a];
   for (let i = 0; i < points.length; i++) {
     const next = points[(i + 1) % points.length];
-    g.fillStyle(shades[(i + (a.id % 3)) % shades.length]);
+    g.fillStyle(shades[(i + Math.abs(a.id % 3)) % shades.length]);
     g.fillTriangle(origin.x, origin.y, points[i].x, points[i].y, next.x, next.y);
   }
   g.lineStyle(1, 0x9ba1aa, 0.5); g.strokePoints(points, true);
@@ -108,7 +108,7 @@ export function drawAsteroid(g: Phaser.GameObjects.Graphics, a: Asteroid, origin
     g.lineStyle(1, color, 0.35 + (1 - fraction) * 0.4);
     const count = fraction < 0.3 ? 5 : 3;
     for (let i = 0; i < count; i++) {
-      const p = vertices[(i * 3 + a.id) % vertices.length];
+      const p = vertices[(i * 3 + Math.abs(a.id)) % vertices.length];
       g.lineBetween(origin.x, origin.y, origin.x + p.x * 0.85, origin.y + p.y * 0.85);
     }
   }

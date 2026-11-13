@@ -1,3 +1,5 @@
+import { EnemyPopulation,type EnemyPopulationSnapshot } from './enemyPopulation.ts';
+import { POPULATION } from './populationConfig.ts';
 import { SPECIAL } from './abilityConfig.ts';
 import { freshAbility,state,tick,activate,onFire,onHit,onMiningHit,onDamageTaken,onBoost,onEnergyDeficit,onOverheat,type AbilityState } from './abilities.ts';
 import { ChunkWorld, SeedRandom, randomWorldSeed, type WorldSnapshot } from './world.ts';
@@ -11,7 +13,7 @@ import { WORLD, SHIP, WEAPONS, ENEMIES, COLLISION, ORE_COMBAT, PATROL, MODULE_DU
 export type ShipModule = { x: number; y: number; kind: ModuleKind; level: number; cooldown: number; integrity: number; ability?:AbilityState; targetIds?: number[]; boostRemaining?:number; boostCooldown?:number };
 export type Point = { x: number; y: number };
 export type Input = { x: number; y: number; aim: Point; fire: boolean; mine: boolean; dock: boolean; boost?:boolean; overclock?:boolean; view?: { x: number; y: number; width: number; height: number } };
-export type Enemy = Point & { disabledFor?: number; vx?: number; vy?: number; impactCooldown?: number; kind?: EnemyKind; squad?: number; slot?: number; patrolAngle?: number; id: number; health: number; cooldown: number; angle: number };
+export type Enemy = Point & { populationRegion?:string;populationClass?:'normal'|'elite';populationPatrol?:Point & {id:number;angle:number};rewarded?:boolean; disabledFor?: number; vx?: number; vy?: number; impactCooldown?: number; kind?: EnemyKind; squad?: number; slot?: number; patrolAngle?: number; id: number; health: number; cooldown: number; angle: number };
 export type Drop = Point & { id: number; ore: Resource; amount: number };
 export type Bullet = Point & { id: number; vx: number; vy: number; life: number; enemy: boolean; damage?: number; rocket?: boolean; splash?: number; weapon?: WeaponKind; level?: number; attackerId?:number; penetrating?:number; hitIds?:number[]; enhanced?:boolean; guided?:boolean; fragment?:boolean; age?:number };
 const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -47,14 +49,15 @@ export class GameModel {
   tractorLinks: { from: Point; to: Point; level: number; targetId: number; moduleX:number; moduleY:number }[] = [];
   miningPoint: Point | undefined;
   minedTarget: Asteroid | undefined; oreHits = 0; enemyHits = 0; kills = 0; deaths = 0; message = 'Welcome, pilot. Mine nearby asteroids and unload at the station.';
-  private id = 1000000000; private impactTimer = 0; private spawnTimer = 12;
+  private id = 1000000000; private impactTimer = 0; private spawnTimer:number = POPULATION.tick;
   readonly seed: string;
   readonly world: ChunkWorld;
+  readonly population:EnemyPopulation;
   private rng: SeedRandom;
   private streaming: boolean;
   private random: () => number;
-  constructor(seed = randomWorldSeed(), options: { streaming?: boolean; world?: WorldSnapshot } = {}) {
-    this.seed = seed; this.world = new ChunkWorld(seed, options.world);
+  constructor(seed = randomWorldSeed(), options: { streaming?: boolean; world?: WorldSnapshot;population?:EnemyPopulationSnapshot;restoring?:boolean } = {}) {
+    this.seed = seed; this.world = new ChunkWorld(seed, options.world);this.population=new EnemyPopulation(this.world.spec,options.population);
     this.rng = new SeedRandom(seed + ':simulation'); this.random = this.rng.next;
     this.streaming = options.streaming ?? true;
     this.bases = this.world.spec.bases.map((base, i) => ({ ...base, unlocked: i === 0 }));
@@ -62,12 +65,11 @@ export class GameModel {
     this.player.x = home.x + Math.cos(angle) * 130; this.player.y = home.y + Math.sin(angle) * 130;
     this.player.angle = angle;
     this.asteroids = this.world.activate(this.player, [], true);
-    for (let i = 0; i < 5; i++) this.addEnemy();
-    this.addPatrolGroup(); this.revealExploration();
+    if(!options.restoring)this.updatePopulation(undefined,false);this.revealExploration();
   }
   get chartedAsteroids() { return [...this.world.surveyed.values()]; }
   toSave(): GameSave {
-    return { version: 1, seed: this.seed, world: this.world.snapshot(this.asteroids),
+    return { version: 1, seed: this.seed, population:this.population.snapshot(), world: this.world.snapshot(this.asteroids),
       player: { ...this.player }, modules: structuredClone(this.modules), coreAbility:{...this.coreAbility},novaFields:structuredClone(this.novaFields), coreLevel: this.coreLevel, shield: this.shield, energy: this.energy, heat: this.heat, empPulses: structuredClone(this.empPulses),
       cargo: { ...this.cargo }, stored: { ...this.stored }, bases: structuredClone(this.bases), explored: [...this.explored],
       enemies: structuredClone(this.enemies), squads: structuredClone(this.squads), drops: structuredClone(this.drops), bullets: structuredClone(this.bullets), detachedModules: structuredClone(this.detachedModules),
@@ -76,7 +78,7 @@ export class GameModel {
   static fromSave(value: unknown) {
     const data = value as GameSave;
     if (!data || data.version !== 1 || typeof data.seed !== 'string' || !data.world || data.world.spec?.version !== 1 || data.world.spec.seed !== data.seed || !data.player || !Number.isFinite(data.player.x) || !Number.isFinite(data.player.y) || !Array.isArray(data.modules) || !Array.isArray(data.bases) || data.bases.length !== BASES.length || !Array.isArray(data.explored) || !Array.isArray(data.world.changes) || !Array.isArray(data.world.surveyed)) throw new Error('Unsupported or invalid save file.');
-    const m = new GameModel(data.seed, { world: data.world });
+    const m = new GameModel(data.seed, { world: data.world,population:data.population,restoring:true });
     if (!Number.isInteger(data.coreLevel) || data.coreLevel<1 || data.coreLevel>CORE.levels.length || data.modules.some(block => !MODULES[block.kind] || !Number.isInteger(block.level) || block.level < 1 || block.level > MODULES[block.kind].levels.length || !Number.isFinite(block.integrity))) throw new Error('Invalid ship data in save.');
     m.coreAbility={...freshAbility(),...data.coreAbility};m.novaFields=structuredClone(data.novaFields??[]).slice(-SPECIAL.plasma.maxFields);
     m.player = { ...data.player }; m.modules = structuredClone(data.modules); m.coreLevel = data.coreLevel; m.shield = data.shield; m.energy = Math.max(0,Math.min(data.energy ?? m.maxEnergy,m.maxEnergy)); m.heat = data.heat ?? 0; m.empPulses = structuredClone(data.empPulses ?? []);
@@ -85,7 +87,7 @@ export class GameModel {
     if ([...Object.values(m.cargo), ...Object.values(m.stored)].some(n => !Number.isFinite(n) || n < 0)) throw new Error('Invalid resource quantities in save.');
     m.bases = structuredClone(data.bases); m.explored = new Set(data.explored);
     m.enemies = structuredClone(data.enemies ?? []); m.squads = structuredClone(data.squads ?? []); m.drops = structuredClone(data.drops ?? []); m.bullets = structuredClone(data.bullets ?? []); m.detachedModules = structuredClone(data.detachedModules ?? []);
-    m.kills = data.kills; m.deaths = data.deaths; m.id = data.id; m.rng.state = data.rng; m.spawnTimer = data.spawnTimer; m.shieldDelay = data.shieldDelay; m.impactTimer = data.impactTimer;
+    m.kills = data.kills; m.deaths = data.deaths; m.id = data.id; m.rng.state = data.rng; m.spawnTimer = data.population?data.spawnTimer:POPULATION.tick; m.shieldDelay = data.shieldDelay; m.impactTimer = data.impactTimer;
     m.asteroids = m.world.activate(m.player, [], true); const overflow=m.cargoUsed>m.cargoCapacity;m.spillCargo();m.message = overflow?'World restored. Excess cargo was preserved as nearby pickups.':`World restored. Seed: ${m.seed}`; return m;
   }
   private get aggregate(){
@@ -129,7 +131,7 @@ export class GameModel {
     this.blasts.push(blast); this.effect({ type: blast.radius > 20 ? 'explosion' : 'impact', ...blast, weapon });
   }
   private emitDebris(point: Point, outward: Point, color: number, seed: number) {
-    this.effect({ type:'debris',...point,angle:Math.atan2(outward.y,outward.x),color,count:2+seed%3 });
+    this.effect({ type:'debris',...point,angle:Math.atan2(outward.y,outward.x),color,count:2+Math.abs(seed%3) });
   }
   private spillCargo(){
     let excess=Math.max(0,this.cargoUsed-this.cargoCapacity);
@@ -346,21 +348,11 @@ export class GameModel {
     this.message = `${base.name} activated! E repairs/unloads; B opens the outfitter.`;
     return true;
   }
-  private addEnemy() {
-    const angle = this.random() * Math.PI * 2;
-    const x = clamp(this.player.x + Math.cos(angle) * 950, 50, WORLD.width - 50), y = clamp(this.player.y + Math.sin(angle) * 950, 50, WORLD.height - 50);
-    const kind = (['raider', 'scout', 'tank', 'sniper'] as EnemyKind[])[Math.floor(this.random() * 4)];
-    this.enemies.push({ id: this.id++, kind, x, y, health: ENEMIES[kind].health, cooldown: 1, angle });
-  }
-  private addPatrolGroup() {
-    const angle = this.random() * Math.PI * 2;
-    const squad = { id: this.id++, x: clamp(this.player.x + Math.cos(angle) * 1100, 300, WORLD.width - 300), y: clamp(this.player.y + Math.sin(angle) * 1100, 300, WORLD.height - 300), angle: angle + Math.PI / 2 };
-    this.squads.push(squad);
-    for (let slot = 0; slot < PATROL.groupSize; slot++) {
-      const forward = slot === 0 ? 0 : -PATROL.spacing, side = slot === 0 ? 0 : (slot === 1 ? -1 : 1) * PATROL.spacing;
-      const kind: EnemyKind = slot === 0 ? 'raider' : 'scout';
-      this.enemies.push({ id: this.id++, squad: squad.id, slot, kind, x: squad.x + Math.cos(squad.angle) * forward - Math.sin(squad.angle) * side, y: squad.y + Math.sin(squad.angle) * forward + Math.cos(squad.angle) * side, health: ENEMIES[kind].health, cooldown: 1, angle: squad.angle });
-    }
+  private updatePopulation(view:Input['view'],regenerate=true){
+    const blockers=[{...this.player,radius:SHIP.radius},...this.modules.map(m=>({...this.modulePoint(m),radius:12})),...this.enemies.map(e=>({...e,radius:ENEMIES[e.kind??'raider'].radius}))];
+    if(regenerate)this.world.replenish(this.player,this.asteroids,view,blockers);
+    const next=this.population.update(this.world.time,this.player,view,this.asteroids,this.bases,this.enemies,this.squads,()=>this.id++,blockers.slice(0,this.modules.length+1));
+    this.enemies=next.enemies;this.squads=next.squads;
   }
   respawn() {
     if (!this.dead) return;
@@ -444,6 +436,7 @@ export class GameModel {
     p.vx = p.x === playerBody.x ? playerBody.vx : 0; p.vy = p.y === playerBody.y ? playerBody.vy : 0;
   }
   private enemyDestroyed(e: Enemy) {
+    if(e.rewarded)return;e.rewarded=true;this.population.recordDefeat(e,this.world.time);
     this.addBlast({ x: e.x, y: e.y, radius: 35, life: 0.22 });
     this.kills++;
     this.drops.push({ id: this.id++, x: e.x, y: e.y, ore: 'iron', amount: 6 });
@@ -462,7 +455,7 @@ export class GameModel {
     asteroid.amount = 0; asteroid.health = 0;
     this.emitDebris(asteroid, { x: 1, y: -1 }, RESOURCES[asteroid.ore].color, asteroid.id);
     this.asteroids = this.asteroids.filter(a => a !== asteroid);
-    this.world.destroy(id);
+    this.world.destroy(id,asteroid);
     return true;
   }
   private pushOre(asteroid:Asteroid,damage:number,direction:Point){
@@ -519,6 +512,7 @@ export class GameModel {
     this.minedTarget = undefined; this.miningPoint = undefined;
     if (this.dead) return;
     dt = Math.min(dt, 0.05);
+    this.world.advance(dt);
     tick(this.coreAbility,dt);
     for(const m of this.modules)if(m.level>=5){const a=state(m);tick(a,dt);if(m.kind==='cannon')a.sustained=input.fire&&!this.atStation?a.sustained+dt:0;}
     if(input.overclock&&this.coreLevel>=5&&this.coreAbility.cooldown<=0&&this.operate(SPECIAL.core.power,SPECIAL.core.heat)){
@@ -789,7 +783,7 @@ export class GameModel {
       link.from=module?this.modulePoint(module):{x:p.x,y:p.y};link.to=miningImpact(ore,link.from,ore);return true;
     });
     this.minedTarget=this.miningLinks.length?remainingOre.get(this.miningLinks[0].targetId):undefined;this.miningPoint=this.miningLinks[0]?.to;
-    this.spawnTimer -= dt; if (this.spawnTimer <= 0) { if (this.enemies.length <= 9 && this.random() < 0.4) this.addPatrolGroup(); else if (this.enemies.length < 12) this.addEnemy(); this.spawnTimer = 10; }
+    this.spawnTimer-=dt;if(this.spawnTimer<=0){this.updatePopulation(input.view);this.spawnTimer=POPULATION.tick;}
 
     if (this.dead) {
       this.deaths++;
@@ -802,7 +796,7 @@ export class GameModel {
 
 
 export type GameSave = {
-  version: 1; seed: string; world: WorldSnapshot; player: GameModel['player']; modules: ShipModule[];
+  version: 1; seed: string; population?:EnemyPopulationSnapshot;world: WorldSnapshot; player: GameModel['player']; modules: ShipModule[];
   coreAbility?:AbilityState;novaFields?:GameModel['novaFields'];coreLevel: number; shield: number; energy?:number; heat?:number; empPulses?:GameModel['empPulses']; cargo: Record<Resource, number>; stored: Record<Resource, number>;
   bases: GameModel['bases']; explored: string[]; enemies: Enemy[]; squads: GameModel['squads']; drops: Drop[];
   bullets: Bullet[]; detachedModules: GameModel['detachedModules']; kills: number; deaths: number; id: number; rng: number;

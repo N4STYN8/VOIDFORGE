@@ -38,6 +38,9 @@ All 16 module types have five upgrade levels. Each level-5 module unlocks its ow
 ## Worlds and saves
 Optional manual seeds reproduce geography; New world otherwise generates a fresh seed. Autosave runs every ten seconds and on hide/exit. Save/Load use browser storage; Export/Import uses portable JSON files and preserves carved/destroyed ore, upgrades, resources, discoveries and unlocked bases. **Export then import to transfer a localhost save to the live page.**
 
+## Living world
+Asteroid fields replenish with new deposits after cooldowns: common ores 2–5 minutes, rare ores 8–15. Mining still consumes finite reserves per rock. Enemies reinforce regions according to mineral richness and threat; distant enemies sleep instead of accumulating active physics. Population timers use unpaused game time and persist in saves. Boss encounter content remains planned; no bosses have been added by this update.
+
 ## GitHub and automatic publishing
 The main branch is the deployment branch. Every push tests/builds and then publishes the game to GitHub Pages; pull requests run validation without deploying.
 

@@ -5,7 +5,7 @@ import { createAsteroidGeometry, deformAsteroid } from '../src/asteroidGeometry.
 import { GameModel } from '../src/model.ts';
 const input = { x: 0, y: 0, aim: { x: 5000, y: 5000 }, fire: false, mine: false, dock: false };
 test('asteroids block sight and shots, while distant players do not trigger attacks', () => {
-  const m = new GameModel(); m.player.x = 5000; m.player.y = 5000;
+  const m = new GameModel('enemy-los-regression'); m.player.x = 5000; m.player.y = 5000;
   const rock = { id: 9000, x: 5150, y: 5000, radius: 40, vx: 0, vy: 0, amount: 40, health: 40, ore: 'iron' as const };
   m.asteroids = [rock]; m.enemies = [{ id: 9001, kind: 'scout', x: 5300, y: 5000, health: 35, cooldown: 0, angle: 0 }];
   assert.equal(clearLineOfSight(m.enemies[0], m.player, m.asteroids), false);
@@ -15,7 +15,7 @@ test('asteroids block sight and shots, while distant players do not trigger atta
   m.update(0.01, input); assert.equal(m.bullets.length, 0);
 });
 test('patrol squads move in a three-ship formation without firing at a docked player', () => {
-  const m = new GameModel(); m.asteroids = [];
+  const m = new GameModel('patrol-formation-regression'); m.asteroids = [];
   const squad = m.squads[0]; m.enemies = m.enemies.filter(e => e.squad === squad.id);
   assert.equal(m.enemies.length, 3);
   const before = { ...squad };

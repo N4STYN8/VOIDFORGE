@@ -1,5 +1,15 @@
 # Progress
 
+## Latest — renewable regional populations
+- Depleted asteroid slots replenish at different seeded positions using the existing field generator: common 2–5 minutes (ice 3–5), crystal/radioactive 8–15. New shape/size/yield, same resource class, gentle drift, no visible/overlapping/ship/base spawns; blocked arrivals defer.
+- Field targets follow original per-chunk seeded density. Gradual scheduled arrivals, 1,800 local asteroid budget, sparse slot reuse across repeated generations; original tombstones and modified geometry remain saved.
+- Replaced the ten-second global enemy spawner with regional threat profiles, normal 1–3 minute and heavy/sniper 5–10 minute recovery, safe randomized patrol entry and 24 active-enemy budget. Distant actors sleep with health/patrol state, count against regional targets, and wake without duplicate rewards.
+- Persisted elapsed game time, cooldowns, counters, retries, replacement state and dormant enemies in optional v1 fields. Unloaded regions become eligible through absolute game-time deadlines; no wall-clock/offline grants or distant physics simulation.
+- Boss cooldown/one-time reward ledger supports 20–30 minute recovery and is tested. There are no implemented boss encounters to integrate; actual boss spawning remains in the queued boss stage.
+- 101 tests pass, including 60 renewal cycles, old-save migration, rare delays, placement safety, cooldowns, unloaded catch-up, reload conservation, dormancy and boss reward guards. Production build passes.
+- Browser: actual replacement arrival, save/reload without duplicate/clock reset, mining a carved replacement, and 33-module L5 combat all render without runtime errors at ~60 FPS.
+- Next: human balance pass on replenishment/threat rates, then the existing enemy-class overhaul. No new blocking failures found.
+
 ## Asteroid knockback balance
 - Reduced weapon impulse by 75% (12→3 per damage) and shot-induced speed cap from 300 to 120. Single shots nudge rocks; sustained fire can still propel rocks into enemies. Mining and weapon damage unchanged.
 - 90 tests/build pass, including lower single-shot motion, repeated-hit speed cap and enemy damage from sustained fire. Next: continue human balance feedback before the queued enemy-class stage.

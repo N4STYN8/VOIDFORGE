@@ -67,3 +67,9 @@ Normal statistics improve at every level; abilities unlock at level 5. Costs for
 - Boosters: Phase Dash avoids damage for the first 0.3s of a paid Shift burst.
 - Reactor: Emergency Overdrive adds 50% reactor output for 4s when low energy and peak demand exceeds base output; +12 heat/s, 14s cooldown.
 - Cooler: Cryogenic Purge removes 30% thermal capacity at 85% heat, 12s cooldown per module.
+
+## Renewable populations
+Each original asteroid is a finite deposit; depletion persists. Its field slot can receive a new deposit of the same resource class, using salted seeded chunk generation at a different non-overlapping position. Common ore renews after 2–5 minutes, ice 3–5, crystal/radioactive 8–15. Camera/ship/base obstruction defers arrival rather than forcing it. Field targets follow the original seeded per-chunk population; no global world count limit.
+Population updates run every 5 seconds of active game time. At most 2 rocks and 3 enemies arrive per update; local budgets are 1,800 asteroids and 24 enemies, independent of world population targets. Rocks arrive with 1–4 units/s drift. Reloading preserves timers; paused/closed games do not advance the population clock.
+Enemy regions span 3,600 units and derive low/medium/high threat from seeded field richness and rare ores. Targets are 3/6/9 enemies, respectively, using existing raider/scout patrols and tank/sniper guards. Normal recovery takes 1–3 minutes; guards 5–10. Enemies enter offscreen at least 900 units away, outside ore, ships and structures. Distant enemies become dormant instead of dying or granting loot.
+Boss encounter content is not implemented. The persistent encounter ledger is ready to gate repeat defeats for 20–30 minutes and grant a unique progression reward only once; it does not create new bosses.
