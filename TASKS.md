@@ -151,3 +151,4 @@
 - [ ] Human cockpit readability pass during combat/mining at the target player's resolution
 - [x] Refine cockpit toward supplied reference: angular armor, stacked icon gauges, circular radar, friendly station thumbnail and icon console; verify 185 tests and responsive controls
 - [x] Add detailed layered cockpit armor, fasteners, vents, segmented instruments; integrate latest fleet/navigation/save systems and verify 203 tests plus browser controls
+- [x] Fix large-screen panel zoom/clipping; preserve forge footer with L5 abilities/warnings, improve reference typography/icons/gauges and verify 125% display scaling

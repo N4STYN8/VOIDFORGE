@@ -1,8 +1,6 @@
-/** Small geometric cockpit symbols, drawn in the game's existing cyan line palette. */
-export function cockpitIcon(name:string){
- const paths:Record<string,string>={boost:'M4 6l6 6-6 6m6-12l6 6-6 6m6-12l6 6-6 6',overclock:'M14 2L5 14h7l-2 8 10-13h-8z',dock:'M14 5a6 6 0 0 0-7 7L2 17l5 5 5-5a6 6 0 0 0 7-7l-4 4-4-4 4-4z',shop:'M12 2l9 5v10l-9 5-9-5V7zm-9 5l9 5 9-5m-9 5v10',build:'M3 21V8h4V3h4v8h4V5h5v16zM7 15h9m-9 3h9',map:'M3 3h18v18H3zM3 9h18M3 15h18M9 3v18M15 3v18',settings:'M9 3h6l1 4 4 1 1 6-4 2-1 5h-6l-2-4-5-1-1-6 4-2zM12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8',hull:'M12 2l9 5v10l-9 5-9-5V7zM12 7v10M7 12h10',shield:'M12 2l8 4v7l-8 9-8-9V6zM12 5v13',energy:'M14 2L5 14h7l-2 8 10-13h-8z',heat:'M6 7v10h12V7M9 3v10M12 2v11M15 3v10M4 20h16'};
- return `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="${paths[name]??paths.map}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="miter" stroke-linecap="square"/></svg>`;
-}
+import {materialIcon} from './materialSymbols.ts';
+/** Locally bundled, palette-tinted geometric HUD symbols. */
+export const cockpitIcon=materialIcon;
 /** Fixed geometry is regenerated only on viewport resize, never by the game loop. */
 export function frameMarkup(width:number,height:number,left:number,right:number){
  if(width<700)return `<path d="M0 0H${width}V56H0zM0 ${height-114}l16 10H${width-16}l16-10V${height}H0z" fill="#152635" stroke="#496979"/><path d="M4 60V${height-122}M${width-4} 60V${height-122}" stroke="#4c6a7a" stroke-width="2"/><path d="M20 4h50M${width-70} ${height-5}h50" stroke="#70ccea" stroke-width="2"/>`;

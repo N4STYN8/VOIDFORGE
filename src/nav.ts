@@ -29,10 +29,11 @@ function glyph(ctx: CanvasRenderingContext2D, marker: NavMarker, x: number, y: n
 }
 
 /** Radar minimap centred on the ship, north up. `range` is the world distance from the centre to the edge. */
-export function drawRadar(canvas: HTMLCanvasElement, model: GameModel, range: number) {
+export function drawRadar(canvas: HTMLCanvasElement, model: GameModel, range: number, circular = false) {
   const ctx = canvas.getContext('2d'); if (!ctx) return;
   const size = canvas.width, half = size / 2, scale = half / range, p = model.player;
   const at = (point: { x: number; y: number }) => ({ x: half + (point.x - p.x) * scale, y: half + (point.y - p.y) * scale });
+  ctx.save();if(circular){ctx.beginPath();ctx.arc(half,half,half-1,0,Math.PI*2);ctx.clip();}
   ctx.imageSmoothingEnabled = false; ctx.fillStyle = '#060b14'; ctx.fillRect(0, 0, size, size);
   // Explored space is lighter, so the radar also shows where you have not been.
   const cell = EXPLORATION.cell, cells = Math.ceil(range / cell) + 1, pcx = Math.floor(p.x / cell), pcy = Math.floor(p.y / cell);
@@ -45,7 +46,7 @@ export function drawRadar(canvas: HTMLCanvasElement, model: GameModel, range: nu
   const edge = at({ x: 0, y: 0 }); ctx.strokeStyle = '#34526a'; ctx.lineWidth = 1; ctx.strokeRect(edge.x, edge.y, WORLD.width * scale, WORLD.height * scale);
   // Range rings and cross hairs.
   ctx.strokeStyle = '#1d3347'; ctx.beginPath(); ctx.moveTo(half, 0); ctx.lineTo(half, size); ctx.moveTo(0, half); ctx.lineTo(size, half); ctx.stroke();
-  for (const ring of [0.5, 1]) { ctx.beginPath(); ctx.arc(half, half, half * ring - 1, 0, Math.PI * 2); ctx.stroke(); }
+  for (const ring of (circular?[.25,.5,.75,1]:[.5,1])) { ctx.beginPath(); ctx.arc(half, half, half * ring - 1, 0, Math.PI * 2); ctx.stroke(); }
   for (const a of model.asteroids) {
     const q = at(a); if (q.x < -4 || q.y < -4 || q.x > size + 4 || q.y > size + 4) continue;
     const r = Math.max(1, Math.round(a.radius * scale)); ctx.fillStyle = hex(RESOURCES[a.ore].color); ctx.globalAlpha = 0.85; ctx.fillRect(Math.round(q.x - r), Math.round(q.y - r), r * 2, r * 2);
@@ -62,16 +63,17 @@ export function drawRadar(canvas: HTMLCanvasElement, model: GameModel, range: nu
   }
   // Markers: drawn in place when in range, otherwise pinned to the edge with a pointer.
   for (const marker of navMarkers(model)) {
-    const q = at(marker), inside = Math.abs(q.x - half) < half - 6 && Math.abs(q.y - half) < half - 6;
+    const q = at(marker), inside = circular?Math.hypot(q.x-half,q.y-half)<half-6:Math.abs(q.x - half) < half - 6 && Math.abs(q.y - half) < half - 6;
     if (inside) { glyph(ctx, marker, Math.round(q.x), Math.round(q.y), 4); continue; }
-    const angle = Math.atan2(q.y - half, q.x - half), reach = half - 7, k = Math.min(reach / Math.abs(Math.cos(angle) || 1e-6), reach / Math.abs(Math.sin(angle) || 1e-6));
+    const angle = Math.atan2(q.y - half, q.x - half), reach = half - 7, k = circular?reach:Math.min(reach / Math.abs(Math.cos(angle) || 1e-6), reach / Math.abs(Math.sin(angle) || 1e-6));
     const ex = half + Math.cos(angle) * k, ey = half + Math.sin(angle) * k;
     ctx.fillStyle = marker.color; ctx.strokeStyle = '#05070c'; ctx.beginPath();
     ctx.moveTo(ex + Math.cos(angle) * 6, ey + Math.sin(angle) * 6); ctx.lineTo(ex + Math.cos(angle + 2.5) * 5, ey + Math.sin(angle + 2.5) * 5); ctx.lineTo(ex + Math.cos(angle - 2.5) * 5, ey + Math.sin(angle - 2.5) * 5); ctx.closePath(); ctx.fill(); ctx.stroke();
   }
   // The ship: an arrow at the centre pointing where it faces.
-  ctx.save(); ctx.translate(half, half); ctx.rotate(p.angle); ctx.fillStyle = '#ffffff'; ctx.strokeStyle = '#05070c'; ctx.beginPath(); ctx.moveTo(7, 0); ctx.lineTo(-4, -4); ctx.lineTo(-2, 0); ctx.lineTo(-4, 4); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
+  ctx.save(); ctx.translate(half, half); ctx.rotate(p.angle); ctx.fillStyle = circular?'#58e2e8':'#ffffff'; ctx.strokeStyle = '#05070c'; ctx.beginPath(); ctx.moveTo(circular?11:7, 0); ctx.lineTo(circular?-7:-4, circular?-6:-4); ctx.lineTo(circular?-3:-2, 0); ctx.lineTo(circular?-7:-4, circular?6:4); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
   ctx.fillStyle = '#9fc4dc'; ctx.font = '9px monospace'; ctx.textAlign = 'center'; ctx.fillText('N', half, 9);
+  ctx.restore();
 }
 
 const POINTS: [number, string][] = [[0, 'N'], [45, 'NE'], [90, 'E'], [135, 'SE'], [180, 'S'], [225, 'SW'], [270, 'W'], [315, 'NW']];

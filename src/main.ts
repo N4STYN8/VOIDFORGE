@@ -569,18 +569,19 @@ class SpaceScene extends Phaser.Scene {
     this.radar.hidden = hide; this.compass.hidden = hide || this.model.dead;
     if (hide) return;
     const range = SpaceScene.RADAR_RANGES[this.radarRange];
-    drawRadar(this.radarCanvas, this.model, range);
+    drawRadar(this.radarCanvas, this.model, range, true);
     const label = this.radar.querySelector<HTMLElement>('[data-radar-label]');
     if (label) label.textContent = `RADAR ${(range / 1000).toFixed(1)} km`;
   }
   private cockpitCommand(action:CockpitAction){
     this.audio.unlock();
-    if(this.paused||this.building||this.mapOpen||this.settings.open||this.model.dead)return;
-    if(action==='settings'){this.settings.show();}
-    else if(action==='map'){this.mapOpen=true;this.buildMode=false;}
-    else if(action==='shop'){if(this.model.atStation)this.building=true;}
-    else if(action==='build')this.toggleBuildMode();
-    else this.commandInput.add(action);
+    if(this.settings.open)return;
+    // Navigation/settings remain usable while paused, just like their keyboard equivalents.
+    if(action==='settings'){this.settings.show();return;}
+    if(action==='map'){this.mapOpen=!this.mapOpen;this.building=false;this.buildMode=false;return;}
+    if(action==='shop'){if(!this.mapOpen&&this.model.atStation&&!this.model.dead)this.building=!this.building;return;}
+    if(this.paused||this.building||this.mapOpen||this.model.dead)return;
+    if(action==='build')this.toggleBuildMode();else this.commandInput.add(action);
   }
   /** Texture for one block of the flown ship in its paint. Painted variants are baked once, on first use. */
   private shipTexture(kind: EquipmentKind, level: number) {

@@ -198,3 +198,12 @@
 - Validation: all 203 tests and production build pass (existing bundle-size warning). Browser checks: six layouts from 1440x1000 to 390x667, all command buttons and keyboard controls, radar +/− and wheel, map marker placement, fleet purchase/switching and hull paint; no errors. Stress scene with 400 asteroids/50 actors remains ~60 FPS.
 - User explicitly authorized committing, pushing and updating the live site after these checks. Release preparation includes the complete merged history; deployment success will be reported after GitHub Pages verification.
 - Next task: human playtest of instrument readability and contrast during combat/mining.
+
+## HUD layout correction / second reference — 2026-11-13
+- Fixed root cause of the screenshot's clipping: legacy large-screen CSS zoom scaled individual panels independently of the cockpit frame. Cockpit panels now share one sizing system, with explicit short-desktop spacing and a visible forge footer instead of a scrolling whole status panel.
+- Consolidated cockpit CSS, increased label/command contrast, made status segments broader, removed double masking, simplified instrument headings and made navigation compact. Moved the controls help into Systems; kept actual ship/fleet information, cooldowns, cargo and warnings.
+- Replaced hand-built HUD symbols with 13 locally bundled Google Material Symbols (Apache-2.0; THIRD_PARTY_NOTICES.md and licenses/material-symbols-APACHE-2.0.txt). No font CDN or new runtime dependency.
+- Circular radar now clips and pins markers to a circle, uses quarter-range rings and a larger cyan heading arrow. Equipment rows are numbered consecutively and do not display a ready gauge when systems are locked. Map/settings/outfitter controls work while paused like their existing keyboard equivalents; powered actions remain blocked.
+- Validation: 203 tests/build pass; all desktop starter/L5-with-warning layouts fit at 1903x906, 1672x941, 1536x725, 1440x900, 1366x768 and 1280x720. Separate 125% display-scale check passed. Six responsive sizes, controls, markers, radar zoom, fleet and paint browser checks passed; no errors. Stress scene remained ~60 FPS.
+- Branch codex/hud-layout-fixes; clean start and fetch showed main already synchronized. User explicitly requested commit/push and live deployment after checks. No other developer changes were overwritten. Existing bundle-size warning remains.
+- Next task: user review of the deployed HUD at their actual browser resolution and zoom.
