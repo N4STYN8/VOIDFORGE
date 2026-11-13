@@ -72,13 +72,24 @@ export function saveGame(model: GameModel, onError?: (message: string) => void, 
   stores.large.put(DB_CURRENT, { at, text }).catch(() => { if (!small) onError?.(SAVE_FAILED); });
 }
 
+/** Await durable completion when changing screens; succeeds if either existing save store writes. */
+export async function saveGameConfirmed(model:GameModel,stores:SaveStores=browserStores()):Promise<string|undefined>{
+ let text:string;try{text=saveText(model);}catch{return SAVE_FAILED;}
+ const at=Date.now();let small=false,large=false;
+ try{if(stores.small){stores.small.set(SAVE_KEY,text);stores.small.set(STAMP_KEY,String(at));small=true;}}catch{/* Try IndexedDB. */}
+ try{if(stores.large){await stores.large.put(DB_CURRENT,{at,text});large=true;}}catch{/* Synchronous fallback may have succeeded. */}
+ return small||large?undefined:SAVE_FAILED;
+}
+
 /** Keeps the current save as a backup before a new or imported world replaces it. */
 export async function backupSavedGame(stores: SaveStores = browserStores()) {
   const copies = [readSmall(stores.small, SAVE_KEY), await readLarge(stores.large, DB_CURRENT)].filter(valid).sort((a, b) => b.at - a.at);
-  if (!copies.length) return;
+  if (!copies.length) return true;
+  const current=copies.find(copy=>{try{GameModel.fromSave(JSON.parse(copy.text));return true;}catch{return false;}})??copies[0];
   if (stores.large) {
     // The backup now lives in the large store, so the older small-store backup only wastes scarce space.
-    try { await stores.large.put(DB_BACKUP, copies[0]); try { stores.small?.remove(BACKUP_KEY); } catch { /* harmless */ } return; } catch { /* fall through to the small store */ }
+    try { await stores.large.put(DB_BACKUP, current); try { stores.small?.remove(BACKUP_KEY); } catch { /* harmless */ } return true; } catch { /* fall through to the small store */ }
   }
-  try { stores.small?.set(BACKUP_KEY, copies[0].text); } catch { /* Export remains available. */ }
+  try { if(stores.small){stores.small.set(BACKUP_KEY,current.text);return true;} } catch { /* Export remains available. */ }
+  return false;
 }

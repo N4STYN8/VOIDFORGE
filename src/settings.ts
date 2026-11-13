@@ -22,6 +22,7 @@ export class GameSettings {
     });
     this.sync();
   }
+  addMainMenu(handler:()=>void){const button=document.createElement('button');button.textContent='Main menu';button.dataset.mainMenu='true';button.addEventListener('click',()=>{this.dialog.close();handler();});this.dialog.append(button);}
   show(){this.audio.unlock();this.sync();this.dialog.showModal();this.changed(true);}
   persist(){try{localStorage.setItem('voidforge.vfx',JSON.stringify({enabled:this.effects.enabled,density:this.effects.density}));}catch{/* Controls work without storage. */}}
   sync(){
