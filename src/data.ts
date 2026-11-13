@@ -244,9 +244,13 @@ export const WAYPOINTS = { max: 12, pickRadius: 14, colors: [0xffd166, 0x7fd6f2,
  * module tile. `radius` is how many cells from its core an outpost may extend; `coreSpacing` and
  * `baseClearance` keep cores apart and away from stations. Building spends carried cargo and
  * `energyPerBlock` ship energy. `gridZoom` is the camera zoom range over which the fine grid fades in.
+ * `radius` times two cells must stay below `coreSpacing` so neighbouring outposts never overlap.
+ * `merge` lists the blocks that are drawn as one large module when they fill a square of up to
+ * `maxMerge` cells a side (appearance only: each cell is still its own block).
  */
 export const OUTPOST = {
-  coreLevel: 4, cell: BUILD_GRID.cellSize, radius: 14, coreSpacing: 900, baseClearance: 340, energyPerBlock: 6, awaySpeed: 0.5, awayRange: 2,
+  merge: ['reactor', 'storage', 'coolingUnit', 'shieldGenerator', 'droneHangar', 'droneRepairBay', 'upgradeStation', 'repairStation', 'radarTower', 'dockingStation'] as StructureKind[], maxMerge: 3,
+  coreLevel: 4, cell: BUILD_GRID.cellSize, radius: 24, coreSpacing: 900, baseClearance: 340, energyPerBlock: 6, awaySpeed: 0.5, awayRange: 2,
   largeGrid: 160, gridZoom: [1.15, 1.75], key: 'F', rotateKey: 'R',
   fabricator: { hpPerSecond: 50, ironPerHp: 0.08, energyPerSecond: 16 },
   /** Turrets only run for outposts within `activeRange` of the ship; cargo moves to and from an outpost within `transferRange` of its core. */

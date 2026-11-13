@@ -2,7 +2,7 @@ import type { Asteroid } from './model.ts';
 import { ensureAsteroidGeometry } from './mining.ts';
 import { containsPoint, type Vertex } from './asteroidGeometry.ts';
 import { RESOURCES, ENEMIES, OUTPOST, STRUCTURES, type EnemyKind, type StructureKind } from './data.ts';
-import { bounds, neighbourMask, wear, type Outpost } from './outposts.ts';
+import { bounds, neighbourMask, wear, stationLayout, type Outpost, type StationModule } from './outposts.ts';
 
 // Baked top-down pixel-art sprites painted with the plain Canvas 2D API.
 // World sprites use one pixel per world unit; the backdrop is coarser. All are drawn with
@@ -538,101 +538,226 @@ export function paintHull(source: HTMLCanvasElement, color: number, strength: nu
 // ---------- Player outposts (space steampunk: riveted steel, brass framing, copper pipes) ----------
 
 const STEEL = [0x14181f, 0x232a34, 0x343d4a, 0x4a5565, 0x6a7688], BRASS = [0x5c4318, 0x94702a, 0xd9a441, 0xf2d489], COPPER = [0x7a4324, 0xb87333, 0xe09a5c];
-/**
- * Paints one 16x16 block at (x, y). `mask` marks joined neighbours (1 east, 2 south, 4 west, 8 north):
- * open sides get a brass frame, joined sides get a riveted seam and a copper pipe run to the neighbour.
- */
-function paintBlock(ctx: Ctx, x: number, y: number, kind: StructureKind, mask: number, damage: number, built: boolean, id: number, level = 1) {
-  const size = OUTPOST.cell, px = (dx: number, dy: number, color: number, w = 1, h = 1) => dot(ctx, x + dx, y + dy, color, w, h), reinforced = kind === 'reinforcedWall';
-  if (!built) {
-    // Scaffold: dark footing, dashed brass outline and diagonal bracing until construction finishes.
-    px(0, 0, STEEL[0], size, size);
-    for (let i = 0; i < size; i += 2) { px(i, 0, BRASS[1]); px(i, size - 1, BRASS[1]); px(0, i, BRASS[1]); px(size - 1, i, BRASS[1]); }
-    for (let i = 2; i < size - 2; i += 3) { px(i, i, BRASS[0]); px(size - 1 - i, i, BRASS[0]); }
-    return;
-  }
-  px(0, 0, STEEL[1], size, size); px(1, 1, reinforced ? STEEL[3] : STEEL[2], size - 2, size - 2);
-  px(1, 1, reinforced ? STEEL[4] : STEEL[3], size - 2, 1); px(1, 1, reinforced ? STEEL[4] : STEEL[3], 1, size - 2);
-  px(1, size - 2, STEEL[0], size - 2, 1); px(size - 2, 1, STEEL[0], 1, size - 2);
-  const east = mask & 1, south = mask & 2, west = mask & 4, north = mask & 8, core = kind === 'outpostCore';
-  // Copper pipe runs toward every joined neighbour, meeting at the centre.
-  if (!core && kind !== 'storage') {
-    if (east) px(8, 7, COPPER[1], 8, 2); if (west) px(0, 7, COPPER[1], 8, 2); if (south) px(7, 8, COPPER[1], 2, 8); if (north) px(7, 0, COPPER[1], 2, 8);
-    if (east || west) px(west ? 0 : 8, 7, COPPER[2], (east && west) ? 16 : 8, 1); if (mask) px(7, 7, COPPER[0], 2, 2);
-  }
-  // Brass frame on open sides (lit top/left, shaded bottom/right); riveted seam where blocks join.
-  const frame = (open: number | boolean, fx: number, fy: number, w: number, h: number, tone: number, rivets: [number, number][]) => {
-    if (open) px(fx, fy, tone, w, h); else for (const [rx, ry] of rivets) px(rx, ry, STEEL[4]);
+/** Station hull greys, darkest to lightest, plus window and indicator lights. */
+const HULL = [0x0d1117, 0x1b222c, 0x2b3440, 0x404b59, 0x5c6979, 0x8492a2, 0xb8c4cf], WARM = 0xffd27a, WARM_HI = 0xfff0c0, COOL = 0x9fe6ff;
+const CRATES = [0xb2543b, 0x3f6f9e, 0xc89b3c, 0x5f7f4a, 0x8a6ab0, 0x8492a2];
+/** How strongly a direction faces the upper-left light: positive is lit. */
+const litBy = (dx: number, dy: number) => (dx * LIGHT.x + dy * LIGHT.y) / Math.max(0.001, Math.hypot(dx, dy));
+
+/** Drawing helpers for one module whose top-left corner is (ox, oy). `rot` turns rectangles in an S-pixel square by quarter turns. */
+function station(ctx: Ctx, ox: number, oy: number, S = OUTPOST.cell, rot = 0) {
+  const px = (x: number, y: number, color: number, w = 1, h = 1) => dot(ctx, ox + x, oy + y, color, w, h);
+  const rp = (x: number, y: number, color: number, w = 1, h = 1) => {
+    const r = ((rot % 4) + 4) % 4;
+    if (r === 1) px(S - (y + h), x, color, h, w); else if (r === 2) px(S - (x + w), S - (y + h), color, w, h); else if (r === 3) px(y, S - (x + w), color, h, w); else px(x, y, color, w, h);
   };
-  frame(!north || core, 0, 0, size, 2, BRASS[2], [[4, 1], [11, 1]]); frame(!west || core, 0, 0, 2, size, BRASS[2], [[1, 4], [1, 11]]);
-  frame(!south || core, 0, size - 2, size, 2, BRASS[1], [[4, size - 2], [11, size - 2]]); frame(!east || core, size - 2, 0, 2, size, BRASS[1], [[size - 2, 4], [size - 2, 11]]);
-  if (!north || core) px(0, 0, BRASS[3], size, 1); if (!west || core) px(0, 0, BRASS[3], 1, size);
-  if (!south || core) px(0, size - 1, BRASS[0], size, 1); if (!east || core) px(size - 1, 0, BRASS[0], 1, size);
-  for (const [rx, ry] of [[3, 3], [12, 3], [3, 12], [12, 12]]) px(rx, ry, core ? BRASS[3] : STEEL[4]);
+  /** Any filled shape with a dark rim: `inside` tests a pixel, `fill` colours the interior. */
+  const shape = (x0: number, y0: number, w: number, h: number, inside: (i: number, j: number) => boolean, fill: (i: number, j: number) => number) => {
+    const at = (i: number, j: number) => i >= 0 && j >= 0 && i < w && j < h && inside(i, j);
+    for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) if (at(i, j)) px(x0 + i, y0 + j, at(i - 1, j) && at(i + 1, j) && at(i, j - 1) && at(i, j + 1) ? fill(i, j) : OUTLINE);
+  };
+  /** Raised plate: dark rim, lit top/left edge, shaded bottom/right edge. */
+  const panel = (x: number, y: number, w: number, h: number, tone = 3) => {
+    px(x, y, OUTLINE, w, h); px(x + 1, y + 1, HULL[tone], w - 2, h - 2);
+    px(x + 1, y + 1, HULL[tone + 1], w - 2, 1); px(x + 1, y + 1, HULL[tone + 1], 1, h - 2); px(x + 1, y + h - 2, HULL[tone - 1], w - 2, 1); px(x + w - 2, y + 1, HULL[tone - 1], 1, h - 2);
+  };
+  /** Octagonal plate with corners cut by `cut` pixels. */
+  const octagon = (x: number, y: number, s: number, cut: number, tone = 3) => shape(x, y, s, s, (i, j) => i + j >= cut && s - 1 - i + j >= cut && i + s - 1 - j >= cut && 2 * (s - 1) - i - j >= cut,
+    (i, j) => { const t = (i + j) / (2 * s); return HULL[t < 0.3 ? tone + 1 : t > 0.72 ? tone - 1 : tone]; });
+  /** Disc centred on (cx, cy) in pixel-corner coordinates; `fill` gets the offset and distance of each pixel centre. */
+  const disc = (cx: number, cy: number, r: number, fill: (dx: number, dy: number, d: number) => number | undefined) => {
+    for (let y = Math.floor(-r); y < r; y++) for (let x = Math.floor(-r); x < r; x++) { const dx = x + 0.5, dy = y + 0.5, d = Math.hypot(dx, dy); if (d < r) { const c = fill(dx, dy, d); if (c !== undefined) px(cx + x, cy + y, c); } }
+  };
+  return { px, rp, shape, panel, octagon, disc };
+}
+
+/** Riveted hull plating. Plates run flush into every joined neighbour so walls read as one continuous hull. */
+function paintWall(ctx: Ctx, x: number, y: number, mask: number, reinforced: boolean, id: number) {
+  const { px } = station(ctx, x, y), S = OUTPOST.cell, t = reinforced ? 2 : 3, random = seeded(id * 13 + 5);
+  px(0, 0, HULL[t], S, S);
+  if (!(mask & 8)) { px(0, 0, HULL[t + 2], S, 1); px(0, 1, HULL[t + 1], S, 1); }
+  if (!(mask & 4)) { px(0, 0, HULL[t + 2], 1, S); px(1, 1, HULL[t + 1], 1, S - 1); }
+  if (!(mask & 2)) { px(0, S - 2, HULL[t - 1], S, 1); px(0, S - 1, HULL[Math.max(0, t - 2)], S, 1); }
+  if (!(mask & 1)) { px(S - 2, 0, HULL[t - 1], 1, S); px(S - 1, 0, HULL[Math.max(0, t - 2)], 1, S); }
+  // Panel seams: a shaded groove with a lit lip, alternating direction from block to block.
+  if (random() < 0.5) { px(7, 2, HULL[t - 1], 1, S - 4); px(8, 2, HULL[t + 1], 1, S - 4); } else { px(2, 7, HULL[t - 1], S - 4, 1); px(2, 8, HULL[t + 1], S - 4, 1); }
+  for (const [rx, ry] of [[3, 3], [12, 3], [3, 12], [12, 12]]) px(rx, ry, HULL[t + 2]);
   if (reinforced) {
-    for (let i = 3; i < size - 3; i++) { px(i, i, BRASS[1]); px(size - 1 - i, i, BRASS[0]); }
-    px(7, 7, COPPER[2], 2, 2);
+    // Armour ribs and amber hazard corners.
+    for (let ry = 4; ry < S - 4; ry += 3) { px(4, ry, HULL[t + 2], S - 8, 1); px(4, ry + 1, HULL[0], S - 8, 1); }
+    px(2, 2, 0xd9a441, 2, 1); px(2, 2, 0xd9a441, 1, 2); px(S - 4, S - 3, 0xd9a441, 2, 1); px(S - 3, S - 4, 0xd9a441, 1, 2);
+  } else {
+    // A strip of cabin windows on some plates, and a small hull greeble on others.
+    if (random() < 0.45) { const wy = 4 + Math.floor(random() * 8); for (let k = 0; k < 3; k++) px(4 + k * 3, wy, random() < 0.2 ? 0x3a2c12 : WARM, 2, 1); }
+    if (random() < 0.5) { const gx = 3 + Math.floor(random() * 9), gy = 3 + Math.floor(random() * 9); px(gx, gy, HULL[t + 2], 2, 2); px(gx + 2, gy, HULL[t - 1], 1, 2); px(gx, gy + 2, HULL[t - 1], 3, 1); }
   }
-  if (core) {
-    // Command gear around a glowing boiler window.
-    for (let gy = -6; gy <= 6; gy++) for (let gx = -6; gx <= 6; gx++) {
-      const d = Math.hypot(gx + 0.5, gy + 0.5), tooth = Math.round(Math.atan2(gy + 0.5, gx + 0.5) / (Math.PI / 4)) % 2 === 0;
-      if (d < 3) px(8 + gx, 8 + gy, d < 1.6 ? 0xfff0c0 : 0xffb347); else if (d < 4.2) px(8 + gx, 8 + gy, STEEL[0]); else if (d < 5.4 || (d < 6.4 && tooth)) px(8 + gx, 8 + gy, gx + gy < 0 ? BRASS[3] : BRASS[1]);
+}
+
+/** Paints one finished station module of `n` x `n` cells with its top-left corner at (x, y). */
+function paintModule(ctx: Ctx, x: number, y: number, m: StationModule) {
+  const S = OUTPOST.cell * m.size, c = S / 2, accent = STRUCTURES[m.kind].color, random = seeded(m.id * 7 + 3);
+  const { px, rp, shape, panel, octagon, disc } = station(ctx, x, y, S, m.rot);
+  const glow = (r: number, hot: number, warm: number) => (_dx: number, _dy: number, d: number) => d < r * 0.45 ? WARM_HI : d < r * 0.75 ? hot : warm;
+  const windows = (x0: number, y0: number, count: number, step: number, vertical = false) => { for (let k = 0; k < count; k++) px(x0 + (vertical ? 0 : k * step), y0 + (vertical ? k * step : 0), random() < 0.2 ? 0x3a2c12 : WARM); };
+  switch (m.kind) {
+    case 'outpostCore': {
+      // Command hub: octagonal hull, a ring of lit cabin windows, and a glowing command dome.
+      octagon(0, 0, S, 4, 4);
+      for (let k = 0; k < 8; k++) { const a = k * Math.PI / 4 + Math.PI / 8; px(Math.floor(c + Math.cos(a) * 5.4), Math.floor(c + Math.sin(a) * 5.4), WARM); }
+      disc(c, c, 3.6, (dx, dy, d) => d > 2.8 ? OUTLINE : d < 1.3 ? WARM_HI : litBy(dx, dy) > 0.3 ? 0xffe9a8 : 0xffb347);
+      break;
     }
+    case 'autocannonTurret': case 'missileTurret': case 'railgunTurret': {
+      // Gun bastion: an armoured octagon round a bearing ring; the turning head is a separate sprite.
+      octagon(0, 0, S, 4, 3);
+      disc(c, c, 6.4, (dx, dy, d) => d < 4.6 ? HULL[0] : d < 5.4 ? (litBy(dx, dy) > 0 ? mix(accent, 0xffffff, 0.35) : mix(accent, 0x000000, 0.5)) : OUTLINE);
+      break;
+    }
+    case 'reactor': {
+      // Fusion torus: a lit ring round a white-hot core, coolant spokes, and radiator fins on larger cores.
+      panel(1, 1, S - 2, S - 2, 2);
+      const fin = Math.round(S * 0.22);
+      if (m.size > 1) for (const [fx, fy] of [[3, 3], [S - 3 - fin, 3], [3, S - 3 - fin], [S - 3 - fin, S - 3 - fin]]) for (let k = 0; k < fin; k += 2) px(fx, fy + k, 0xc9d3dc, fin, 1);
+      const R = S / 2 - (m.size > 1 ? 3 : 1);
+      disc(c, c, R, (dx, dy, d) => {
+        if (d > R - 1) return OUTLINE;
+        if (d > R * 0.7) return litBy(dx, dy) > 0.25 ? HULL[6] : litBy(dx, dy) > -0.4 ? HULL[4] : HULL[2];
+        if (d > R * 0.55) return Math.abs(dx) < 1 || Math.abs(dy) < 1 ? HULL[4] : HULL[0];
+        return glow(R * 0.55, accent, 0xffb347)(dx, dy, d);
+      });
+      break;
+    }
+    case 'shieldGenerator': {
+      // Emitter dish in concentric cyan rings, with a projector pylon at each corner.
+      panel(1, 1, S - 2, S - 2, 3);
+      const pylon = Math.max(3, Math.round(S / 6));
+      for (const [gx, gy] of [[2, 2], [S - 2 - pylon, 2], [2, S - 2 - pylon], [S - 2 - pylon, S - 2 - pylon]]) { px(gx, gy, OUTLINE, pylon, pylon); px(gx + 1, gy + 1, accent, pylon - 2, pylon - 2); px(gx + 1, gy + 1, 0xdff8ff); }
+      const R = S * 0.34;
+      disc(c, c, R, (dx, dy, d) => d > R - 1 ? OUTLINE : d < R * 0.3 ? 0xdff8ff : Math.floor(d) % 2 === 0 ? (litBy(dx, dy) > 0 ? mix(accent, 0xffffff, 0.3) : accent) : 0x1b4a5c);
+      break;
+    }
+    case 'coolingUnit': {
+      // Radiator array: pale fin rows either side of a fan well (the blades turn live).
+      panel(1, 1, S - 2, S - 2, 2);
+      for (let fy = 3; fy < S - 3; fy += 2) { px(3, fy, 0xbfdbe8, S - 6, 1); px(Math.round(S * 0.62), fy, 0x7f9fb0, S - 3 - Math.round(S * 0.62), 1); }
+      disc(c, c, Math.max(3.4, S * 0.22), (_dx, _dy, d) => d > Math.max(3.4, S * 0.22) - 1 ? OUTLINE : 0x16323c);
+      px(c - 1, c - 1, COOL, 2, 2);
+      break;
+    }
+    case 'droneRepairBay': {
+      // Service pad: octagonal deck, green-lit landing ring and a clamp arm either side.
+      octagon(0, 0, S, Math.round(S * 0.25), 2);
+      const R = S * 0.3;
+      disc(c, c, R, (dx, dy, d) => d > R - 1 ? (litBy(dx, dy) > 0 ? 0xbff0b8 : 0x5f9a5a) : d < 1.5 ? 0xdfffe9 : 0x12261a);
+      panel(2, c - 3, 4, 6, 4); panel(S - 6, c - 3, 4, 6, 4);
+      break;
+    }
+    case 'upgradeStation': {
+      // Fabricator: a dark work bay under a violet focusing crystal, with gantry arms above and an anvil below.
+      panel(1, 1, S - 2, S - 2, 3); px(3, 3, HULL[1], S - 6, S - 6);
+      px(c - 1, 3, HULL[5], 2, Math.round(S * 0.18)); px(4, S - 5, HULL[5], S - 8, 2); px(4, S - 4, HULL[2], S - 8, 1);
+      const hw = Math.max(2.5, S * 0.18), hh = Math.max(4, S * 0.3);
+      shape(Math.round(c - hw), Math.round(c - hh), Math.round(hw * 2), Math.round(hh * 2), (i, j) => Math.abs(i + 0.5 - hw) / hw + Math.abs(j + 0.5 - hh) / hh <= 1.05,
+        (i, j) => i + 0.5 < hw && j + 0.5 < hh ? 0xf0e4ff : i + 0.5 < hw || j + 0.5 < hh ? accent : 0x7d5fa0);
+      break;
+    }
+    case 'repairStation': {
+      // Medical-white module with a teal cross and a folded manipulator arm.
+      panel(1, 1, S - 2, S - 2, 5);
+      const t = Math.max(2, Math.round(S / 8)), L = Math.round(S * 0.5);
+      px(c - L / 2 - 1, c - L / 2 - 1, 0x12322c, L + 2, L + 2); px(c - t / 2, c - L / 2, accent, t, L); px(c - L / 2, c - t / 2, accent, L, t); px(c - 1, c - 1, 0xe6fff6, 2, 2);
+      for (let k = 0; k < Math.round(S * 0.2); k++) px(3 + k, S - 4 - k, HULL[2]);
+      break;
+    }
+    case 'radarTower': {
+      // Lattice mast holding a concave dish (shaded where the rim hides the light); the sweep line is drawn live.
+      panel(1, 1, S - 2, S - 2, 2);
+      for (let k = 3; k < S - 3; k++) { px(k, k, HULL[4]); px(S - 1 - k, k, HULL[4]); }
+      const R = S * 0.38;
+      disc(c, c, R, (dx, dy, d) => d > R - 1 ? OUTLINE : d > R - 2 ? (litBy(dx, dy) > 0 ? HULL[6] : HULL[3]) : d < 1.3 ? 0xe8f6ff : litBy(dx, dy) > 0 ? 0x4f6f88 : 0x9fb8cc);
+      break;
+    }
+    case 'droneHangar': {
+      // Hangar: roofed cabin section, an open dark launch bay with rails, and a hazard-striped lip.
+      panel(1, 1, S - 2, S - 2, 3);
+      const bay = Math.round(S * 0.38);
+      rp(bay, 3, HULL[0], S - bay - 2, S - 6); rp(bay - 1, 2, HULL[5], 1, S - 4);
+      rp(bay + 2, Math.round(c - 3), HULL[3], S - bay - 5, 1); rp(bay + 2, Math.round(c + 2), HULL[3], S - bay - 5, 1);
+      for (let k = 3; k < S - 3; k++) rp(S - 2, k, k % 4 < 2 ? 0xd9a441 : OUTLINE);
+      for (let k = 0; k < m.size * 2; k++) rp(bay + 2 + k * 3, Math.round(c), 0x8fd08a);
+      for (let k = 4; k < S - 4; k += 3) rp(3, k, random() < 0.2 ? 0x3a2c12 : WARM);
+      break;
+    }
+    case 'dockingStation': {
+      // Docking port: a lit landing pad with guide lights and an extended collar on the open side.
+      panel(1, 1, S - 2, S - 2, 3);
+      px(3, 3, 0x16323c, S - 7, S - 6);
+      for (const [gx, gy] of [[4, 4], [S - 6, 4], [4, S - 5], [S - 6, S - 5]]) px(gx, gy, accent);
+      px(c - 1, 5, 0xbfeaff, 2, S - 10); px(5, c - 1, 0xbfeaff, S - 11, 2);
+      rp(S - 4, Math.round(c - 3), HULL[5], 3, 6); rp(S - 3, Math.round(c - 2), HULL[0], 2, 4); rp(S - 4, Math.round(c - 4), COOL); rp(S - 4, Math.round(c + 3), COOL);
+      break;
+    }
+    case 'storage': {
+      // Cargo frame stacked with ribbed shipping containers in assorted colours.
+      panel(1, 1, S - 2, S - 2, 2);
+      const rows = Math.max(2, Math.floor((S - 4) / 6)), h = Math.floor((S - 4) / rows), cols = m.size > 1 ? 2 : 1, w = Math.floor((S - 4) / cols);
+      for (let r = 0; r < rows; r++) for (let k = 0; k < cols; k++) {
+        const bx = 2 + k * w, by = 2 + r * h, tint = CRATES[Math.floor(random() * CRATES.length)];
+        px(bx, by, OUTLINE, w, h); px(bx + 1, by + 1, tint, w - 2, h - 2); px(bx + 1, by + 1, mix(tint, 0xffffff, 0.35), w - 2, 1); px(bx + 1, by + h - 2, mix(tint, 0x000000, 0.4), w - 2, 1);
+        for (let rx = bx + 3; rx < bx + w - 2; rx += 2) px(rx, by + 2, mix(tint, 0x000000, 0.22), 1, h - 4);
+      }
+      break;
+    }
+    default: panel(1, 1, S - 2, S - 2, 3);
   }
-  if (STRUCTURES[kind].turret) {
-    // Turret mount: a dark bearing ring; the rotating head is a separate sprite.
-    for (let gy = -6; gy <= 6; gy++) for (let gx = -6; gx <= 6; gx++) { const d = Math.hypot(gx + 0.5, gy + 0.5); if (d < 4.6) px(8 + gx, 8 + gy, STEEL[0]); else if (d < 5.8) px(8 + gx, 8 + gy, gx + gy < 0 ? BRASS[2] : BRASS[0]); }
-  } else if (kind === 'reactor') {
-    // Boiler core: glowing chamber in a brass collar with four copper feeds.
-    px(7, 2, COPPER[1], 2, 12); px(2, 7, COPPER[1], 12, 2);
-    for (let gy = -5; gy <= 5; gy++) for (let gx = -5; gx <= 5; gx++) { const d = Math.hypot(gx + 0.5, gy + 0.5); if (d < 2.2) px(8 + gx, 8 + gy, 0xfff0c0); else if (d < 3.4) px(8 + gx, 8 + gy, 0xffb347); else if (d < 4.6) px(8 + gx, 8 + gy, gx + gy < 0 ? BRASS[3] : BRASS[1]); }
-  } else if (kind === 'shieldGenerator') {
-    // Emitter: cyan lens in a brass cradle with four projector studs.
-    for (let gy = -5; gy <= 5; gy++) for (let gx = -5; gx <= 5; gx++) { const d = Math.hypot(gx + 0.5, gy + 0.5); if (d < 2.4) px(8 + gx, 8 + gy, 0xdff8ff); else if (d < 3.6) px(8 + gx, 8 + gy, 0x79dfff); else if (d < 4.8) px(8 + gx, 8 + gy, gx + gy < 0 ? BRASS[3] : BRASS[1]); }
-    for (const [gx, gy] of [[3, 3], [12, 3], [3, 12], [12, 12]]) px(gx, gy, 0x79dfff);
-  } else if (kind === 'coolingUnit') {
-    // Radiator: vent slats around a fan well (the blades are drawn live).
-    px(3, 3, STEEL[0], 10, 10); for (const gy of [4, 6, 9, 11]) px(4, gy, 0x718b9c, 8, 1);
-    for (let gy = -3; gy <= 3; gy++) for (let gx = -3; gx <= 3; gx++) if (Math.hypot(gx + 0.5, gy + 0.5) < 3.2) px(8 + gx, 8 + gy, 0x16323c);
-    px(7, 7, 0x9edfff, 2, 2);
-  } else if (kind === 'droneRepairBay') {
-    // Service cradle: clamps either side of a lit pad.
-    px(3, 3, STEEL[0], 10, 10); px(4, 5, STEEL[3], 2, 6); px(10, 5, STEEL[3], 2, 6); px(6, 6, 0x1f3a2a, 4, 4); px(7, 7, 0x8fd08a, 2, 2); px(6, 4, COPPER[1], 4, 1); px(6, 11, COPPER[1], 4, 1);
-  } else if (kind === 'upgradeStation') {
-    // Fabricator: anvil block under a violet focusing crystal.
-    px(3, 9, STEEL[4], 10, 3); px(5, 12, STEEL[3], 6, 1); px(6, 3, 0x7d5fa0, 4, 5); px(7, 2, 0xc7a6ff, 2, 6); px(7, 4, 0xf0e4ff, 1, 2); px(4, 8, BRASS[2], 8, 1);
-  } else if (kind === 'repairStation') {
-    // Repair post: teal cross on a white-edged plate.
-    px(3, 3, STEEL[1], 10, 10); px(4, 4, 0x12322c, 8, 8); px(7, 5, 0x78dec0, 2, 6); px(5, 7, 0x78dec0, 6, 2); px(7, 7, 0xe6fff6, 2, 2);
-  } else if (kind === 'radarTower') {
-    // Radar mast: ringed dish (the sweep line is drawn live).
-    for (let gy = -5; gy <= 5; gy++) for (let gx = -5; gx <= 5; gx++) { const d = Math.hypot(gx + 0.5, gy + 0.5); if (d < 1.4) px(8 + gx, 8 + gy, 0xe8f6ff); else if (d < 4 && d > 3) px(8 + gx, 8 + gy, 0x5f86a8); else if (d < 5.2 && d > 4.4) px(8 + gx, 8 + gy, gx + gy < 0 ? STEEL[4] : STEEL[2]); else if (d < 4.4) px(8 + gx, 8 + gy, 0x10202c); }
-  } else if (kind === 'droneHangar') {
-    // Hangar bay: dark opening with hazard chevrons and two launch rails.
-    px(3, 3, STEEL[0], 10, 10); px(3, 3, BRASS[1], 10, 1); px(3, 12, BRASS[0], 10, 1);
-    for (const gx of [4, 7, 10]) { px(gx, 4, 0xd9a441); px(gx + 1, 5, 0xd9a441); }
-    px(5, 7, STEEL[3], 1, 5); px(10, 7, STEEL[3], 1, 5); px(7, 8, 0x8fd08a, 2, 2); px(7, 10, COPPER[1], 2, 2);
-  } else if (kind === 'dockingStation') {
-    // Docking pad: lit landing square with corner guide lights.
-    px(3, 3, STEEL[1], 10, 10); px(4, 4, 0x16323c, 8, 8);
-    for (const [gx, gy] of [[4, 4], [11, 4], [4, 11], [11, 11]]) px(gx, gy, 0x7fd6f2);
-    px(7, 5, 0xbfeaff, 2, 6); px(5, 7, 0xbfeaff, 6, 2); px(7, 7, 0xffffff, 2, 2);
-  } else if (kind === 'storage') {
-    // Strapped cargo crate with a centre hatch.
-    px(3, 3, STEEL[3], 10, 10); px(3, 3, STEEL[4], 10, 1); px(3, 12, STEEL[0], 10, 1);
-    px(5, 3, BRASS[1], 1, 10); px(10, 3, BRASS[1], 1, 10); px(6, 6, 0x7d5fa0, 4, 4); px(6, 6, 0xc599e8, 4, 1); px(7, 8, BRASS[3], 2, 1);
-  }
+  if (m.size > 1 && m.kind !== 'storage' && m.kind !== 'droneHangar') windows(Math.round(S * 0.3), 2, m.size * 2, 3);
   // Level pips along the lower edge (levels 2-5).
-  for (let i = 1; i < level; i++) px(3 + (i - 1) * 3, 14, level >= 5 ? 0xffe9a8 : 0x9fd8ff, 2, 1);
-  // Wear: cracks and scorch marks accumulate with damage.
-  const random = seeded(id * 31 + 7);
+  for (let i = 1; i < m.level; i++) px(3 + (i - 1) * 3, S - 3, m.level >= 5 ? 0xffe9a8 : 0x9fd8ff, 2, 1);
+}
+
+/** Corridor tube between the centres of two joined cells: dark walls, lit upper edge, and a lit window at the seam. */
+function paintCorridor(ctx: Ctx, x: number, y: number, horizontal: boolean) {
+  const { px } = station(ctx, x, y), S = OUTPOST.cell, h = S / 2;
+  if (horizontal) { px(h, h - 3, OUTLINE, S, 6); px(h, h - 2, HULL[4], S, 1); px(h, h - 1, HULL[3], S, 2); px(h, h + 1, HULL[2], S, 1); px(S - 1, h - 1, WARM, 2, 1); }
+  else { px(h - 3, h, OUTLINE, 6, S); px(h - 2, h, HULL[4], 1, S); px(h - 1, h, HULL[3], 2, S); px(h + 1, h, HULL[2], 1, S); px(h - 1, S - 1, WARM, 1, 2); }
+}
+
+/** Unfinished block: dark footing, dashed amber outline and diagonal bracing. */
+function paintScaffold(ctx: Ctx, x: number, y: number) {
+  const { px } = station(ctx, x, y), size = OUTPOST.cell;
+  px(0, 0, STEEL[0], size, size);
+  for (let i = 0; i < size; i += 2) { px(i, 0, BRASS[1]); px(i, size - 1, BRASS[1]); px(0, i, BRASS[1]); px(size - 1, i, BRASS[1]); }
+  for (let i = 2; i < size - 2; i += 3) { px(i, i, BRASS[0]); px(size - 1 - i, i, BRASS[0]); }
+}
+
+/** Cracks and scorch marks for one damaged cell. */
+function paintWear(ctx: Ctx, x: number, y: number, damage: number, id: number) {
+  const { px } = station(ctx, x, y), random = seeded(id * 31 + 7);
   for (let i = 0; i < damage * 4; i++) { const cx = 2 + Math.floor(random() * 12), cy = 2 + Math.floor(random() * 12); px(cx, cy, OUTLINE); px(cx + (random() < 0.5 ? 1 : 0), cy + 1, OUTLINE); if (damage >= 3 && i % 4 === 0) px(cx, cy, 0xff7a3c); }
 }
-/** Bakes a whole outpost into one canvas; redrawn only when the outpost's revision changes. Returns the canvas and the world position of its top-left corner. */
+
+/**
+ * Bakes a whole outpost into one canvas as a space station: corridors join neighbouring blocks, walls
+ * become continuous hull, and squares of the same block kind become one large module. Redrawn only when
+ * the outpost's revision changes. Returns the canvas and the world position of its top-left corner.
+ */
 export function paintOutpost(outpost: Outpost) {
   const b = bounds(outpost), size = OUTPOST.cell, pad = 1, canvas = canvasOf((b.maxX - b.minX + 1) * size + pad * 2, (b.maxY - b.minY + 1) * size + pad * 2), ctx = canvas.getContext('2d')!;
-  for (const s of outpost.structures) paintBlock(ctx, pad + (s.cx - b.minX) * size, pad + (s.cy - b.minY) * size, s.kind, neighbourMask(outpost, s), wear(s), s.progress >= 1, s.id, s.level);
+  const at = (s: { cx: number; cy: number }) => [pad + (s.cx - b.minX) * size, pad + (s.cy - b.minY) * size] as const;
+  const built = new Map(outpost.structures.filter(s => s.progress >= 1).map(s => [`${s.cx},${s.cy}`, s]));
+  // Corridors first, so modules sit on top and the tubes show in the gaps between them.
+  for (const s of built.values()) {
+    const [x, y] = at(s);
+    if (built.has(`${s.cx + 1},${s.cy}`)) paintCorridor(ctx, x, y, true);
+    if (built.has(`${s.cx},${s.cy + 1}`)) paintCorridor(ctx, x, y, false);
+  }
+  for (const m of stationLayout(outpost).modules) {
+    const s = outpost.structures.find(t => t.id === m.id)!, [x, y] = at(m);
+    if (s.progress < 1) paintScaffold(ctx, x, y);
+    else if (m.kind === 'wall' || m.kind === 'reinforcedWall') paintWall(ctx, x, y, neighbourMask(outpost, s), m.kind === 'reinforcedWall', s.id);
+    else paintModule(ctx, x, y, m);
+  }
+  for (const s of outpost.structures) { const damage = wear(s); if (damage && s.progress >= 1) { const [x, y] = at(s); paintWear(ctx, x, y, damage, s.id); } }
   // One-pixel dark outline around the joined silhouette.
   const { width, height } = canvas, image = ctx.getImageData(0, 0, width, height), data = image.data, solid = new Uint8Array(width * height);
   for (let i = 0; i < solid.length; i++) solid[i] = data[i * 4 + 3] ? 1 : 0;
@@ -647,7 +772,8 @@ export function paintOutpost(outpost: Outpost) {
 /** A single finished block with no neighbours, for the build catalogue and placement preview. */
 export function paintStructureIcon(kind: StructureKind) {
   const canvas = canvasOf(OUTPOST.cell), ctx = canvas.getContext('2d')!;
-  paintBlock(ctx, 0, 0, kind, 0, 0, true, 1);
+  if (kind === 'wall' || kind === 'reinforcedWall') paintWall(ctx, 0, 0, 0, kind === 'reinforcedWall', 1);
+  else paintModule(ctx, 0, 0, { kind, cx: 0, cy: 0, size: 1, level: 1, rot: 0, id: 1 });
   if (STRUCTURES[kind].turret) { const head = paintTurretHead(kind); ctx.drawImage(head, (OUTPOST.cell - head.width) / 2, (OUTPOST.cell - head.height) / 2); }
   return canvas;
 }

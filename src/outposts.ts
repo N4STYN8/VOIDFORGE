@@ -61,6 +61,38 @@ export function connectedIds(outpost: Outpost) {
 export function neighbourMask(outpost: Outpost, s: Structure) {
   return NEIGHBOURS.reduce((mask, [dx, dy], i) => structureIn(outpost, s.cx + dx, s.cy + dy) ? mask | (1 << i) : mask, 0);
 }
+/** One drawn station module: a single block, or a square of `size` cells of the same finished kind drawn as one large module. */
+export type StationModule = { kind: StructureKind; cx: number; cy: number; size: number; level: number; rot: number; id: number };
+export type StationLayout = { modules: StationModule[]; /** Outermost blocks, which carry blinking navigation lights. */ beacons: Structure[] };
+const layouts = new WeakMap<Outpost, { stamp: string; layout: StationLayout }>();
+/**
+ * Groups finished blocks for drawing (appearance only). Scanning top-left to bottom-right, a block of a
+ * mergeable kind claims the largest square of unclaimed, finished blocks of its kind it starts, so
+ * the result depends only on the block positions and is the same every time.
+ */
+export function stationLayout(outpost: Outpost): StationLayout {
+  const stamp = `${outpost.revision}:${outpost.structures.length}`, cached = layouts.get(outpost);
+  if (cached?.stamp === stamp) return cached.layout;
+  const claimed = new Set<number>(), modules: StationModule[] = [];
+  const order = [...outpost.structures].sort((a, b) => a.cy - b.cy || a.cx - b.cx);
+  for (const s of order) {
+    if (claimed.has(s.id)) continue;
+    let size = 1, level = s.level;
+    if (s.progress >= 1 && OUTPOST.merge.includes(s.kind)) {
+      for (let n = OUTPOST.maxMerge; n >= 2; n--) {
+        const square: Structure[] = [];
+        for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) { const t = structureIn(outpost, s.cx + i, s.cy + j); if (t && t.kind === s.kind && t.progress >= 1 && !claimed.has(t.id)) square.push(t); }
+        if (square.length === n * n) { size = n; level = Math.min(...square.map(t => t.level)); for (const t of square) claimed.add(t.id); break; }
+      }
+    }
+    claimed.add(s.id); modules.push({ kind: s.kind, cx: s.cx, cy: s.cy, size, level, rot: s.rot, id: s.id });
+  }
+  const b = bounds(outpost), beacons: Structure[] = [];
+  const pick = (test: (s: Structure) => boolean) => { const s = order.find(test); if (s && !beacons.includes(s)) beacons.push(s); };
+  pick(s => s.cy === b.minY); pick(s => s.cx === b.maxX); pick(s => s.cy === b.maxY); pick(s => s.cx === b.minX);
+  const layout = { modules, beacons }; layouts.set(outpost, { stamp, layout });
+  return layout;
+}
 export function bounds(outpost: Outpost) {
   let minX = outpost.cx, maxX = outpost.cx, minY = outpost.cy, maxY = outpost.cy;
   for (const s of outpost.structures) { minX = Math.min(minX, s.cx); maxX = Math.max(maxX, s.cx); minY = Math.min(minY, s.cy); maxY = Math.max(maxY, s.cy); }

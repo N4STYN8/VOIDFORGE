@@ -8,7 +8,7 @@ import { outfitterMarkup } from './outfitter.ts';
 import { EffectPool } from './effects.ts';
 import { drawParticles, drawEnergyBeam, drawProjectile, drawEmp } from './effectsRender.ts';
 import { GameModel } from './model.ts';
-import { cellOf, cellCenter, bounds as outpostBounds, outpostStats, storedTotal, structureAt, maxHealth, turretOf, dronesOf, outputOf, type Outpost, type Structure } from './outposts.ts';
+import { cellOf, cellCenter, bounds as outpostBounds, outpostStats, stationLayout, storedTotal, structureAt, maxHealth, turretOf, dronesOf, outputOf, type Outpost, type Structure } from './outposts.ts';
 import { WORLD, SHIP, RESOURCES, ENEMIES, ENEMY_AI, WAYPOINTS, OUTPOST, STRUCTURES, STRUCTURE_ABILITIES, type StructureKind, type Resource, EXPLORATION, MODULES, BUILD_GRID, equipment, upgradeCost, statsLabel, type EquipmentKind, type ModuleKind, FLEET } from './data.ts';
 import './style.css';
 import './cockpit.css';
@@ -510,13 +510,6 @@ class SpaceScene extends Phaser.Scene {
       for (const s of outpost.structures) {
         const x = s.cx * size, y = s.cy * size;
         if (s.progress < 1) { g.fillStyle(0x05070c); g.fillRect(x + 1, y + size - 4, size - 2, 3); g.fillStyle(0xf2d489); g.fillRect(x + 2, y + size - 3, (size - 4) * s.progress, 1); }
-        else if (s.kind === 'outpostCore' || s.kind === 'reactor') {
-          g.fillStyle(0xffd27a, 0.25 + Math.sin(now * 3 + s.id) * 0.15); g.fillCircle(x + size / 2, y + size / 2, 4.5);
-          // Turning gear teeth on the core.
-          if (s.kind === 'outpostCore') { g.fillStyle(0xf2d489, 0.9); for (let i = 0; i < 4; i++) { const a = now * 0.8 + i * Math.PI / 2; g.fillRect(x + size / 2 + Math.cos(a) * 6 - 0.5, y + size / 2 + Math.sin(a) * 6 - 0.5, 1.5, 1.5); } }
-        }
-        else if (s.kind === 'coolingUnit') { g.lineStyle(1, 0xbfeaff, 0.85); for (let i = 0; i < 2; i++) { const a = now * 6 + i * Math.PI / 2; g.lineBetween(x + size / 2 - Math.cos(a) * 3, y + size / 2 - Math.sin(a) * 3, x + size / 2 + Math.cos(a) * 3, y + size / 2 + Math.sin(a) * 3); } }
-        else if (s.kind === 'radarTower') { const a = now * 2.2 + s.id; g.lineStyle(1, 0x9fe6ff, 0.9); g.lineBetween(x + size / 2, y + size / 2, x + size / 2 + Math.cos(a) * 5, y + size / 2 + Math.sin(a) * 5); }
         else if (s.kind === 'shieldGenerator' && (outpost.shield ?? 0) > 0) { const reach = (STRUCTURES[s.kind].shieldRadius! + 0.5) * size; g.lineStyle(1.2, 0x79dfff, 0.12 + 0.3 * (outpost.shield! / Math.max(1, outpostStats(outpost).shieldCapacity))); g.strokeRect(x + size / 2 - reach, y + size / 2 - reach, reach * 2, reach * 2); }
         else if (STRUCTURES[s.kind].turret) {
           // Rotating turret heads are pooled sprites over the baked mount.
@@ -525,6 +518,20 @@ class SpaceScene extends Phaser.Scene {
           head.setVisible(true).setTexture(`turret-${s.kind}`).setPosition(x + size / 2, y + size / 2).setRotation(s.angle ?? s.rot * Math.PI / 2);
         }
       }
+      // Live details on whole station modules, scaled to merged squares.
+      const layout = stationLayout(outpost);
+      for (const m of layout.modules) {
+        const k = m.size, cx = (m.cx + k / 2) * size, cy = (m.cy + k / 2) * size;
+        if (m.kind === 'outpostCore' || m.kind === 'reactor') {
+          g.fillStyle(0xffd27a, 0.25 + Math.sin(now * 3 + m.id) * 0.15); g.fillCircle(cx, cy, 4.5 * k);
+          // Lights orbiting the command dome.
+          if (m.kind === 'outpostCore') { g.fillStyle(0xf2d489, 0.9); for (let i = 0; i < 4; i++) { const a = now * 0.8 + i * Math.PI / 2; g.fillRect(cx + Math.cos(a) * 6 - 0.5, cy + Math.sin(a) * 6 - 0.5, 1.5, 1.5); } }
+        }
+        else if (m.kind === 'coolingUnit') { const r = Math.max(3, size * k * 0.2); g.lineStyle(1, 0xbfeaff, 0.85); for (let i = 0; i < 2; i++) { const a = now * 6 / k + i * Math.PI / 2; g.lineBetween(cx - Math.cos(a) * r, cy - Math.sin(a) * r, cx + Math.cos(a) * r, cy + Math.sin(a) * r); } }
+        else if (m.kind === 'radarTower') { const a = now * 2.2 / Math.sqrt(k) + m.id; g.lineStyle(k > 1 ? 1.5 : 1, 0x9fe6ff, 0.9); g.lineBetween(cx, cy, cx + Math.cos(a) * 5 * k, cy + Math.sin(a) * 5 * k); }
+      }
+      // Blinking navigation beacons on the outermost blocks, alternating red and green.
+      layout.beacons.forEach((s, i) => { if (s.progress < 1 || Math.sin(now * 3 + i * 1.7) < 0.55) return; const bx = (s.cx + 0.5) * size, by = (s.cy + 0.5) * size; g.fillStyle(i % 2 ? 0x5dff9a : 0xff4d6d, 0.25); g.fillCircle(bx, by, 3.5); g.fillStyle(i % 2 ? 0xc8ffd8 : 0xffc2cc, 1); g.fillRect(bx - 0.75, by - 0.75, 1.5, 1.5); });
     }
     for (const outpost of this.model.outposts) for (const d of outpost.drones ?? []) {
       // Mining drones: pooled sprites, hidden while parked in the hangar, with a thin beam while cutting.
