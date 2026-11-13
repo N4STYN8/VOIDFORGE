@@ -79,3 +79,34 @@ test('legacy expansion keeps old chunk IDs and depleted rocks while adding persi
   assert.deepEqual(again.spec,migrated.spec);assert.equal(again.changes.get(destroyed),null);
   assert.ok(Math.abs(fieldAt(migrated.spec,19200-.01,9000).density-fieldAt(migrated.spec,19200+.01,9000).density)<.001);
 });
+
+test('danger regions are seeded from ore geography, leave the start safe, and decide what spawns', async () => {
+  const { createWorld, dangerAt } = await import('../src/world.ts');
+  const { DANGER, ENEMIES, ENEMY_SPAWN, WORLD } = await import('../src/data.ts');
+  const { GameModel } = await import('../src/model.ts');
+  const profiles = new Set<string>();
+  for (const seed of ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta']) {
+    const spec = createWorld(seed), again = createWorld(seed), home = spec.bases[0], counts = [0, 0, 0, 0], ringLevels = new Set<number>();
+    for (let x = 300; x < WORLD.width; x += 900) for (let y = 300; y < WORLD.height; y += 900) {
+      const level = dangerAt(spec, x, y); counts[level - 1]++;
+      assert.equal(level, dangerAt(again, x, y));
+      const fromHome = Math.hypot(x - home.x, y - home.y);
+      if (fromHome < DANGER.safeRadius) assert.equal(level, 1);
+      if (fromHome < DANGER.calmRadius) assert.ok(level <= 2);
+      if (fromHome > 12000 && fromHome < 16000) ringLevels.add(level);
+    }
+    // Danger is not a function of distance: one distance band holds several levels.
+    assert.ok(ringLevels.size >= 2, `${seed} ring levels ${[...ringLevels]}`);
+    assert.ok(counts[0] > counts[1] + counts[2] + counts[3]); assert.ok(counts[2] + counts[3] > 0);
+    profiles.add(counts.join());
+    // The richest ore in a field's core is rated at least as dangerous as common ore would be.
+    spec.clusters.forEach(cluster => { if (Math.hypot(cluster.x - home.x, cluster.y - home.y) > DANGER.calmRadius + cluster.radius) assert.ok(dangerAt(spec, cluster.x, cluster.y) >= Math.max(1, DANGER.ore[cluster.ore] - 1)); });
+  }
+  assert.ok(profiles.size >= 5);
+  assert.equal(ENEMY_SPAWN.normal.length, DANGER.labels.length); assert.equal(ENEMY_SPAWN.elite.length, DANGER.labels.length);
+  // Low danger offers only threat-1 patrols; the toughest classes appear only at high or extreme danger.
+  assert.ok(ENEMY_SPAWN.normal[0].every(kind => ENEMIES[kind].threat === 1)); assert.ok([...ENEMY_SPAWN.normal, ...ENEMY_SPAWN.elite].slice(0, 2).flat().every(kind => kind !== 'carrier' && kind !== 'defender'));
+  const m = new GameModel('alpha'); assert.equal(m.danger, 1); assert.equal(m.dangerAt(m.bases[0]), 1);
+  const restored = GameModel.fromSave(JSON.parse(JSON.stringify(m.toSave())));
+  for (const point of [{ x: 9000, y: 30000 }, { x: 41000, y: 12000 }, { x: 52000, y: 52000 }]) assert.equal(restored.dangerAt(point), m.dangerAt(point));
+});

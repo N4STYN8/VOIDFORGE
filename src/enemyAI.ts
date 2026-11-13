@@ -21,3 +21,38 @@ export function avoidMovingOre(start:Vertex,angle:number,asteroids:Asteroid[],ra
  }
  return angle+turn;
 }
+
+export type EnemyState = 'patrol' | 'investigate' | 'chase' | 'attack' | 'strafe' | 'retreat' | 'reposition' | 'defend' | 'return';
+export type EnemySituation = {
+  /** Player is inside detection range with a clear line of sight. */
+  visible: boolean;
+  /** A last-known player position is still remembered. */
+  remembers: boolean;
+  inRange: boolean;
+  /** Territory guard whose target has left its territory. */
+  leashed: boolean;
+  /** Away from its squad slot or guard post. */
+  awayFromPost: boolean;
+  guard: boolean;
+  /** Class strafes hard enough to count as a strafing run rather than a standing attack. */
+  strafes: boolean;
+  /** Backing off while a slow weapon reloads. */
+  reloading: boolean;
+  retreating: boolean;
+  /** Sidestepping after being blocked. */
+  repositioning: boolean;
+};
+/** Pure state selection, highest priority first. Movement and fire for each state live in the model. */
+export function nextEnemyState(s: EnemySituation): EnemyState {
+  if (s.leashed) return s.awayFromPost ? 'return' : 'patrol';
+  if (s.retreating) return 'retreat';
+  if (s.repositioning && (s.visible || s.remembers)) return 'reposition';
+  if (s.visible) {
+    if (!s.inRange) return 'chase';
+    if (s.reloading) return 'reposition';
+    if (s.guard) return 'defend';
+    return s.strafes ? 'strafe' : 'attack';
+  }
+  if (s.remembers) return 'investigate';
+  return s.awayFromPost ? 'return' : 'patrol';
+}

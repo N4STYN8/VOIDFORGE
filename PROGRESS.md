@@ -9,6 +9,12 @@
 - 114 tests pass; production build passes. Browser stress: 296 moving rocks, 36 enemies and 33-module mining/combat ship measured ~60 FPS (maximum observed frame ~26 ms), with no runtime errors. Reload preserved elapsed motion. A second two-hour world with 16 belts, 683 active rocks (497 belt members), 36 enemies and the same ship also measured ~60 FPS (max observed frame ~32 ms).
 - Next: human playtest of belt pacing/streaming and resource-rich patrol pressure. Boss encounter content remains queued; no new boss system was introduced.
 
+## Branch merge note (2026-11-13)
+- The pixel-art, enemy-class, AI, danger-region, boss and sound work below was rebuilt on top of main's five-level modules, level-5 abilities, renewable asteroid fields and regional enemy population. 128 tests pass (main's 103 plus the branch's, with one new integration test); build passes; browser checked an old save loading, a fresh world, a boss fight in an extreme region and the outfitter, with no runtime errors.
+- Bosses now return on main's ledger cooldown (20-30 minutes); their territory is safer in between and repeat kills pay half the reward.
+- Horde events added: after several minutes in open space (sooner in dangerous regions) the HUD flashes red with an ALERT banner, a siren and chevrons showing the approach direction; ten seconds later 6-15 enemies (by danger level) arrive together and hunt the player. Docking during the alert calls it off, a horde that is outrun gives up, and destroying one pays a salvage bonus. 130 tests pass; browser confirmed the alert, banner, flashing panels and a 15-ship horde with no errors.
+- Unplayed: balance of the new enemy classes and hordes against the 40% weaker level-1 weapons; horde frequency and size are first guesses.
+
 ## Latest — gentler gunfire, weaker starters, denser space and stable outfitter scrolling
 - Weapon asteroid impulse reduced another 90% (3→0.3), resting-rock shot speed cap 120→12. Repeated volleys cannot accumulate high speed; existing ship/collision momentum is preserved.
 - L1 damage reduced ~40% across all seven weapons: cannon 12, pulse 11, rail 45, plasma 27, missile 39, flak 4/pellet, EMP 9. Tiers 2–5 and firing intervals unchanged.
@@ -80,6 +86,26 @@
 - 70 tests pass, including weapon/enemy-shot impulse, mass response, movement, speed caps, rocket blast direction and an end-to-end shot → rock → enemy kill/loot check. Production build passes.
 
 ## Earlier-stage verification
+## Pixel-art pass (branch, not yet merged)
+- Top-down view kept; all world art is now low-resolution pixel art baked in new `src/sprites.ts`: cobbled-rock asteroids with glowing ore cavities in each ore's colour, a large ring station (core, landing deck, spokes, habitat ring, solar wings, dish, tanks), four detailed gunmetal enemy warships with muted faction accents, stepped-diamond ore pickups, 16x16 modules, and dark outlines throughout. One upper-left light; ship casts a shadow.
+- Background is three parallax layers (seeded posterized gas clouds, far stars, near stars) instead of a flat grid tile. Particles blend additively. HUD/outfitter panels use square corners, hard borders and hard offset shadows with no layout changes.
+- Canvas renderer, no new dependencies, no downloaded art, no shaders. Simulation untouched; 70 tests and the production build pass. Browser checked flight view, station, rocks, enemy sprites and HUD with no console errors.
+- Not yet checked: heavy-combat frame rate, the outfitter screen, and layouts at 1024/900 widths.
+
+## Enemy classes (branch, not yet merged)
+- Brief stages 1-3 (outfitter, upgrade comparisons, no module caps) were already complete; the outfitter was re-checked in the browser with the new art.
+- Stage 4 done: seven hostile classes plus carrier drones, all data-driven. Pirate Raider (cannon), Pirate Interceptor (dual pulse, flanks), Heavy Gunship (lead-aimed autocannon + rockets), Railgun Sniper (charged shot with aim-line warning, keeps distance), Missile Frigate (four guided missiles, retreats while reloading), Drone Carrier (up to three drones, stays far), Shielded Defender (regenerating shield, plasma, guards a home point with a leash).
+- Enemy shields, per-class loot tables, acceleration-limited steering with separation and asteroid repulsion, hostile shot colours, shield bars/rings and distinct hull sprites. Starting area spawns threat-1 pirates only; tougher classes appear further out.
+- 77 tests pass (7 new for classes, shields, missiles, drones, leash, loot, starting threat); build passes. Browser checked all eight sprites, shields, drones and the sniper warning in a staged scene.
+- Stage 5 done: nine-state AI (patrol, investigate, chase, attack, strafe, retreat, reposition, defend, return). Enemies remember and search the player's last position, react to being hit from out of sight, break off once when badly damaged (class-dependent), sidestep when blocked, slide around asteroids and reverse strafe direction. Awareness pips show searching/fighting/retreating. 82 tests pass (5 new); staged browser scene confirmed strafe, retreat, reposition and defend states.
+- Stage 6 done: seeded danger regions. Each ore field has a danger level 1-4 from its ore, richness and a seeded variation, so danger follows the geography rather than distance and differs per seed (about 75% of space is low). The start is always low and its surroundings are capped at medium. Spawn pools are per level (level 4 is elite: defenders, carriers, snipers). HUD shows the current threat, a message announces entering higher threat, and the sector map tints explored space by level. 83 tests pass.
+- Fixed a load/new-world error where the backdrop repaint pointed a tile layer at its own internal canvas.
+- Stages 7-8 started: boss framework and the first boss. The Iron Warden guards a seeded rich iron/copper field far from the start, with two escort defenders. It has a 1600 hull and 400 shield, a triple heavy cannon and a telegraphed rocket salvo, four destructible pulse turrets and two shield generators (shields stop recharging once both are destroyed). Below half hull it switches to a five-shot cannon spread and eight guided rockets and calls a gunship and two interceptors once. Boss bar, map marker, extreme-danger territory that drops to medium when cleared, large loot drop, and defeat saved permanently. 88 tests pass (5 new); staged browser fight confirmed parts, phase two, reinforcements and the boss bar.
+- Stages 7-8 complete: all three bosses. Crystal Leviathan (crystal field): charged beam with aim warning, plasma fans, up to three drones, and a shield surge every 16 s during which it holds fire, until both crystal nodes are destroyed; faster and harder-hitting below 40% hull. Reactor Titan (radioactive field): twin plasma and guided barrages, an EMP pulse with a warning ring that damages and drains energy, destructible plasma cannons and missile pods, reactor vents that open in phase two and take 1.5x damage past the shield, and a final pattern below 25% hull. Each has its own seeded territory, escorts, boss bar status line, map marker and saved defeat. 92 tests pass (4 new); staged browser fights confirmed the surge, EMP ring, phases and sprites.
+- Stage 9 done: sound. Enemy fire is now audible off screen, quieter with distance and deeper for larger ships. New synthesized cues: rail charge whine, missile-lock beeps, drone launch, enemy alert chirp, boss warning alarm, boss phase change, boss destruction, shield surge, EMP charge, module destroyed, hull damage (separate from shield hits) and ship destruction. Rockets, rail, flak and explosions gained a filtered noise layer. Existing master/effects/music volumes, mute, rate limiting and voice cap apply to all of it. 94 tests pass (2 new); all 28 cues were scheduled in a running browser audio context without errors.
+- Not done from the brief: combat-effect polish (part 9) and balancing (part 10). Nobody has listened to the new sounds or played a boss fight, so mix levels and difficulty are unverified.
+
+## Verification
 - 65 tests passing, including prior world/geometry/combat tests and new unlimited module combinations, exact tractor behavior, full cargo, no duplication, energy/heat/mass, weapon origins, EMP, Shift, pool cleanup and effect-disabled equivalence.
 - Production build passes; expected Phaser bundle warning only (~368 KB gzip).
 - Browser checks: 33-module ship with eight reactors, search using actual keyboard input, three panels, upgrade comparisons, HUD expansion, Shift burst, effects toggle and volume control; layouts inspected at 1440×1000, 1366×768, 1024×768 and 900×650. No runtime errors.
@@ -94,7 +120,7 @@
 
 ## Scope and next task
 - The later enemy-class, tactical AI, danger-region and three-boss overhaul is explicitly staged. It is queued next; current four enemy classes/patrol systems remain working.
-- Next development task after publishing: implement distinct enemy loadouts/classes as one coherent stage, then tactical AI and seeded danger regions before bosses.
+- Next development task: a real play session to tune sound levels and combat balance (enemy damage/health, boss durations, spawn rates per danger level), then remaining combat-effect polish.
 - Known limits: balancing/human playtesting remain pending; physical ship contacts still use a core-circle approximation. No new blocking failures found in this stage.
 
 ## Run

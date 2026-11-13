@@ -2,7 +2,7 @@ import { hashSeed,SeedRandom } from './random.ts';
 export { hashSeed,SeedRandom } from './random.ts';
 import { initializeBelts,attachBelt,placeBeltAtTime,motionPoint,captureBelt,sourceChunkCenters,BELT_MOTION,type BeltMotion } from './beltMotion.ts';
 import { POPULATION } from './populationConfig.ts';
-import { BASES, WORLD, type Resource } from './data.ts';
+import { BASES, WORLD, DANGER, BOSS, type Resource, type EnemyKind } from './data.ts';
 import type { Asteroid } from './mining.ts';
 export const CHUNK_SIZE = 1200;
 const CHUNKS = Math.ceil(WORLD.width / CHUNK_SIZE), CANDIDATES = 64;
@@ -39,6 +39,44 @@ export function fieldAt(spec: WorldSpec, x: number, y: number,includePopulation=
   density *= 0.55 + noise(spec.seed,x/1500,y/1500)*0.75;
   if(distance({x,y},spec.bases[0])<1600) ore=noise(spec.seed+'common',x/500,y/500)>0.5?'copper':'iron';
   return {density:Math.min(0.9,density),ore};
+}
+/**
+ * Danger level 1-4 at a point, derived only from the saved world spec so it is deterministic per
+ * seed and needs no extra save data. Each ore field has a level from its ore, its richness and a
+ * seeded -1/0/+1 variation; the level applies in the field's core and one less on its fringe.
+ */
+export function dangerAt(spec: WorldSpec, x: number, y: number) {
+  const fromHome = distance({ x, y }, spec.bases[0]);
+  if (fromHome < DANGER.safeRadius) return 1;
+  const variation = (key: string) => { const roll = hashSeed(`${spec.seed}:danger:${key}`) % 4; return roll === 0 ? -1 : roll === 3 ? 1 : 0; };
+  const rate = (ore: Resource, density: number, key: string, reach: number) => reach >= DANGER.fringe ? 1 : DANGER.ore[ore] + (density > DANGER.richDensity ? 1 : 0) + variation(key) - (reach < DANGER.core ? 0 : 1);
+  let level = 1;
+  const regions: [string, Geography][] = [['', spec]];
+  if (spec.expansion && Math.max(x, y) > LEGACY_SIZE) regions.push(['x', spec.expansion]);
+  for (const [prefix, region] of regions) {
+    region.clusters.forEach((cluster, i) => { level = Math.max(level, rate(cluster.ore, cluster.density, `${prefix}c${i}`, distance({ x, y }, cluster) / cluster.radius)); });
+    region.belts.forEach((belt, i) => {
+      const dx = x - belt.x, dy = y - belt.y, along = dx * Math.cos(belt.angle) + dy * Math.sin(belt.angle), side = -dx * Math.sin(belt.angle) + dy * Math.cos(belt.angle);
+      if (Math.abs(along) > belt.length * 0.5) return;
+      const curve = Math.sin(along / belt.length * Math.PI * 2 + belt.phase) * belt.curve;
+      level = Math.max(level, rate(belt.ore, belt.density, `${prefix}b${i}`, Math.abs(side - curve) / belt.width));
+    });
+  }
+  if (fromHome < DANGER.calmRadius) level = Math.min(level, 2);
+  return Math.max(1, Math.min(DANGER.labels.length, level));
+}
+export type BossSite = { kind: EnemyKind; x: number; y: number; radius: number };
+/** Boss territories, derived only from the saved spec: deterministic per seed and never beside a base. */
+export function bossSites(spec: WorldSpec): BossSite[] {
+  const home = spec.bases[0], used = new Set<number>(), sites: BossSite[] = [];
+  for (const { kind, ores } of BOSS.sites) {
+    const choice = spec.clusters.map((cluster, index) => ({ cluster, index }))
+      .filter(({ cluster, index }) => !used.has(index) && distance(cluster, home) > BOSS.minHomeDistance && spec.bases.every(base => distance(base, cluster) > BOSS.territory + 500))
+      .sort((a, b) => Number(ores.includes(b.cluster.ore)) - Number(ores.includes(a.cluster.ore)) || b.cluster.density - a.cluster.density || a.index - b.index)[0];
+    if (!choice) continue;
+    used.add(choice.index); sites.push({ kind, x: choice.cluster.x, y: choice.cluster.y, radius: BOSS.territory });
+  }
+  return sites;
 }
 export function inCorridor(spec: WorldSpec, x:number,y:number,radius:number) {
   const home=spec.bases[0],dx=x-home.x,dy=y-home.y;
