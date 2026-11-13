@@ -181,3 +181,9 @@
 - [x] Show required/stored/missing mineral costs in the outfitter
 - [x] Add repeatable economy benchmark/report and regression coverage
 - [ ] Human timed starter/midgame/endgame runs: validate delivery duty, rare-material search time and core milestones
+
+## Live map HUD
+- [x] Translucent cockpit chart, ship-follow/local default, world/zoom controls and fixed-size symbols
+- [x] Continue flight/simulation/audio while open; isolate map pointer input; preserve explicit pause
+- [x] Verify map interactions, movement, responsive bounds, tests/build
+- [ ] User review of map visibility during combat
