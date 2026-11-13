@@ -189,7 +189,7 @@ test('boss shields recharge only while a shield generator survives', () => {
   for (const part of parts()) if (ENEMIES[part.kind!].shieldSource) part.health = 0;
   m.update(0.01, input); const held = boss.shield!;
   for (let i = 0; i < 20; i++) m.update(0.1, input);
-  assert.equal(boss.shield, held); assert.equal(parts().length, 4);
+  assert.equal(boss.shield, held); assert.equal(parts().length, ENEMIES.warden.boss!.parts.filter(part=>!ENEMIES[part.kind].shieldSource).length);
 });
 test('a boss changes weapons and calls reinforcements once below half health', () => {
   const { m, boss } = wake(), def = ENEMIES.warden, before = m.enemies.length;
@@ -214,6 +214,8 @@ test('a defeated boss pays out, calms its territory, stays away through a save, 
   (m as unknown as { world: { time: number } }).world.time += POPULATION.bossInterval[1] + 1;
   assert.deepEqual(m.defeatedBosses, []); assert.equal(m.dangerAt(site), DANGER.labels.length);
   m.enemies = []; m.drops = []; m.update(0.01, input);
+  assert.equal(m.enemies.some(e=>e.kind==='warden'),false);
+  const original={x:m.player.x,y:m.player.y};m.player.x=site.x+BOSS.wake+500;m.update(.01,input);Object.assign(m.player,original);m.update(.01,input);
   const again = m.enemies.find(e => e.kind === 'warden')!; assert.ok(again); kill(again);
   for (const [ore, amount] of Object.entries(ENEMIES.warden.loot)) assert.equal(m.drops.filter(d => d.ore === ore).reduce((n, d) => n + d.amount, 0), Math.round(amount * HORDE.repeatBossLoot));
   assert.deepEqual(m.defeatedBosses, ['warden']);
@@ -221,7 +223,7 @@ test('a defeated boss pays out, calms its territory, stays away through a save, 
 
 test('each boss guards its own seeded territory', () => {
   const m = arena(), sites = m.bossSites;
-  assert.deepEqual(sites.map(site => site.kind), ['warden', 'leviathan', 'titan']);
+  assert.deepEqual(sites.map(site => site.kind), ['warden', 'leviathan', 'titan','rustLeviathan','tyrant','harvester','storm','dreadforge']);
   for (const a of sites) for (const b of sites) if (a !== b) assert.ok(Math.hypot(a.x - b.x, a.y - b.y) > 1);
   for (const kind of ['leviathan', 'titan'] as const) { const { boss, parts } = wake(kind); assert.ok(boss); assert.equal(parts().length, ENEMIES[kind].boss!.parts.length); }
 });

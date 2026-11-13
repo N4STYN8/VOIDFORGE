@@ -1,4 +1,5 @@
-import { ENEMIES,ENEMY_SPAWN,BASE_RADIUS,WORLD,PATROL,type EnemyKind } from './data.ts';
+import {FACTIONS,enemyScaling} from './fleetConfig.ts';
+import { ENEMIES,ENEMY_SPAWN,BASE_RADIUS,WORLD,PATROL,type EnemyKind,type FactionKind } from './data.ts';
 import type { Enemy,Point,GameModel } from './model.ts';
 import { fieldAt,dangerAt,SeedRandom,hashSeed,outsideView,type WorldSpec,type PopulationView,type SpawnBlocker } from './world.ts';
 import { POPULATION } from './populationConfig.ts';
@@ -6,7 +7,7 @@ import type { Asteroid } from './mining.ts';
 type Threat=keyof typeof POPULATION.threats;
 type EnemyClass='normal'|'elite';
 export type EnemyRegion={key:string;threat:Threat;normalDue:number;eliteDue:number;normalCycle:number;eliteCycle:number;attempt:number;defeats:number;sleeping:Enemy[]};
-export type BossState={readyAt:number;defeats:number;uniqueGranted:boolean};
+export type BossState={readyAt:number;defeats:number;uniqueGranted:boolean;requiresExit?:boolean};
 export type EnemyPopulationSnapshot={regions:EnemyRegion[];bosses:[string,BossState][]};
 const distance=(a:Point,b:Point)=>Math.hypot(a.x-b.x,a.y-b.y);
 /** Elite classes are whatever the elite spawn pools contain, so new enemy types need no change here. */
@@ -41,10 +42,12 @@ export class EnemyPopulation {
  recordBossDefeat(key:string,now:number){
   const old=this.bosses.get(key);if(old&&now<old.readyAt)return {accepted:false,uniqueReward:false};
   const defeats=(old?.defeats??0)+1,range=POPULATION.bossInterval,rng=new SeedRandom(`${this.spec.seed}:boss:${key}:${defeats}`);
-  const result={accepted:true,uniqueReward:!old?.uniqueGranted};this.bosses.set(key,{readyAt:now+range[0]+rng.next()*(range[1]-range[0]),defeats,uniqueGranted:true});return result;
+  const result={accepted:true,uniqueReward:!old?.uniqueGranted};this.bosses.set(key,{readyAt:now+range[0]+rng.next()*(range[1]-range[0]),defeats,uniqueGranted:true,requiresExit:true});return result;
  }
+ leaveTerritory(key:string){const state=this.bosses.get(key);if(state)state.requiresExit=false;}
+ canSpawnBoss(key:string,now:number){return this.bossReady(key,now)&&!this.bosses.get(key)?.requiresExit;}
  snapshot():EnemyPopulationSnapshot{return {regions:structuredClone([...this.regions.values()]),bosses:structuredClone([...this.bosses.entries()])};}
- update(now:number,player:Point,view:PopulationView|undefined,asteroids:Asteroid[],bases:GameModel['bases'],enemies:Enemy[],squads:GameModel['squads'],nextId:()=>number,ship:SpawnBlocker[]=[]){
+ update(now:number,player:Point,view:PopulationView|undefined,asteroids:Asteroid[],bases:GameModel['bases'],enemies:Enemy[],squads:GameModel['squads'],nextId:()=>number,ship:SpawnBlocker[]=[],coreLevel=1){
   // Park actors, including patrol membership, rather than killing/despawning them for loot.
   const active:Enemy[]=[];
   for(const e of enemies){
@@ -78,7 +81,9 @@ export class EnemyPopulation {
     const groupSize=Math.min(kind==='normal'?PATROL.groupSize:1,target-count,POPULATION.enemyBudget-active.length,POPULATION.enemyArrivalsPerTick-arrivals);
     const rng=new SeedRandom(`${this.spec.seed}:enemy-arrival:${key}:${kind}:${kind==='normal'?r.normalCycle:r.eliteCycle}:${r.attempt++}`);
     const [cx,cy]=key.split(',').map(Number),types:EnemyKind[]=ENEMY_SPAWN[kind][regionDanger(this.spec,key)-1];
-    const kinds=Array.from({length:groupSize},(_,i)=>i===0&&kind==='normal'?types[0]:types[Math.floor(rng.next()*types.length)]);
+    const danger=regionDanger(this.spec,key), faction:FactionKind=danger===1?'rust':(['rust','iron','void'] as const)[hashSeed(this.spec.seed+':faction:'+key)%3];
+    const choices=FACTIONS[faction].fleets,fleet=choices[Math.floor(rng.next()*choices.length)],scale=enemyScaling(danger,coreLevel);
+    const kinds=Array.from({length:groupSize},(_,i)=>danger===1?types[Math.floor(rng.next()*types.length)]:kind==='elite'&&danger>=3?'escort':fleet[i%fleet.length]);
     let formation:Point[]|undefined,angle=0;
     for(let attempt=0;attempt<50&&!formation;attempt++){
      const center={x:(cx+rng.next())*POPULATION.enemyRegionSize,y:(cy+rng.next())*POPULATION.enemyRegionSize};angle=rng.next()*Math.PI*2;
@@ -88,7 +93,7 @@ export class EnemyPopulation {
     }
     if(!formation)continue;
     const squad=groupSize>1?{id:nextId(),...formation[0],angle}:undefined;if(squad)squads.push(squad);
-    for(let i=0;i<groupSize;i++)active.push({id:nextId(),...formation[i],kind:kinds[i],health:ENEMIES[kinds[i]].health,cooldown:1,angle,squad:squad?.id,slot:squad?i:undefined,populationRegion:key,populationClass:kind});
+    for(let i=0;i<groupSize;i++)active.push({id:nextId(),...formation[i],kind:kinds[i],faction,armor:Math.min(.5,(ENEMIES[kinds[i]].armor??0)+(danger-1)*.015),accuracyScale:1+(danger-1)*.02,health:ENEMIES[kinds[i]].health*scale.health,maxHealth:ENEMIES[kinds[i]].health*scale.health,damageScale:scale.damage,rewardScale:scale.reward,cooldown:1,angle,squad:squad?.id,slot:squad?i:undefined,populationRegion:key,populationClass:kind});
     arrivals+=groupSize;
     if(kind==='normal'){r.normalCycle++;r.normalDue=Math.max(due,now-this.interval(r,kind)*2)+this.interval(r,kind);}else{r.eliteCycle++;r.eliteDue=Math.max(due,now-this.interval(r,kind)*2)+this.interval(r,kind);}
    }

@@ -1,3 +1,4 @@
+import {FACTIONS} from './fleetConfig.ts';
 import Phaser from 'phaser';
 import { GameSettings } from './settings.ts';
 import { moduleDrag } from './moduleDrag.ts';
@@ -419,6 +420,8 @@ class SpaceScene extends Phaser.Scene {
     });
     for (const bullet of this.model.bullets) if(visible(bullet)) drawProjectile(g,bullet,this.effects.enabled,this.effects.time);
     for (const pulse of this.model.empPulses) if(visible(pulse)) drawEmp(g,pulse,this.effects.enabled,this.effects.time);
+    for(const hazard of this.model.enemyHazards){g.lineStyle(2,hazard.active?0xff7755:0xc99bff,hazard.active?.9:.25+hazard.progress*.5);g.strokeCircle(hazard.x,hazard.y,hazard.radius);if(hazard.active){g.fillStyle(0xae76ee,.18);g.fillCircle(hazard.x,hazard.y,hazard.radius);}}
+    for(const beam of this.model.enemyBeams){g.lineStyle(4,0xffa54a,beam.life/.22);g.lineBetween(beam.start.x,beam.start.y,beam.end.x,beam.end.y);}
     let enemyIndex=0;
     for (const e of this.model.enemies) {
       if (!visible(e)) continue;
@@ -427,10 +430,12 @@ class SpaceScene extends Phaser.Scene {
       this.enemySprites[enemyIndex++]=hull;
       hull.setVisible(true).setPosition(e.x,e.y).setTexture(`enemy-${kind}`).setRotation(e.angle).setScale(1/ENEMY_SPRITE.scale);
       const def=ENEMIES[kind],half=Math.max(16,def.radius+4),top=e.y-def.radius-14;
+      const faction=e.faction??def.faction;if(faction){g.fillStyle(FACTIONS[faction].color,.9);g.fillRect(e.x-4,top-5,8,2);}
+      if(def.aura){g.lineStyle(1,0x7fd0ff,.18);g.strokeCircle(e.x,e.y,def.aura.range);}
       if (e.squad !== undefined) { g.fillStyle(0xa6c6dd, 0.7); g.fillRect(e.x - 5, top - 9, 2, 2); g.fillRect(e.x - 1, top - 9, 2, 2); g.fillRect(e.x + 3, top - 9, 2, 2); }
       if (!def.weakPoint) {
         g.fillStyle(0x05070c); g.fillRect(e.x - half - 1, top - 1, half * 2 + 2, 6);
-        g.fillStyle(0x481d26); g.fillRect(e.x - half, top, half * 2, 4); g.fillStyle(0xee7f89); g.fillRect(e.x - half, top, half * 2 * Math.min(1, Math.max(0, e.health) / def.health), 4);
+        g.fillStyle(0x481d26); g.fillRect(e.x - half, top, half * 2, 4); g.fillStyle(0xee7f89); g.fillRect(e.x - half, top, half * 2 * Math.min(1, Math.max(0, e.health) / (e.maxHealth??def.health)), 4);
       }
       // Awareness pip: amber while searching, red while fighting, white while breaking off.
       const mood=e.state==='investigate'?0xffd166:e.state==='retreat'?0xe8f1f8:e.state&&e.state!=='patrol'&&e.state!=='return'?0xff4d6d:0;
@@ -447,9 +452,9 @@ class SpaceScene extends Phaser.Scene {
         g.lineStyle(2, 0xbdf3ff, 0.75 - pulse * 0.6); g.strokeCircle(e.x, e.y, def.radius + 10 + pulse * 26);
         g.lineStyle(1.5, 0x7fd0ff, 0.7); g.strokeCircle(e.x, e.y, def.radius + 10);
       }
-      if ((e.empCharge ?? 0) > 0 && def.boss?.emp) {
+      if ((e.empCharge ?? 0) > 0 && (def.boss?.emp||def.emp||def.boss?.meltdown)) {
         // EMP warning: the blast ring fills in as the charge completes. Get outside it.
-        const emp = def.boss.emp, progress = 1 - e.empCharge! / emp.charge;
+        const emp = def.boss?.emp??def.emp??{...def.boss!.meltdown!,charge:def.boss!.meltdown!.duration}, progress = 1 - e.empCharge! / emp.charge;
         g.fillStyle(0x9db8ff, 0.03 + progress * 0.08); g.fillCircle(e.x, e.y, emp.radius);
         g.lineStyle(progress > 0.8 ? 3 : 1.5, progress > 0.8 ? 0xf2f6ff : 0x9db8ff, 0.35 + progress * 0.6); g.strokeCircle(e.x, e.y, emp.radius);
         g.lineStyle(1.5, 0x9db8ff, 0.5); g.strokeCircle(e.x, e.y, emp.radius * progress);

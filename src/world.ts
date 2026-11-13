@@ -70,9 +70,10 @@ export type BossSite = { kind: EnemyKind; x: number; y: number; radius: number }
 export function bossSites(spec: WorldSpec): BossSite[] {
   const home = spec.bases[0], used = new Set<number>(), sites: BossSite[] = [];
   for (const { kind, ores } of BOSS.sites) {
-    const choice = spec.clusters.map((cluster, index) => ({ cluster, index }))
+    let choice = spec.clusters.map((cluster, index) => ({ cluster, index }))
       .filter(({ cluster, index }) => !used.has(index) && distance(cluster, home) > BOSS.minHomeDistance && spec.bases.every(base => distance(base, cluster) > BOSS.territory + 500))
       .sort((a, b) => Number(ores.includes(b.cluster.ore)) - Number(ores.includes(a.cluster.ore)) || b.cluster.density - a.cluster.density || a.index - b.index)[0];
+    if(!choice){const extra=[...(spec.populationFields?.clusters??[]),...(spec.expansion?.clusters??[])];choice=extra.map((cluster,i)=>({cluster,index:spec.clusters.length+i})).filter(({cluster,index})=>!used.has(index)&&distance(cluster,home)>BOSS.minHomeDistance&&spec.bases.every(base=>distance(base,cluster)>BOSS.territory+500)).sort((a,b)=>Number(ores.includes(b.cluster.ore))-Number(ores.includes(a.cluster.ore))||b.cluster.density-a.cluster.density||a.index-b.index)[0];}
     if (!choice) continue;
     used.add(choice.index); sites.push({ kind, x: choice.cluster.x, y: choice.cluster.y, radius: BOSS.territory });
   }

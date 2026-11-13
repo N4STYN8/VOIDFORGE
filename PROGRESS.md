@@ -125,3 +125,17 @@
 
 ## Run
 `npm install`, `npm run dev` (current local URL: http://127.0.0.1:5174/). Use JSON Export/Import to transfer saves between localhost and the hosted page.
+
+## Enemy fleets and bosses — 2026-11-13
+- Added seven archetypes alongside the five matching legacy classes, for twelve requested roles. Existing carrier/defender/drone and Crystal Leviathan/Reactor Titan encounters remain available.
+- Three seeded regional factions use configurable three-ship fleets, shared squad awareness, formations, support shields, armored escorts and bounded regional/core scaling. Home-region scaling remains unchanged.
+- Added Rust Leviathan, Copper Tyrant, Void Harvester, Storm Engine and Dreadforge; extended Iron Warden with rear reactor, shield surge, frontal protection and final phase. All eight major encounters use seeded territories.
+- Components gate body weapons, mining, drone deployment, shields, electrical hazards and engine speed. Cutting beams stop at asteroid polygons; marauders/harvesters remove finite ore and carry real pickups. Cargo and encounter state survive saves.
+- EMP suppression lasts at most 1.2 seconds with five-second immunity and leaves basic movement available. Electrical hazards, charged shots and final meltdown have visible warnings. Boss return requires leaving the territory as well as waiting for the ledger cooldown.
+- Cached modular silhouettes/faction accents, existing synthesized cues, pooled/capped hostile bullets (256), capped beam traces (12), drone actor ceiling (90), and distant AI suspension.
+- Validation: 154 tests passed; production build passed (existing Phaser bundle warning). Browser: all textures present, no runtime errors; headless Canvas ~60 FPS with 400 asteroids and 50 actors including Dreadforge. Checked 100 seeds: all eight boss sites present.
+- Compatibility: optional actor armor/scaling/cargo and EMP save fields preserve v1 saves; existing actors without armor retain their old damage behavior. Previously generated original three boss sites keep their selection order.
+- Remaining: human difficulty/economy/audio playtest; stress measurements are synthetic and do not establish performance on every device. Physical contacts retain the existing circle approximation.
+- Next specific task: play one progression run from starter ship through the first Warden encounter, then tune fleet frequency, projectile damage and boss rewards from observed time-to-kill.
+- Git: local branch codex/enemy-fleets-factions-bosses, upstream origin/main. Fetched before implementation; main was synchronized at a1eb8d5. Pre-existing AGENTS.md collaboration rules preserved. No commit, push, merge or deployment.
+- Files changed this task: src/data.ts, src/enemyDefinitions.ts, src/fleetConfig.ts, src/enemyAI.ts, src/enemyPopulation.ts, src/model.ts, src/world.ts, src/sprites.ts, src/main.ts, tests/enemies.test.ts, tests/fleets.test.ts, GAME_DESIGN.md, ARCHITECTURE.md, TASKS.md, PROGRESS.md. AGENTS.md was already modified and remains preserved.

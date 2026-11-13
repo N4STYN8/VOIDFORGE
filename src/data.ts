@@ -1,17 +1,20 @@
+import { EXTRA_ENEMIES,type ExtraEnemyKind } from './enemyDefinitions.ts';
 export const WORLD = { width: 19200 * Math.sqrt(10), height: 19200 * Math.sqrt(10), stationX: 3200, stationY: 3200 };
 export const RESOURCES = { iron: { label: 'Iron', color: 0xb9bdc7 }, copper: { label: 'Copper', color: 0xd59460 }, crystal: { label: 'Crystal', color: 0x8ad6ed }, ice: { label: 'Ice', color: 0xc5ecff }, radioactive: { label: 'Radioactive', color: 0x9fe63f } };
 export type Resource = keyof typeof RESOURCES;
 export const SHIP = { speed: 280, acceleration: 650, drag: 1.6, radius: 18, health: 100, miningRange: 240, miningRate: 9, pickupRange: 65 };
 export const WEAPONS = { player: { damage: 12, speed: 700, cooldown: 0.18, lifetime: 1.1 }, enemy: { damage: 9, speed: 340, cooldown: 1.4, lifetime: 2.2 } };
-export type EnemyKind = 'raider' | 'scout' | 'tank' | 'sniper' | 'frigate' | 'carrier' | 'defender' | 'drone' | 'warden' | 'wardenTurret' | 'wardenShield' | 'leviathan' | 'leviathanNode' | 'leviathanPod' | 'titan' | 'titanCannon' | 'titanPod' | 'titanReactor';
+export type EnemyKind = ExtraEnemyKind | 'raider' | 'scout' | 'tank' | 'sniper' | 'frigate' | 'carrier' | 'defender' | 'drone' | 'warden' | 'wardenTurret' | 'wardenShield' | 'leviathan' | 'leviathanNode' | 'leviathanPod' | 'titan' | 'titanCannon' | 'titanPod' | 'titanReactor';
+export type FactionKind='rust'|'iron'|'void';
 export type EnemyBehavior = 'hold' | 'flank' | 'kite' | 'reload' | 'carrier' | 'guard';
 /** count/spread/offset fire several shots at once; homing is a turn rate (rad/s); charge is a telegraphed wind-up (s); lead aims ahead of a moving target. */
-export type EnemyWeapon = { type: WeaponKind; damage: number; speed: number; cooldown: number; lifetime: number; count?: number; spread?: number; offset?: number; homing?: number; charge?: number; lead?: boolean };
+export type EnemyWeapon = { type: WeaponKind; damage: number; speed: number; cooldown: number; lifetime: number; count?: number; spread?: number; offset?: number; homing?: number; charge?: number; lead?: boolean; splash?:number;requiresPart?:EnemyKind;beam?:{range:number;material:number;arc?:boolean} };
 export type EnemyDefinition = {
+  faction?:FactionKind;armor?:number;support?:boolean;role?:'weapon'|'bay'|'engine'|'coil'|'generator'|'miner'|'housing';aura?:{range:number;reduction:number};industry?:{range:number;rate:number;cargo:number;escapeAt?:number;lootShare:number;combat?:boolean};emp?:{interval:number;charge:number;radius:number;damage:number;drain:number;suppress?:number};repositionAfterShot?:number;
   label: string; threat: number; health: number; shield: number; shieldRegen: number; shieldDelay: number;
   speed: number; accel: number; radius: number; mass: number; detection: number; range: number; stop: number;
   behavior: EnemyBehavior; color: number; weapons: EnemyWeapon[]; loot: Partial<Record<Resource, number>>;
-  drones?: { max: number; interval: number }; leash?: number;
+  drones?: { max: number; interval: number;kind?:EnemyKind;requiresPart?:EnemyKind }; leash?: number;
   /** Hull fraction below which the ship breaks off once (0 = fights to the end). */
   retreatAt: number;
   /** Hull turns toward its target at this rate (rad/s) instead of snapping; used by large ships. */
@@ -26,6 +29,7 @@ export type EnemyDefinition = {
 };
 /** Boss extras: a second weapon set below `phaseAt` hull, one reinforcement call, escorts and mounted parts (offsets in ship space, nose along +x). */
 export type BossDefinition = {
+  frontArmor?:number;hazards?:{count:number;radius:number;speed:number;damage:number;size:number;charge:number;active:number;cycle:number};meltdown?:{duration:number;radius:number;damage:number};
   phaseAt: number; phaseWeapons: EnemyWeapon[]; reinforcements: EnemyKind[]; escorts: EnemyKind[]; parts: { kind: EnemyKind; x: number; y: number }[];
   /** Optional third phase below this hull fraction. */
   finalAt?: number; finalWeapons?: EnemyWeapon[];
@@ -34,15 +38,16 @@ export type BossDefinition = {
   /** Shield surge: every `interval` s the boss holds fire for `duration` s and recharges shields at `rate`/s (needs a living shield source). */
   surge?: { interval: number; duration: number; rate: number };
   /** Area pulse: after a `charge` s warning ring, everything within `radius` takes `damage` and loses `drain` energy. */
-  emp?: { interval: number; charge: number; radius: number; damage: number; drain: number };
+  emp?: { interval: number; charge: number; radius: number; damage: number; drain: number;suppress?:number };
 };
 // Internal keys raider/scout/tank/sniper are kept so existing saves keep their enemies.
 export const ENEMIES: Record<EnemyKind, EnemyDefinition> = {
-  raider: { label: 'Pirate Raider', threat: 1, retreatAt: 0.25, health: 60, shield: 0, shieldRegen: 0, shieldDelay: 0, speed: 115, accel: 260, radius: 17, mass: 1, detection: 780, range: 420, stop: 260, behavior: 'hold', color: 0xe15e68,
+  ...EXTRA_ENEMIES,
+  raider: { label: 'Rust Raider', threat: 1, retreatAt: 0.25, health: 60, shield: 0, shieldRegen: 0, shieldDelay: 0, speed: 115, accel: 260, radius: 17, mass: 1, detection: 780, range: 420, stop: 260, behavior: 'hold', color: 0xe15e68,
     weapons: [{ type: 'cannon', damage: 9, speed: 340, cooldown: 1.4, lifetime: 2.2 }], loot: { iron: 6 } },
-  scout: { label: 'Pirate Interceptor', threat: 1, retreatAt: 0.4, health: 35, shield: 0, shieldRegen: 0, shieldDelay: 0, speed: 190, accel: 520, radius: 13, mass: 0.7, detection: 850, range: 340, stop: 210, behavior: 'flank', color: 0xffbd6e,
+  scout: { label: 'Pirate Scout', threat: 1, retreatAt: 0.4, health: 35, shield: 0, shieldRegen: 0, shieldDelay: 0, speed: 190, accel: 520, radius: 13, mass: 0.7, detection: 850, range: 340, stop: 210, behavior: 'flank', color: 0xffbd6e,
     weapons: [{ type: 'pulse', damage: 3, speed: 460, cooldown: 0.8, lifetime: 1.4, count: 2, offset: 5 }], loot: { copper: 4 } },
-  tank: { label: 'Heavy Gunship', threat: 2, retreatAt: 0, health: 200, shield: 0, shieldRegen: 0, shieldDelay: 0, speed: 65, accel: 110, radius: 25, mass: 3, detection: 850, range: 460, stop: 300, behavior: 'hold', color: 0xbf88de,
+  tank: { label: 'Iron Gunship', threat: 2, retreatAt: 0, health: 200, shield: 0, shieldRegen: 0, shieldDelay: 0, speed: 65, accel: 110, radius: 25, mass: 3, detection: 850, range: 460, stop: 300, behavior: 'hold', color: 0xbf88de,
     weapons: [{ type: 'cannon', damage: 6, speed: 380, cooldown: 0.34, lifetime: 1.8, lead: true }, { type: 'rocket', damage: 22, speed: 250, cooldown: 3.4, lifetime: 3.2 }], loot: { iron: 14, copper: 6 } },
   sniper: { label: 'Railgun Sniper', threat: 3, retreatAt: 0.45, health: 70, shield: 0, shieldRegen: 0, shieldDelay: 0, speed: 95, accel: 200, radius: 18, mass: 1, detection: 1100, range: 780, stop: 620, behavior: 'kite', color: 0x74bedc,
     weapons: [{ type: 'rail', damage: 30, speed: 900, cooldown: 3.2, lifetime: 1.4, charge: 1.1 }], loot: { crystal: 6, copper: 4 } },
@@ -92,13 +97,21 @@ export const ENEMIES: Record<EnemyKind, EnemyDefinition> = {
   titanReactor: { label: 'Reactor Vent', threat: 0, retreatAt: 0, part: true, weakPoint: 1.5, health: 1, shield: 0, shieldRegen: 0, shieldDelay: 0, speed: 0, accel: 0, radius: 13, mass: 1, detection: 1100, range: 1, stop: 0, behavior: 'hold', color: 0xffe07a,
     weapons: [], loot: {} },
 };
+// Preserve legacy keys and encounters; requested archetypes share their established implementations.
+Object.assign(ENEMIES.raider,{faction:'rust',armor:.03});Object.assign(ENEMIES.scout,{faction:'rust',armor:.02});Object.assign(ENEMIES.tank,{faction:'iron',armor:.3});Object.assign(ENEMIES.sniper,{faction:'iron',armor:.08,repositionAfterShot:1.2});Object.assign(ENEMIES.frigate,{faction:'rust',armor:.12});
+Object.assign(ENEMIES.carrier,{faction:'void'});Object.assign(ENEMIES.defender,{faction:'iron'});Object.assign(ENEMIES.drone,{faction:'void'});
+Object.assign(ENEMIES.warden,{faction:'iron'});Object.assign(ENEMIES.leviathan,{faction:'void'});Object.assign(ENEMIES.titan,{faction:'void'});
+Object.assign(ENEMIES.warden.boss!,{frontArmor:.3,finalAt:.22,surge:{interval:14,duration:2,rate:70},finalWeapons:[{type:'rail',damage:24,speed:1050,cooldown:3,lifetime:3,charge:1.3},{type:'flak',damage:5,speed:390,cooldown:1.2,lifetime:3,count:7,spread:.9}]});
+ENEMIES.warden.boss!.parts.push({kind:'bossReactor',x:-70,y:0});
+export const ENEMY_ARCHETYPES:EnemyKind[]=['scrapDrone','scout','raider','tank','sniper','bomber','frigate','flak','disruptor','shieldCarrier','marauder','escort'];
+export const MAJOR_BOSSES:EnemyKind[]=['warden','rustLeviathan','tyrant','harvester','storm','dreadforge'];
 /**
  * Boss placement. Each site is chosen from the seeded ore clusters (preferring `ores`, then richness),
  * at least `minHomeDistance` from the start. The boss wakes when the player comes within `wake`;
  * `territory` is its extreme-danger zone, which drops to medium once it is defeated.
  */
 export const BOSS: { wake: number; territory: number; minHomeDistance: number; sites: { kind: EnemyKind; ores: Resource[] }[] } = {
-  wake: 2600, territory: 1000, minHomeDistance: 7000, sites: [{ kind: 'warden', ores: ['iron', 'copper'] }, { kind: 'leviathan', ores: ['crystal'] }, { kind: 'titan', ores: ['radioactive'] }],
+  wake: 2600, territory: 1000, minHomeDistance: 7000, sites: [{ kind: 'warden', ores: ['iron', 'copper'] }, { kind: 'leviathan', ores: ['crystal'] }, { kind: 'titan', ores: ['radioactive'] },{kind:'rustLeviathan',ores:['copper','iron']},{kind:'tyrant',ores:['copper','crystal']},{kind:'harvester',ores:['iron','crystal']},{kind:'storm',ores:['crystal','ice']},{kind:'dreadforge',ores:['radioactive']}],
 };
 /**
  * Danger levels 1-4 come from the seeded resource geography, not from distance: richer ore fields

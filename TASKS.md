@@ -97,3 +97,15 @@
 ## Later systems
 - [ ] Refining, crafting, research, player-placed structures and automation
 - [ ] Human playtest of economy, power/cooling, cargo and progression balance
+
+## Expanded fleets / factions / bosses (2026-11-13)
+- [x] Reusable archetype definitions and specialized AI operations
+- [x] Twelve requested archetypes, including finite-resource mining marauder
+- [x] Three seeded regional factions and configurable coordinated fleets
+- [x] Component dependencies, frontal armor, engine damage and phases
+- [x] Six requested bosses; preserve Crystal Leviathan and Reactor Titan
+- [x] World distribution, bounded scaling, rewards and exit-gated boss returns
+- [x] Procedural cached modules, telegraphs and existing synthesized sound cues
+- [x] Regression/combat/save tests, production build and browser stress check
+- [ ] Human balance pass: starter progression to Warden; tune fleet frequency, damage and salvage
+- [ ] Measure sustained performance on the target player's hardware

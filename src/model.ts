@@ -14,7 +14,7 @@ import { WORLD, SHIP, WEAPONS, ENEMIES, ENEMY_AI, ENEMY_SPAWN, HORDE, DANGER, BO
 export type ShipModule = { x: number; y: number; kind: ModuleKind; level: number; cooldown: number; integrity: number; ability?:AbilityState; targetIds?: number[]; boostRemaining?:number; boostCooldown?:number };
 export type Point = { x: number; y: number };
 export type Input = { x: number; y: number; aim: Point; fire: boolean; mine: boolean; dock: boolean; boost?:boolean; overclock?:boolean; view?: { x: number; y: number; width: number; height: number } };
-export type Enemy = Point & { horde?: boolean; populationExempt?: boolean; mount?: Point; phase2?: boolean; phase3?: boolean; cooldown3?: number; surge?: number; surgeTimer?: number; empTimer?: number; empCharge?: number; state?: EnemyState; lastSeen?: Point; memory?: number; clock?: number; retreat?: number; retreated?: boolean; reposition?: number; sidestep?: number; stuck?: number; px?: number; py?: number; shield?: number; shieldDelay?: number; cooldown2?: number; charge?: { t: number; angle: number; weapon: number }; sx?: number; sy?: number; parent?: number; home?: Point; populationRegion?:string;populationClass?:'normal'|'elite';populationPatrol?:Point & {id:number;angle:number};rewarded?:boolean; disabledFor?: number; vx?: number; vy?: number; impactCooldown?: number; kind?: EnemyKind; squad?: number; slot?: number; patrolAngle?: number; id: number; health: number; cooldown: number; angle: number };
+export type Enemy = Point & { armor?:number;accuracyScale?:number;maxHealth?:number;damageScale?:number;rewardScale?:number;meltdown?:number; meltdownDone?:boolean; faction?: import("./data.ts").FactionKind; cargo?: Partial<Record<Resource,number>>; industryClock?:number; horde?: boolean; populationExempt?: boolean; mount?: Point; phase2?: boolean; phase3?: boolean; cooldown3?: number; surge?: number; surgeTimer?: number; empTimer?: number; empCharge?: number; state?: EnemyState; lastSeen?: Point; memory?: number; clock?: number; retreat?: number; retreated?: boolean; reposition?: number; sidestep?: number; stuck?: number; px?: number; py?: number; shield?: number; shieldDelay?: number; cooldown2?: number; charge?: { t: number; angle: number; weapon: number }; sx?: number; sy?: number; parent?: number; home?: Point; populationRegion?:string;populationClass?:'normal'|'elite';populationPatrol?:Point & {id:number;angle:number};rewarded?:boolean; disabledFor?: number; vx?: number; vy?: number; impactCooldown?: number; kind?: EnemyKind; squad?: number; slot?: number; patrolAngle?: number; id: number; health: number; cooldown: number; angle: number };
 export type Drop = Point & {vx?:number;vy?:number; id: number; ore: Resource; amount: number };
 export type Bullet = Point & { id: number; vx: number; vy: number; life: number; enemy: boolean; damage?: number; homing?: number; rocket?: boolean; splash?: number; weapon?: WeaponKind; level?: number; attackerId?:number; penetrating?:number; hitIds?:number[]; enhanced?:boolean; guided?:boolean; fragment?:boolean; age?:number };
 const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -26,10 +26,13 @@ export class GameModel {
   bases = BASES.map((base, i) => ({ ...base, unlocked: i === 0 }));
   explored = new Set<string>();
   detachedModules: (Point & { vx: number; vy: number; kind: ModuleKind; level: number; angle: number; life: number })[] = [];
+  systemsDisabled=0;
+  empImmunity=0;
   energy = 100;
   heat = 0;
   powerLimited = false;
   heatLimited = false;
+  private enemyBulletPool:Bullet[]=[];
   private cargoOverride:number|undefined;
   get cargoCapacity(){return this.cargoOverride??(SHIP_SYSTEMS.cargoCapacity+this.bonus('cargo'));}
   set cargoCapacity(value:number){this.cargoOverride=value;}
@@ -42,6 +45,8 @@ export class GameModel {
   coreLevel = 1;
   coreAbility=freshAbility();
   novaFields:(Point & {radius:number;life:number;damage:number})[]=[];
+  enemyHazards:(Point & {radius:number;active:boolean;progress:number})[]=[];
+  enemyBeams:{start:Point;end:Point;life:number}[]=[];
   blasts: (Point & { radius: number; life: number })[] = [];
   cargo: Record<Resource, number> = { iron: 0, copper: 0, crystal: 0, ice: 0, radioactive: 0 };
   stored: Record<Resource, number> = { iron: 0, copper: 0, crystal: 0, ice: 0, radioactive: 0 };
@@ -76,7 +81,7 @@ export class GameModel {
   get chartedAsteroids() { return [...this.world.surveyed.values()]; }
   toSave(): GameSave {
     return { version: 1, seed: this.seed, population:this.population.snapshot(), world: this.world.snapshot(this.asteroids),
-      player: { ...this.player }, modules: structuredClone(this.modules), coreAbility:{...this.coreAbility},novaFields:structuredClone(this.novaFields), coreLevel: this.coreLevel, shield: this.shield, energy: this.energy, heat: this.heat, empPulses: structuredClone(this.empPulses),
+      systemsDisabled:this.systemsDisabled,empImmunity:this.empImmunity,player: { ...this.player }, modules: structuredClone(this.modules), coreAbility:{...this.coreAbility},novaFields:structuredClone(this.novaFields), coreLevel: this.coreLevel, shield: this.shield, energy: this.energy, heat: this.heat, empPulses: structuredClone(this.empPulses),
       cargo: { ...this.cargo }, stored: { ...this.stored }, bases: structuredClone(this.bases), explored: [...this.explored],
       enemies: structuredClone(this.enemies), squads: structuredClone(this.squads), drops: structuredClone(this.drops), bullets: structuredClone(this.bullets), detachedModules: structuredClone(this.detachedModules),
       kills: this.kills, horde: { ...this.horde }, deaths: this.deaths, id: this.id, rng: this.rng.state, spawnTimer: this.spawnTimer, shieldDelay: this.shieldDelay, impactTimer: this.impactTimer };
@@ -87,6 +92,7 @@ export class GameModel {
     const m = new GameModel(data.seed, { world: data.world,population:data.population,restoring:true });
     if (!Number.isInteger(data.coreLevel) || data.coreLevel<1 || data.coreLevel>CORE.levels.length || data.modules.some(block => !MODULES[block.kind] || !Number.isInteger(block.level) || block.level < 1 || block.level > MODULES[block.kind].levels.length || !Number.isFinite(block.integrity))) throw new Error('Invalid ship data in save.');
     m.coreAbility={...freshAbility(),...data.coreAbility};m.novaFields=structuredClone(data.novaFields??[]).slice(-SPECIAL.plasma.maxFields);
+    m.systemsDisabled=data.systemsDisabled??0;m.empImmunity=data.empImmunity??0;
     m.player = { ...data.player }; m.modules = structuredClone(data.modules); m.coreLevel = data.coreLevel; m.shield = data.shield; m.energy = Math.max(0,Math.min(data.energy ?? m.maxEnergy,m.maxEnergy)); m.heat = data.heat ?? 0; m.empPulses = structuredClone(data.empPulses ?? []);
     const empty = () => Object.fromEntries((Object.keys(RESOURCES) as Resource[]).map(ore => [ore, 0])) as Record<Resource, number>;
     m.cargo = { ...empty(), ...data.cargo }; m.stored = { ...empty(), ...data.stored };
@@ -122,6 +128,7 @@ export class GameModel {
   get coolingRate() { return CORE.levels[this.coreLevel - 1].cooling! + this.bonus('cooling'); }
   get heatCapacity() { return CORE.levels[this.coreLevel - 1].heatCapacity! + this.bonus('heatCapacity'); }
   private operate(energy: number, heat: number): boolean {
+    if(this.systemsDisabled>0)return false;
     if(this.coreLevel>=5&&this.coreAbility.active>0){energy*=SPECIAL.core.costMultiplier;heat*=SPECIAL.core.costMultiplier;}
     if (this.energy + 1e-8 < energy) { this.powerLimited = true; return false; }
     if (this.heat + heat > this.heatCapacity + 1e-8) { this.heatLimited = true; return false; }
@@ -416,39 +423,40 @@ export class GameModel {
   private spawnBoss(site: Point & { kind: EnemyKind }) {
     const def = ENEMIES[site.kind], boss = this.spawnEnemy(site.kind, site.x, site.y, 0, { home: { x: site.x, y: site.y } });
     for (const part of def.boss!.parts) this.spawnEnemy(part.kind, site.x + part.x, site.y + part.y, 0, { parent: boss.id, mount: { x: part.x, y: part.y } });
-    def.boss!.escorts.forEach((kind, i) => { const angle = Math.PI / 2 + i * Math.PI; this.spawnEnemy(kind, site.x + Math.cos(angle) * 260, site.y + Math.sin(angle) * 260, angle); });
+    def.boss!.escorts.forEach((kind, i) => { const angle = Math.PI / 2 + i * Math.PI; this.spawnEnemy(kind, site.x + Math.cos(angle) * 260, site.y + Math.sin(angle) * 260, angle,{faction:def.faction}); });
     this.message = `WARNING: ${def.label} is guarding this field.`; this.cue('bossWarning');
     return boss;
   }
   private enemyFire(e: Enemy, def: EnemyDefinition, state: EnemyState, visible: boolean, distance: number, toPlayer: number, toGoal: number, dt: number) {
     const p = this.player, weapons = def.boss && e.phase3 && def.boss.finalWeapons ? def.boss.finalWeapons : def.boss && e.phase2 ? def.boss.phaseWeapons : def.weapons;
     const face = (angle: number) => { const turn = Math.atan2(Math.sin(angle - e.angle), Math.cos(angle - e.angle)); e.angle = def.turnRate ? e.angle + clamp(turn, -def.turnRate * dt, def.turnRate * dt) : angle; };
-    const mayFire = visible && state !== 'retreat' && state !== 'investigate' && !((e.surge ?? 0) > 0);
+    const mayFire = visible && (!def.industry||def.industry.combat||(e.memory??0)>0) && state !== 'retreat' && state !== 'investigate' && !((e.surge ?? 0) > 0);
     const sheltered = this.bases.some(base => base.unlocked && dist(e, base) < BASE_RADIUS);
     if (e.charge) {
       // Telegraphed shot: the aim line tracks, locks shortly before firing, then the shot goes where it locked.
-      const weapon = weapons[e.charge.weapon]; e.charge.t -= dt;
+      const weapon = weapons[e.charge.weapon];if(weapon.requiresPart&&!this.enemies.some(part=>part.parent===e.id&&part.health>0&&part.kind===weapon.requiresPart)){e.charge=undefined;return;} e.charge.t -= dt;
       if (e.charge.t > ENEMY_AI.chargeLock) e.charge.angle = toPlayer;
       face(e.charge.angle);
       if (e.charge.t <= 0) { if (!sheltered) this.enemyShot(e, weapon, e.charge.angle); e.charge = undefined; }
     } else {
       face(state === 'retreat' ? toPlayer + Math.PI : state === 'investigate' ? toGoal : toPlayer);
       weapons.forEach((weapon, i) => {
+        if (weapon.requiresPart && !this.enemies.some(part=>part.parent===e.id&&part.kind===weapon.requiresPart&&part.health>0)) return;
         if ((i === 0 ? e.cooldown : e.cooldown2!) > 0 || !mayFire || distance >= def.range || sheltered || e.charge) return;
         if (i === 0) e.cooldown = weapon.cooldown; else e.cooldown2 = weapon.cooldown;
         if (weapon.charge) { e.charge = { t: weapon.charge, angle: toPlayer, weapon: i }; this.cue(weapon.type === 'rocket' ? 'lock' : 'railCharge', e, def.radius); return; }
         const time = weapon.lead ? distance / weapon.speed : 0;
         this.enemyShot(e, weapon, Math.atan2(p.y + p.vy * time - e.y, p.x + p.vx * time - e.x));
       });
-      if (def.drones && mayFire && (e.cooldown3 ?? 0) <= 0 && !sheltered) {
+      if (def.drones && (!def.drones.requiresPart||this.enemies.some(part=>part.parent===e.id&&part.health>0&&part.kind===def.drones!.requiresPart)) && this.enemies.length<90 && mayFire && (e.cooldown3 ?? 0) <= 0 && !sheltered) {
         e.cooldown3 = def.drones.interval;
-        if (this.enemies.filter(other => other.parent === e.id && other.kind === 'drone').length < def.drones.max) { this.spawnEnemy('drone', e.x + Math.cos(e.angle) * def.radius, e.y + Math.sin(e.angle) * def.radius, e.angle, { parent: e.id }); this.cue('drone', e); }
+        if (this.enemies.filter(other => other.parent === e.id && other.kind === (def.drones!.kind??'drone')).length < def.drones.max) { this.spawnEnemy(def.drones.kind??'drone', e.x + Math.cos(e.angle) * def.radius, e.y + Math.sin(e.angle) * def.radius, e.angle, { parent: e.id,faction:e.faction??def.faction }); this.cue('drone', e); }
       }
     }
   }
   get danger() { return this.dangerAt(this.player); }
   private spawnEnemy(kind: EnemyKind, x: number, y: number, angle: number, extra: Partial<Enemy> = {}) {
-    const def = ENEMIES[kind], enemy: Enemy = { id: this.id++, kind, x, y, health: def.health, shield: def.shield, cooldown: 1, angle, populationExempt: true, ...extra };
+    const def = ENEMIES[kind], enemy: Enemy = { id: this.id++, kind, x, y, health: def.health, shield: def.shield, cooldown: 1, angle, populationExempt: true, armor:def.armor??0, faction:def.faction, ...extra };
     if (def.behavior === 'guard' && !enemy.horde) enemy.home = { x, y };
     this.enemies.push(enemy); return enemy;
   }
@@ -463,20 +471,37 @@ export class GameModel {
       }
       return;
     }
+    if(e.meltdown!==undefined&&!e.meltdownDone)return;
     const absorbed = Math.min(e.shield ?? 0, amount);
     // Being hit points the enemy at the attacker even without a line of sight.
     if (alert && amount > 0 && !this.atStation) { e.lastSeen = { x: this.player.x, y: this.player.y }; e.memory = ENEMY_AI.memory; }
     if (absorbed > 0) { e.shield = (e.shield ?? 0) - absorbed; this.effect({ type: 'shield', x: e.x, y: e.y, radius: def.radius + 6, color: def.color }); }
     if (amount > 0) e.shieldDelay = def.shieldDelay;
-    e.health -= amount - absorbed;
+    const aura=this.enemies.find(other=>other!==e&&other.health>0&&ENEMIES[other.kind??'raider'].aura&& (other.faction??ENEMIES[other.kind??'raider'].faction)===(e.faction??def.faction)&&dist(other,e)<ENEMIES[other.kind??'raider'].aura!.range);
+    const facing=Math.cos(Math.atan2(this.player.y-e.y,this.player.x-e.x)-e.angle)>.4;
+    const housing=def.boss?.frontArmor && (!def.boss.parts.some(part=>ENEMIES[part.kind].role==='housing')||this.enemies.some(part=>part.parent===e.id&&part.health>0&&ENEMIES[part.kind??'raider'].role==='housing'));
+    if(facing&&housing)amount=absorbed+(amount-absorbed)*(1-def.boss!.frontArmor!);
+    e.health -= (amount - absorbed)*(1-Math.min(.65,e.armor??0))*(1-(aura?ENEMIES[aura.kind??'raider'].aura!.reduction:0));
   }
+  private enemyExplosion(b:Bullet,point:Point){const radius=b.splash??0;this.effect({type:'explosion',...point,radius,weapon:b.weapon,color:0xf2a36a});if(!this.atStation&&dist(point,this.player)<radius+SHIP.radius)this.damagePlayer((b.damage??0)*Math.max(.25,1-dist(point,this.player)/(radius+SHIP.radius)),point,b.attackerId);}
   private enemyShot(e: Enemy, w: EnemyWeapon, angle: number) {
     const def = ENEMIES[e.kind ?? 'raider'], count = w.count ?? 1, reach = def.radius + 6;
+    if(def.repositionAfterShot)e.reposition=def.repositionAfterShot;
+    if(w.beam){if(w.beam.arc){const coil=this.enemies.find(part=>part.parent===e.id&&part.health>0&&ENEMIES[part.kind??'raider'].role==='coil');if(coil)this.arc(e,coil,0xc794ff);}
+      const end={x:e.x+Math.cos(angle)*w.beam.range,y:e.y+Math.sin(angle)*w.beam.range};let nearest=1,rockHit:Asteroid|undefined;
+      for(const rock of this.asteroids){if(segmentCircleHit(e,end,rock,rock.radius)===undefined)continue;const hit=segmentPolygonHit(ensureAsteroidGeometry(rock),asteroidLocal(rock,e),asteroidLocal(rock,end));if(hit&&hit.t<nearest){nearest=hit.t;rockHit=rock;}}
+      const point={x:e.x+(end.x-e.x)*nearest,y:e.y+(end.y-e.y)*nearest};
+      if(!this.atStation&&(segmentCircleHit(e,point,this.player,SHIP.radius+5)!==undefined))this.damagePlayer(w.damage,this.player,e.id);
+      if(rockHit&&w.beam.material>0){const removed=mineMaterial(rockHit,w.beam.material,point);e.cargo??={};e.cargo[rockHit.ore]=(e.cargo[rockHit.ore]??0)+removed;if(rockHit.amount<=0)this.destroyAsteroid(rockHit.id);}
+      if(this.enemyBeams.length>=12)this.enemyBeams.shift();
+      this.enemyBeams.push({start:{x:e.x,y:e.y},end:point,life:.22});this.cue('rail',e,def.radius);return;
+    }
     this.effect({ type: 'muzzle', x: e.x, y: e.y, angle, color: 0xff7770, weapon: w.type, silent: true });
     this.cue(w.type === 'cannon' ? 'fire' : w.type, e, def.radius);
-    for (let i = 0; i < count; i++) {
-      const t = count > 1 ? i / (count - 1) - 0.5 : 0, heading = angle + t * (w.spread ?? 0), side = t * 2 * (w.offset ?? 0);
-      const bullet: Bullet = { id: this.id++, x: e.x + Math.cos(angle) * reach - Math.sin(angle) * side, y: e.y + Math.sin(angle) * reach + Math.cos(angle) * side, vx: Math.cos(heading) * w.speed, vy: Math.sin(heading) * w.speed, life: w.lifetime, enemy: true, damage: w.damage, weapon: w.type };
+    const available=Math.max(0,256-this.bullets.filter(b=>b.enemy&&b.life>0).length);
+    for (let i = 0; i < Math.min(count,available); i++) {
+      const t = count > 1 ? i / (count - 1) - 0.5 : 0, heading = angle + t * (w.spread ?? 0)/(e.accuracyScale??1), side = t * 2 * (w.offset ?? 0);
+      const bullet: Bullet = Object.assign(this.enemyBulletPool.pop()??({} as Bullet),{homing:undefined,rocket:false,age:0, id: this.id++, x: e.x + Math.cos(angle) * reach - Math.sin(angle) * side, y: e.y + Math.sin(angle) * reach + Math.cos(angle) * side, vx: Math.cos(heading) * w.speed, vy: Math.sin(heading) * w.speed, life: w.lifetime, enemy: true, damage: w.damage*(e.damageScale??1), splash:w.splash, weapon: w.type, attackerId:e.id });
       if (w.type === 'rocket') bullet.rocket = true;
       if (w.homing) bullet.homing = w.homing;
       this.bullets.push(bullet);
@@ -485,7 +510,7 @@ export class GameModel {
   private updatePopulation(view:Input['view'],regenerate=true){
     const blockers=[{...this.player,radius:SHIP.radius},...this.modules.map(m=>({...this.modulePoint(m),radius:12})),...this.enemies.map(e=>({...e,radius:ENEMIES[e.kind??'raider'].radius}))];
     if(regenerate)this.world.replenish(this.player,this.asteroids,view,blockers);
-    const next=this.population.update(this.world.time,this.player,view,this.asteroids,this.bases,this.enemies,this.squads,()=>this.id++,blockers.slice(0,this.modules.length+1));
+    const next=this.population.update(this.world.time,this.player,view,this.asteroids,this.bases,this.enemies,this.squads,()=>this.id++,blockers.slice(0,this.modules.length+1),this.coreLevel);
     this.enemies=next.enemies;this.squads=next.squads;
   }
   respawn() {
@@ -581,7 +606,8 @@ export class GameModel {
   }
   private enemyDestroyed(e: Enemy) {
     const def = ENEMIES[e.kind ?? 'raider'];
-    if(e.rewarded)return;e.rewarded=true;
+    if(e.rewarded)return;
+    if(def.boss?.meltdown&&!e.meltdownDone){if(e.meltdown===undefined){e.meltdown=def.boss.meltdown.duration;e.empCharge=e.meltdown;e.charge=undefined;this.cue('empCharge',e,def.radius);this.message='Reactor meltdown! Clear the blast radius!';}e.health=1;return;}e.rewarded=true;
     this.addBlast({ x: e.x, y: e.y, radius: Math.max(35, def.radius * 1.6), life: def.boss ? 0.5 : 0.22 });
     // Components that go down with their boss are debris, not separate kills or loot.
     if (e.mount && !this.enemies.some(other => other.id === e.parent && other.health > 0)) return;
@@ -594,8 +620,9 @@ export class GameModel {
       this.cue('bossDown', e);
       this.message = `${def.label} destroyed. This field is safer to mine until it returns.`;
     }
+    for(const [ore,amount] of Object.entries(e.cargo??{}))this.releaseOre(e,ore as Resource,Math.floor((amount??0)*(def.industry?.lootShare??1)));
     const loot = Object.entries(def.loot) as [Resource, number][];
-    loot.forEach(([ore, amount], i) => this.drops.push({ id: this.id++, x: e.x + i * 16 - (loot.length - 1) * 8, y: e.y, ore, amount: Math.max(1, Math.round(amount * share)) }));
+    loot.forEach(([ore, amount], i) => this.drops.push({ id: this.id++, x: e.x + i * 16 - (loot.length - 1) * 8, y: e.y, ore, amount: Math.max(1, Math.round(amount * share*(e.rewardScale??1))) }));
   }
   private releaseOre(point: Point, ore: Resource, amount: number,velocity?:Point) {
     if (amount <= 0) return;
@@ -669,6 +696,7 @@ export class GameModel {
     this.minedTarget = undefined; this.miningPoint = undefined;
     if (this.dead) return;
     dt = Math.min(dt, 0.05);
+    this.systemsDisabled=Math.max(0,this.systemsDisabled-dt);this.empImmunity=Math.max(0,this.empImmunity-dt);
     this.world.advance(dt);
     tick(this.coreAbility,dt);
     for(const m of this.modules)if(m.level>=5){const a=state(m);tick(a,dt);if(m.kind==='cannon')a.sustained=input.fire&&!this.atStation?a.sustained+dt:0;}
@@ -814,13 +842,16 @@ export class GameModel {
       if (this.repairShip()) this.message = 'Cargo stored. Ship repaired; minerals paid.';
       else this.message = 'Cargo stored. Insufficient minerals for repairs; check the shop (Q).';
     } else if (input.dock) this.message = 'Move within 220m of the green station to dock.';
+    this.enemyHazards=[];
+    this.enemyBeams=this.enemyBeams.filter(beam=>(beam.life-=dt)>0).slice(-12);
     const safe = this.atStation;
     // Announce when the player crosses into more dangerous space.
     const danger = this.danger;
     if (danger > this.lastDanger && !safe && !this.dead) this.message = `Entering ${DANGER.labels[danger - 1].toLowerCase()} threat space. Richer ore, stronger patrols.`;
     this.lastDanger = danger;
     this.updateHorde(dt, danger, safe);
-    for (const site of this.bossSites) if (!site.defeated && dist(p, site) < BOSS.wake && !this.enemies.some(e => e.kind === site.kind)) this.spawnBoss(site);
+    for(const site of this.bossSites)if(dist(p,site)>BOSS.wake+300)this.population.leaveTerritory(site.kind);
+    for (const site of this.bossSites) if (this.population.canSpawnBoss(site.kind,this.world.time) && !site.defeated && dist(p, site) < BOSS.wake && !this.enemies.some(e => e.kind === site.kind)) this.spawnBoss(site);
     const visibleEnemies = new Set(this.enemies.filter(e => !safe && dist(e, p) <= ENEMIES[e.kind ?? 'raider'].detection && clearLineOfSight(e, p, this.asteroids)).map(e => e.id));
     const alertedSquads = new Set(this.enemies.filter(e => e.squad !== undefined && visibleEnemies.has(e.id)).map(e => e.squad));
     this.squads = this.squads.filter(squad => this.enemies.some(e => e.squad === squad.id));
@@ -832,9 +863,21 @@ export class GameModel {
       if (this.bases.some(base => base.unlocked && dist(squad, base) < BASE_RADIUS + 180)) squad.angle += dt * 2;
     }
     for (const e of this.enemies) {
+      if(e.health<=0)continue;
       if ((e.disabledFor ?? 0) > 0) { e.disabledFor=Math.max(0,e.disabledFor!-dt);e.vx=0;e.vy=0;continue; }
+      if(e.meltdown!==undefined&&!e.meltdownDone){e.meltdown-=dt;const blast=ENEMIES[e.kind??'raider'].boss!.meltdown!;e.empCharge=e.meltdown;if(e.meltdown<=0){e.meltdownDone=true;e.health=0;if(!safe&&dist(e,p)<blast.radius)this.damagePlayer(blast.damage);this.enemyDestroyed(e);}continue;}
       const previous = { x: e.x, y: e.y };
       const def = ENEMIES[e.kind ?? 'raider'], distance = dist(e, p); e.cooldown -= dt; e.cooldown2 = (e.cooldown2 ?? 0) - dt; e.cooldown3 = (e.cooldown3 ?? 0) - dt;
+      if(def.industry && (!def.boss||!def.boss.parts.some(part=>ENEMIES[part.kind].role==='miner')||this.enemies.some(part=>part.parent===e.id&&part.health>0&&ENEMIES[part.kind??'raider'].role==='miner')) && !safe && (!visibleEnemies.has(e.id)||def.industry.combat||(e.memory??0)<=0)) {
+        const industry=def.industry; e.cargo??={};e.industryClock=(e.industryClock??0)+dt;
+        if(e.industryClock>=.5){const elapsed=Math.min(1,e.industryClock);e.industryClock=0;
+          const carried=Object.values(e.cargo).reduce((sum,n)=>sum+(n??0),0);
+          const rock=this.asteroids.filter(a=>a.amount>0&&dist(a,e)<industry.range+a.radius).sort((a,b)=>dist(a,e)-dist(b,e))[0];
+          if(rock&&carried<industry.cargo){const impact=miningImpact(rock,e,rock),removed=mineMaterial(rock,Math.min(industry.rate*elapsed,industry.cargo-carried),impact);if(removed>0){if(this.enemyBeams.length>=12)this.enemyBeams.shift();this.enemyBeams.push({start:{x:e.x,y:e.y},end:impact,life:.22});}e.cargo[rock.ore]=(e.cargo[rock.ore]??0)+removed;if(rock.amount<=0)this.destroyAsteroid(rock.id);}
+          for(const drop of this.drops)if(dist(drop,e)<def.radius+40&&drop.amount>0){const room=industry.cargo-Object.values(e.cargo).reduce((sum,n)=>sum+(n??0),0),amount=Math.min(drop.amount,Math.max(0,room));e.cargo[drop.ore]=(e.cargo[drop.ore]??0)+amount;drop.amount-=amount;}
+          if(carried>=(industry.escapeAt??Infinity)){e.retreat=5;e.retreated=true;}
+        }
+      }
       if (e.shield === undefined) e.shield = def.shield;
       // Regional reinforcements arrive without a post; guards adopt the place they first appear.
       if (def.behavior === 'guard' && !e.home && !e.horde) e.home = { x: e.x, y: e.y };
@@ -843,11 +886,12 @@ export class GameModel {
       e.shieldDelay = Math.max(0, (e.shieldDelay ?? 0) - dt);
       const powered = !def.boss || this.enemies.some(other => other.parent === e.id && other.health > 0 && ENEMIES[other.kind ?? 'raider'].shieldSource);
       if (powered && e.shieldDelay <= 0 && e.shield < def.shield) e.shield = Math.min(def.shield, e.shield + def.shieldRegen * dt);
+      if(dist(e,p)>BOSS.wake+800){e.vx=0;e.vy=0;continue;}
       if (def.boss && !e.phase2 && e.health < def.health * def.boss.phaseAt) {
         // Phase two: a heavier weapon set and a single call for reinforcements.
         e.phase2 = true; e.cooldown = 1.5; e.cooldown2 = 2.5; e.charge = undefined; this.cue('bossPhase', e, def.radius);
         this.addBlast({ x: e.x, y: e.y, radius: def.radius + 30, life: 0.3 });
-        def.boss.reinforcements.forEach((kind, i) => { const angle = e.angle + Math.PI + (i - 1) * 0.6; this.spawnEnemy(kind, e.x + Math.cos(angle) * (def.radius + 160), e.y + Math.sin(angle) * (def.radius + 160), angle, { lastSeen: { x: p.x, y: p.y }, memory: ENEMY_AI.memory }); });
+        def.boss.reinforcements.forEach((kind, i) => { const angle = e.angle + Math.PI + (i - 1) * 0.6; this.spawnEnemy(kind, e.x + Math.cos(angle) * (def.radius + 160), e.y + Math.sin(angle) * (def.radius + 160), angle, { lastSeen: { x: p.x, y: p.y }, memory: ENEMY_AI.memory,faction:e.faction??def.faction }); });
         this.message = def.boss.reinforcements.length ? `${def.label} is damaged and calling reinforcements!` : `${def.label} is wounded and turning aggressive!`;
       }
       if (def.boss?.finalAt && e.phase2 && !e.phase3 && e.health < def.health * def.boss.finalAt) {
@@ -861,16 +905,20 @@ export class GameModel {
         if ((e.surge ?? 0) > 0) { e.surge = e.surge! - dt; e.shield = Math.min(def.shield, e.shield + def.boss.surge.rate * dt); }
         else if (visible) { e.surgeTimer = (e.surgeTimer ?? def.boss.surge.interval) - dt; if (e.surgeTimer <= 0) { e.surgeTimer = def.boss.surge.interval; e.surge = def.boss.surge.duration; e.charge = undefined; this.cue('surge', e); } }
       } else e.surge = 0;
-      if (def.boss?.emp) {
+      if (def.boss?.emp || def.emp) {
         // Area pulse with a warning ring: leave the ring before it fires.
-        const emp = def.boss.emp;
+        const emp = (def.boss?.emp ?? def.emp)!;
         if ((e.empCharge ?? 0) > 0) {
           e.empCharge = e.empCharge! - dt;
           if (e.empCharge <= 0) {
             this.effect({ type: 'explosion', x: e.x, y: e.y, radius: emp.radius, weapon: 'emp', color: WEAPON_TYPES.emp.color }); this.cue('emp', e, def.radius);
-            if (!safe && !this.dead && distance < emp.radius) { this.damagePlayer(emp.damage); this.energy = Math.max(0, this.energy - emp.drain); this.message = 'EMP hit: energy drained!'; }
+            if (!safe && !this.dead && distance < emp.radius) { this.damagePlayer(emp.damage); this.energy = Math.max(0, this.energy - emp.drain); if(emp.suppress&&this.empImmunity<=0){this.systemsDisabled=Math.min(1.2,emp.suppress);this.empImmunity=5;}this.message = 'EMP hit: systems recovering!'; }
           }
         } else if (visible) { e.empTimer = (e.empTimer ?? emp.interval) - dt; if (e.empTimer <= 0) { e.empTimer = emp.interval; e.empCharge = emp.charge; this.cue('empCharge', e); } }
+      }
+      if(def.boss?.hazards&&visible&&this.enemies.some(part=>part.parent===e.id&&part.health>0&&ENEMIES[part.kind??'raider'].role==='coil')){
+        const h=def.boss.hazards,phase=(e.clock??0)%h.cycle,active=phase>=h.charge&&phase<h.charge+h.active;
+        if(phase<h.charge+h.active)for(let i=0;i<h.count;i++){const angle=(e.clock??0)*h.speed+i*Math.PI*2/h.count,point={x:e.x+Math.cos(angle)*h.radius,y:e.y+Math.sin(angle)*h.radius};this.enemyHazards.push({...point,radius:h.size,active,progress:Math.min(1,phase/h.charge)});if(active&&!safe&&dist(point,p)<h.size+SHIP.radius)this.damagePlayer(h.damage*dt,point,e.id);}
       }
       if (def.part) {
         // Mounted component: rides its boss, aims and fires on its own, and dies with the boss.
@@ -884,6 +932,11 @@ export class GameModel {
         if (visible && def.weapons.length) this.enemyFire(e, def, 'attack', true, dist(e, p), aim, aim, dt); else e.angle = parent.angle;
         continue;
       }
+      if(def.industry&&!def.industry.combat&&(e.memory??0)<=0&&(e.retreat??0)<=0){
+        const drop=this.drops.filter(d=>d.amount>0&&dist(d,e)<900).sort((a,b)=>dist(a,e)-dist(b,e))[0];
+        const rock=this.asteroids.filter(a=>a.amount>0&&dist(a,e)<1100).sort((a,b)=>dist(a,e)-dist(b,e))[0];const goal=drop??rock;
+        if(goal){e.state=drop?'collect':'mine';const stop=drop?def.radius+25:Math.max((rock?.radius??0)+def.radius+20,def.industry.range*.6);const heading=avoidMovingOre(e,Math.atan2(goal.y-e.y,goal.x-e.x),this.asteroids,def.radius,true);e.angle=heading;if(dist(e,goal)>stop){const step=Math.min(def.speed*.6*dt,dist(e,goal)-stop);e.x+=Math.cos(heading)*step;e.y+=Math.sin(heading)*step;}e.vx=(e.x-previous.x)/dt;e.vy=(e.y-previous.y)/dt;continue;}
+      }
       // Memory: the last place the player was seen, shared across an alerted squad, fades after ENEMY_AI.memory seconds.
       const shared = !safe && e.squad !== undefined && alertedSquads.has(e.squad) && distance < def.detection * PATROL.sharedDetectionMultiplier;
       if (visible || shared) { e.lastSeen = { x: p.x, y: p.y }; e.memory = ENEMY_AI.memory; }
@@ -892,10 +945,11 @@ export class GameModel {
       // Guards give up the chase once the player leaves their territory.
       const leashed = def.leash !== undefined && e.home !== undefined && dist(e.home, p) > def.leash;
       // Fragile classes break off once when badly damaged, then come back to finish the fight.
-      if (visible && !leashed && !e.horde && !e.retreated && def.retreatAt > 0 && e.health < def.health * def.retreatAt) { e.retreated = true; e.retreat = ENEMY_AI.retreatTime; }
+      if (visible && !leashed && !e.horde && !e.retreated && def.retreatAt > 0 && e.health < (e.maxHealth??def.health) * def.retreatAt) { e.retreated = true; e.retreat = ENEMY_AI.retreatTime; }
       if (e.retreat > 0 && distance > def.detection * 1.2) e.retreat = 0;
       const slotForward = e.slot === 0 ? 0 : -PATROL.spacing, slotSide = e.slot === 0 ? 0 : (e.slot === 1 ? -1 : 1) * PATROL.spacing;
-      const post = squad ? { x: squad.x + Math.cos(squad.angle) * slotForward - Math.sin(squad.angle) * slotSide, y: squad.y + Math.sin(squad.angle) * slotForward + Math.cos(squad.angle) * slotSide } : e.home;
+      const ally=def.support?this.enemies.filter(other=>other!==e&&other.health>0&&(other.faction??ENEMIES[other.kind??'raider'].faction)===(e.faction??def.faction)&&!ENEMIES[other.kind??'raider'].part&&(ENEMIES[other.kind??'raider'].boss||ENEMIES[other.kind??'raider'].radius>def.radius)&&dist(other,e)<1000).sort((a,b)=>dist(a,e)-dist(b,e))[0]:undefined;
+      const post = ally?{x:ally.x-Math.cos(ally.angle)*150,y:ally.y-Math.sin(ally.angle)*150}:squad ? { x: squad.x + Math.cos(squad.angle) * slotForward - Math.sin(squad.angle) * slotSide, y: squad.y + Math.sin(squad.angle) * slotForward + Math.cos(squad.angle) * slotSide } : e.home;
       const reloading = def.behavior === 'reload' && e.cooldown > 1;
       const previousState = e.state, state = e.state = nextEnemyState({ visible, remembers: e.lastSeen !== undefined, inRange: distance < def.range, leashed, awayFromPost: post !== undefined && dist(e, post) > ENEMY_AI.postRadius,
         guard: def.behavior === 'guard', strafes: ENEMY_AI.strafe[def.behavior] >= 0.45, reloading, retreating: e.retreat > 0, repositioning: e.reposition > 0 });
@@ -907,6 +961,7 @@ export class GameModel {
         const holds = def.behavior === 'hold' || def.behavior === 'guard', flip = Math.floor((e.clock + e.id % 5) / ENEMY_AI.strafeFlip) % 2 ? 1 : -1;
         const side = (e.id % 2 ? 1 : -1) * (state === 'strafe' ? flip : 1) * (e.sidestep ?? 1);
         let radial = 0, strafe = 0, pace = def.speed;
+        if(def.boss?.parts.some(part=>ENEMIES[part.kind].role==='engine')&&!this.enemies.some(part=>part.parent===e.id&&part.health>0&&ENEMIES[part.kind??'raider'].role==='engine'))pace*=.55;
         if (state === 'chase') { radial = 1; strafe = 0.15; }
         else if (state === 'investigate') { radial = 1; pace *= ENEMY_AI.investigatePace; }
         else if (state === 'retreat') { radial = -1; strafe = 0.25; }
@@ -1026,11 +1081,11 @@ export class GameModel {
       }
       if (oreHit && oreHit.t <= targetT) {
         b.life = 0;this.fragment(b,oreHit.point);
-        if ((b.splash ?? 0)>0) this.explodeRocket(b, oreHit.point); else this.shootOre(oreHit.asteroid, b.damage ?? (b.enemy ? WEAPONS.enemy.damage : WEAPONS.player.damage), oreHit.point,b.weapon,{x:b.vx,y:b.vy});
+        if(b.enemy&&(b.splash??0)>0)this.enemyExplosion(b,oreHit.point);else if ((b.splash ?? 0)>0) this.explodeRocket(b, oreHit.point); else this.shootOre(oreHit.asteroid, b.damage ?? (b.enemy ? WEAPONS.enemy.damage : WEAPONS.player.damage), oreHit.point,b.weapon,{x:b.vx,y:b.vy});
       } else if (Number.isFinite(targetT)) {
         b.life = 0; const point = { x: start.x + (b.x - start.x) * targetT, y: start.y + (b.y - start.y) * targetT };
         this.fragment(b,point);
-        if (b.enemy) this.damagePlayer(b.damage ?? WEAPONS.enemy.damage, point,b.attackerId);
+        if (b.enemy) {if((b.splash??0)>0)this.enemyExplosion(b,point);else this.damagePlayer(b.damage ?? WEAPONS.enemy.damage, point,b.attackerId);}
         else if ((b.splash ?? 0)>0) this.explodeRocket(b, point);
         else if (target) {
           this.hitEnemy(target,b.damage??WEAPONS.player.damage);
@@ -1042,6 +1097,7 @@ export class GameModel {
       if(b.life<=0)break;
       }
     }
+    for(const b of this.bullets)if(b.enemy&&b.life<=0&&this.enemyBulletPool.length<256)this.enemyBulletPool.push(b);
     this.bullets = this.bullets.filter(b => b.life > 0); this.enemies = this.enemies.filter(e => e.health > 0);
     const moduleMap=new Map(this.modules.map(m=>[`${m.x},${m.y}`,m])),remainingDrops=new Map(this.drops.map(d=>[d.id,d])),remainingOre=new Map(this.asteroids.map(a=>[a.id,a]));
     this.tractorLinks=this.tractorLinks.filter(link=>{
@@ -1068,7 +1124,7 @@ export class GameModel {
 
 
 export type GameSave = {
-  version: 1; seed: string; population?:EnemyPopulationSnapshot;world: WorldSnapshot; player: GameModel['player']; modules: ShipModule[];
+  systemsDisabled?:number;empImmunity?:number;version: 1; seed: string; population?:EnemyPopulationSnapshot;world: WorldSnapshot; player: GameModel['player']; modules: ShipModule[];
   coreAbility?:AbilityState;novaFields?:GameModel['novaFields'];coreLevel: number; shield: number; energy?:number; heat?:number; empPulses?:GameModel['empPulses']; cargo: Record<Resource, number>; stored: Record<Resource, number>;
   bases: GameModel['bases']; explored: string[]; enemies: Enemy[]; squads: GameModel['squads']; drops: Drop[];
   bullets: Bullet[]; detachedModules: GameModel['detachedModules']; kills: number; horde?: GameModel['horde']; deaths: number; id: number; rng: number;

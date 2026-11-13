@@ -39,3 +39,86 @@ Moving belts use beltMotion.ts and BELT_MOTION in populationConfig.ts: seeded st
 Enemy classes live in ENEMIES/ENEMY_SPAWN/ENEMY_AI in src/data.ts; add or tune enemies there, route damage through hitEnemy/damageEnemy and fire through enemyShot. Keep the legacy keys raider/scout/tank/sniper for save compatibility. Enemy state selection is the pure nextEnemyState in src/enemyAI.ts; timing lives in ENEMY_AI. Danger levels come from dangerAt in src/world.ts (derived from the spec only; never store them in saves); tune via DANGER. Bosses are ENEMIES entries with a boss block plus part enemies (see ARCHITECTURE.md); sites come from bossSites in src/world.ts and only defeatedBosses is saved. All three bosses exist. Simulation sounds are cue events (GameModel.cue) with profiles in SOUND_PROFILES in src/audio.ts. The brief's remaining work is combat-effect polish and balancing, which need human play; do one stage per change. When staging browser checks, back up the local save to sessionStorage first: navigating saves the current model.
 
 Horde events (user request): away from the start a timer by danger level leads to a 10-second red alert (flashing HUD, banner, siren, direction chevrons) and then a horde of populationExempt enemies that always tracks the player. Docking during the alert cancels it; outrun hordes give up; clearing one pays a bonus. Config is HORDE in src/data.ts, logic is updateHorde/spawnHorde in the model, state is saved in the optional horde field. This is an event, not a return of the global timed spawner.
+
+## Mandatory Git collaboration and deployment safety rules
+
+These user-mandated rules apply to ALL future Codex sessions and tasks. They supersede any earlier standing permission in this file or conversation to commit, push, publish or deploy. Preserve all other project instructions. Protect both developers' work; when uncertain, STOP and ask the user.
+
+### 1. Always check Git before editing
+
+Before modifying any project files:
+
+1. Run `git status --short --branch`.
+2. Run `git branch --show-current`.
+3. Run `git remote -v`.
+4. Identify the configured upstream and fetch from its configured remote (`git fetch <remote>`).
+5. Check whether the branch is behind, ahead of or diverged from its upstream (for example, `git rev-list --left-right --count HEAD...@{upstream}`).
+6. Check for uncommitted changes, untracked files and potential conflicts.
+
+Only when the working tree is clean, the branch has an upstream and synchronization can fast-forward safely, run `git pull --ff-only`. If there are local modifications, untracked-file conflicts, diverged histories or any uncertainty, STOP, explain the situation and ask how to proceed. Do not automatically stash, reset, discard, overwrite, rebase or merge anything. If no upstream is configured, explain that and ask before selecting one.
+
+### 2. Never overwrite another developer's work
+
+Assume another developer may modify the project at any time. Before editing, inspect the latest relevant code, understand the current architecture and preserve others' changes. Avoid unrelated refactoring and replacing whole files when targeted edits suffice.
+
+Never use destructive Git commands without explicit permission. Prohibited without approval: `git reset --hard`, `git clean -fd`, force pushes, destructive checkouts/restores, discarding uncommitted changes, overwriting another developer's commits or automatically resolving conflicts by discarding either side. If conflicts occur, STOP and show conflicting files and available options.
+
+### 3. Never push automatically
+
+An authorized development task permits local edits only. Do NOT automatically push commits or branches, open or merge pull requests, merge branches into main/master/production, create releases or publish changes. Perform each of these actions only when the user explicitly requests that specific action. Requests such as "fix this bug", "add this feature" or "update the game" do not authorize pushing or publishing. Task completion is not push permission.
+
+### 4. Never update the live website automatically
+
+The live VOIDFORGE website must remain unchanged unless the user explicitly authorizes deployment. Do not trigger production deployments, run production deployment scripts, upload production files, change production hosting settings, trigger deployment workflows, push to automatically deploying branches or update the live game without that authorization.
+
+Identify automatic deployment branches and treat them as protected. A commit or push is not inherently safe for production. If a requested operation could trigger deployment, explain the risk and obtain deployment confirmation first, in addition to authorization for that Git operation.
+
+Deployment configuration inspected on 2026-11-13: `.github/workflows/pages.yml` publishes GitHub Pages on pushes to `main`, and also supports `workflow_dispatch` (manual runs can deploy their selected ref). Pull requests targeting `main` run validation without publishing. Protect `main` and manual workflow runs. Do not change this workflow or hosting settings as part of routine development without explicit scope/approval; re-inspect it for future tasks rather than assuming it stays unchanged.
+
+### 5. Use safe development branches
+
+Prefer a dedicated local development/feature branch, such as `codex/feature-description`, instead of editing main. Before creating or switching branches, check local changes, current branch and configured upstream, and verify switching cannot overwrite work. Creating a local feature branch is allowed when safe. Never switch in a way that discards changes. Do not push the branch, configure an unrequested upstream or merge it into main automatically.
+
+### 6. Local commits require permission
+
+Do not create Git commits or checkpoint commits unless the user explicitly requests a commit. Authorized local edits, tests, builds and diff review are allowed. Leave completed changes local and uncommitted unless instructed otherwise.
+
+### 7. Required workflow before every new task
+
+1. Inspect Git status and the current branch.
+2. Fetch the latest remote changes.
+3. Safely fast-forward the current branch if possible.
+4. Check for conflicts and uncommitted/untracked changes; STOP and ask if unsafe or uncertain.
+5. Review relevant existing code.
+6. Make only the requested changes.
+7. Run relevant tests and builds.
+8. Review `git diff` for unrelated modifications.
+9. Report what changed.
+10. STOP. Do not commit, push, merge or deploy.
+
+### 8. Task completion report
+
+After every development task, report:
+
+- Current Git branch.
+- Whether remote changes were fetched and pulled.
+- Whether local modifications existed before starting.
+- Files changed and features implemented.
+- Tests performed.
+- Conflicts or warnings.
+- Whether changes remain uncommitted.
+- Confirmation that nothing was pushed.
+- Confirmation that no deployment was initiated.
+
+### 9. Separate explicit permissions
+
+- "Commit my changes" authorizes a local commit only.
+- "Push my branch" authorizes pushing the specifically requested branch only. If it automatically deploys, obtain separate deployment authorization before pushing.
+- "Merge into main" authorizes that merge only, after checking for conflicts and confirming the requested merge; it does not authorize a push or deployment.
+- "Deploy to production" authorizes deployment only after confirming the intended target and reviewing the deployment procedure; it does not independently authorize other Git operations.
+
+Permission for one operation never implies permission for another.
+
+### 10. Most important rule
+
+Protect both developers' work. Always synchronize safely before new work. Never discard another developer's changes, automatically commit, push, merge or deploy. When uncertain, STOP and ask. Development stays local until the user explicitly authorizes the next Git operation.

@@ -341,7 +341,18 @@ export function paintEnemy(kind: EnemyKind) {
   const gun = (x: number, y: number, length: number) => { box(x, y, length, 1.7, m0); box(x, y, length, pixel, m3); box(x + length - 1.5, y - 0.4, 1.5, 2.5, m5); };
   const cockpit = (x: number, half: number, length: number) => { box(x, -half, length, half * 2, m0); box(x + 1, -half + 0.7, length - 2, half * 2 - 1.4, visor); };
 
-  if (kind === 'raider') {
+  if (['scrapDrone','bomber','flak','disruptor','shieldCarrier','marauder','escort','rustLeviathan','tyrant','harvester','storm','dreadforge'].includes(kind)||kind.startsWith('boss')) {
+    const def=ENEMIES[kind], width=def.boss?(kind==='dreadforge'?5:kind==='harvester'?4:3):kind==='escort'?3:kind==='scrapDrone'?1:2, rows=def.boss?(kind==='rustLeviathan'?2:kind==='storm'?4:3):kind==='bomber'?3:kind==='scrapDrone'?1:2;
+    for(let x=-width;x<=width;x++)for(let y=0;y<rows;y++)if(Math.abs(x)+y<width+rows-1){
+      box(x*5-2,y*5-2,4.5,4.5,m0);box(x*5-1.5,y*5-1.5,3.5,3.5,m2);line(x*5-1,y*5-1,x*5+1,y*5-1,m4);
+    }
+    for(let pipe=-width*4;pipe<width*4;pipe+=5){line(pipe,2,pipe+3,2,0xb77846);disc(pipe,3,.5,m5);}
+    engine(-width*5,5,3);cockpit(0,2,5);disc(-5,0,2,accent);
+    if(def.weapons.length){gun(width*4,5,7);if(def.boss)gun(0,10,12);}
+    if(def.shield||def.aura){disc(-2,6,3,accentDark);disc(-2,6,1.5,visor);}
+    if(def.industry){gun(8,8,6);disc(12,8,2,0x66e6c6);}
+    if(def.emp){disc(3,8,3,0x9768e6);}
+  } else if (kind === 'raider') {
     engine(-15, -9.5, 2.8);
     poly([[7, -4], [-3, -16], [-13, -17.5], [-17, -13], [-10, -5]], m2);
     poly([[-5, -14.5], [-12.5, -16.5], [-15.5, -13.5], [-9, -12]], accent);
