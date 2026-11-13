@@ -248,7 +248,7 @@ class SpaceScene extends Phaser.Scene {
     this.audio.setLoop('mine',audible?this.model.miningLinks.length:0);this.audio.setLoop('tractor',audible?this.model.tractorLinks.length:0);
     for (const b of this.model.bullets) this.lastBullet = Math.max(this.lastBullet, b.id);
     if (!this.paused && !this.building && !this.mapOpen && !this.settings.open) {
-      this.effects.update(Math.min(delta/1000,.05),bounds);this.effects.consume(this.model.effects,bounds);this.effects.continuous(this.model.miningLinks,this.model.bullets,bounds);
+      this.effects.update(Math.min(delta/1000,.05),bounds);this.effects.consume(this.model.effects,bounds);this.effects.continuous(this.model.miningLinks,this.model.bullets,bounds);this.effects.ambient(this.model.asteroids,bounds);
     }
     const p = this.model.player;
     this.follow.setPosition(p.x, p.y);
@@ -393,7 +393,7 @@ class SpaceScene extends Phaser.Scene {
       } else cache.used = this.time.now;
       const sprite = this.asteroidSprites[rockIndex] ?? this.add.image(0, 0, key).setDepth(-1);
       this.asteroidSprites[rockIndex++] = sprite;
-      sprite.setVisible(true).setPosition(a.x, a.y).setTexture(key).setScale(1/ASTEROID_SPRITE.scale);
+      sprite.setVisible(true).setPosition(a.x, a.y).setTexture(key).setScale(1/ASTEROID_SPRITE.scale).setRotation(a.rotation??0);
     }
     for (; rockIndex < this.asteroidSprites.length; rockIndex++) this.asteroidSprites[rockIndex].setVisible(false);
     if (this.asteroidCache.size > 128) {

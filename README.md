@@ -41,6 +41,8 @@ Optional manual seeds reproduce geography; New world otherwise generates a fresh
 ## Living world
 Asteroid fields replenish with new deposits after cooldowns: common ores 2–5 minutes, rare ores 8–15. Mining still consumes finite reserves per rock. Enemies reinforce regions according to mineral richness and threat; distant enemies sleep instead of accumulating active physics. Population timers use unpaused game time and persist in saves. Extra seeded belts/clusters now fill in gradually in existing worlds, with higher regional enemy targets and a 36-enemy active budget. Boss encounter content remains planned; no bosses have been added by this update.
 
+Asteroids now include gentle individual drift and large drifting, orbital, and flowing belts. Shapes rotate slowly; mining and tractor collection work while targets/resources move. Motion and depletion persist across saves and chunk crossings.
+
 ## GitHub and automatic publishing
 The main branch is the deployment branch. Every push tests/builds and then publishes the game to GitHub Pages; pull requests run validation without deploying.
 

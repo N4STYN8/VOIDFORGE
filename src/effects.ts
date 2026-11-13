@@ -10,6 +10,7 @@ export class EffectPool {
   private on=true;
   private randomState=9217;
   private emissionClock=0;
+  private dustClock=0;
   time=0;
   density=1;
   constructor(budget=VFX.particleBudget){
@@ -37,7 +38,7 @@ export class EffectPool {
     p.rotation=config.rotation??0;p.spin=config.spin??0;p.priority=config.priority??1;return true;
   }
   update(dt:number,view?:EffectView){
-    if(!this.on)return;this.time+=dt;this.emissionClock+=dt;
+    if(!this.on)return;this.time+=dt;this.emissionClock+=dt;this.dustClock+=dt;
     for(let i=0;i<this.particles.length;i++){
       const p=this.particles[i];if(!p.active)continue;
       p.life-=dt;if(p.kind!=='arc'){p.x+=p.vx*dt;p.y+=p.vy*dt;}p.size+=p.growth*dt;p.rotation+=p.spin*dt;
@@ -62,6 +63,10 @@ export class EffectPool {
       }
       if(explosion||collection||e.type==='shield'||e.weapon==='rail'||e.weapon==='emp')this.spawn({kind:'ring',x:e.x,y:e.y,life:explosion?.38:.23,size:2,growth:(e.radius??(collection?15:30))/(explosion?.38:.23),color,opacity:.8,priority:2},view);
     }
+  }
+  ambient(asteroids:GameModel['asteroids'],view:EffectView){
+    if(!this.on||this.dustClock<.8)return;this.dustClock%=.8;let emitted=0;
+    for(const a of asteroids)if(a.motion&&this.visible(a.x,a.y,view,0)){this.spawn({kind:'debris',x:a.x-a.vx*3,y:a.y-a.vy*3,vx:a.vx*.15,vy:a.vy*.15,life:.7,size:.8,color:0x8a9ca5,opacity:.25,priority:0},view);if(++emitted>=3)break;}
   }
   continuous(mining:GameModel['miningLinks'],bullets:Bullet[],view:EffectView){
     if(!this.on||this.emissionClock<.05)return;this.emissionClock%=.05;

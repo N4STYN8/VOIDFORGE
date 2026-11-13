@@ -1,5 +1,5 @@
-import { ensureAsteroidGeometry, type Asteroid } from './mining.ts';
-import { containsPoint, type Vertex } from './asteroidGeometry.ts';
+import { ensureAsteroidGeometry,asteroidLocal, type Asteroid } from './mining.ts';
+import { containsPoint,segmentPolygonHit, type Vertex } from './asteroidGeometry.ts';
 export function clearLineOfSight(start: Vertex, end: Vertex, asteroids: Asteroid[]) {
   const dx = end.x - start.x, dy = end.y - start.y, lengthSquared = dx * dx + dy * dy;
   if (lengthSquared < 1e-8) return true;
@@ -7,18 +7,19 @@ export function clearLineOfSight(start: Vertex, end: Vertex, asteroids: Asteroid
     const t = Math.max(0, Math.min(1, ((asteroid.x - start.x) * dx + (asteroid.y - start.y) * dy) / lengthSquared));
     if ((start.x + dx * t - asteroid.x) ** 2 + (start.y + dy * t - asteroid.y) ** 2 > asteroid.radius ** 2) continue;
     const vertices = ensureAsteroidGeometry(asteroid).vertices;
-    const local = { x: start.x - asteroid.x, y: start.y - asteroid.y };
-    if (containsPoint(local, vertices)) return false;
-    for (let i = 0; i < vertices.length; i++) {
-      const a = vertices[i], b = vertices[(i + 1) % vertices.length], ex = b.x - a.x, ey = b.y - a.y;
-      const cross = dx * ey - dy * ex;
-      if (Math.abs(cross) < 1e-9) continue;
-      const ax = a.x - local.x, ay = a.y - local.y;
-      const hit = (ax * ey - ay * ex) / cross, u = (ax * dy - ay * dx) / cross;
-      if (hit > 0 && hit < 1 && u >= 0 && u <= 1) return false;
-    }
+    const local=asteroidLocal(asteroid,start);
+    if(containsPoint(local,vertices)||segmentPolygonHit(ensureAsteroidGeometry(asteroid),local,asteroidLocal(asteroid,end)))return false;
   }
   return true;
+}
+
+/** Existing flight behavior receives a local steering angle around moving rocks. */
+export function avoidMovingOre(start:Vertex,angle:number,asteroids:Asteroid[],radius:number){
+ const ux=Math.cos(angle),uy=Math.sin(angle),look=110+radius;let nearest=Infinity,turn=0;
+ for(const rock of asteroids){if(!rock.motion&&Math.hypot(rock.vx,rock.vy)<.2)continue;const dx=rock.x+rock.vx*.4-start.x,dy=rock.y+rock.vy*.4-start.y,along=dx*ux+dy*uy;
+  if(along<=0||along>look||along>=nearest)continue;const side=dx*uy-dy*ux;if(Math.abs(side)>rock.radius+radius+18)continue;nearest=along;turn=side>=0?.8:-.8;
+ }
+ return angle+turn;
 }
 
 export type EnemyState = 'patrol' | 'investigate' | 'chase' | 'attack' | 'strafe' | 'retreat' | 'reposition' | 'defend' | 'return';

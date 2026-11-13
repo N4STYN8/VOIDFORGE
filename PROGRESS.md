@@ -1,5 +1,14 @@
 # Progress
 
+## Latest — moving asteroid belts and gentle ambient drift
+- Seeded static, drifting, elliptical orbital and looping figure-eight flowing belts. Shared motion is analytical in saved game time; individual bounded variation and slow independent rotation keep formations cohesive.
+- About 20% of eligible non-belt rocks have sustained 1.5–3.5 units/s drift; starter deposits/base approaches stay protected. Moving belt speeds are configurable (large 2–8, small 5–12 parameter ranges).
+- Mining/deformation, swept projectiles, visibility and ship contacts use rotation-aware local coordinates. Drops inherit half rock velocity and remain tractor-collectible. Enemy movement/patrols locally steer around moving rocks; rich moving groups raise regional threat.
+- Streaming inversely queries belt motion, filters current-space actors, deduplicates IDs, prioritizes nearby rocks under budget and retains sparse mining/contact overrides. Cached source chunks and a two-second activation cadence avoid distant physics simulation.
+- Regeneration preserves parent belt identity and joins its current motion at safe offscreen locations. Optional v1 metadata stores belt definitions/epoch, per-rock offsets/rotation and drop velocity; old worlds start motion at their saved epoch without position jumps.
+- 114 tests pass; production build passes. Browser stress: 296 moving rocks, 36 enemies and 33-module mining/combat ship measured ~60 FPS (maximum observed frame ~26 ms), with no runtime errors. Reload preserved elapsed motion. A second two-hour world with 16 belts, 683 active rocks (497 belt members), 36 enemies and the same ship also measured ~60 FPS (max observed frame ~32 ms).
+- Next: human playtest of belt pacing/streaming and resource-rich patrol pressure. Boss encounter content remains queued; no new boss system was introduced.
+
 ## Branch merge note (2026-11-13)
 - The pixel-art, enemy-class, AI, danger-region, boss and sound work below was rebuilt on top of main's five-level modules, level-5 abilities, renewable asteroid fields and regional enemy population. 128 tests pass (main's 103 plus the branch's, with one new integration test); build passes; browser checked an old save loading, a fresh world, a boss fight in an extreme region and the outfitter, with no runtime errors.
 - Bosses now return on main's ledger cooldown (20-30 minutes); their territory is safer in between and repeat kills pay half the reward.
