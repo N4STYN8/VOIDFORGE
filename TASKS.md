@@ -1,5 +1,14 @@
 # Tasks
 
+## HUD, navigation and fleet — built, needs play
+- [x] HUD restyle, alarms, collapsible menu/help and wide-screen scaling
+- [x] Radar minimap with three ranges; compass strip with markers
+- [x] Player map markers (add/remove on the sector map, saved)
+- [x] Multiple ships: buy, rename, hangar, switch at a station; cargo unloaded on switch
+- [x] 179 tests/build and browser checks at 1024x768 and 2000x1125
+- [ ] Human play: HUD size on real monitors, ship price, whether hangar ships should be tied to the station they were left at
+- [ ] Next: per-ship hull sprite or colour so fleet ships look different
+
 ## Moving belts — completed
 - [x] Reusable seeded drifting, elliptical orbital, flowing and static motion definitions
 - [x] Gentle minority ambient drift, cohesive individual variation and independent rotation

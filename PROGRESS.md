@@ -122,6 +122,15 @@
 - Browser checks: 33-module ship with eight reactors, search using actual keyboard input, three panels, upgrade comparisons, HUD expansion, Shift burst, effects toggle and volume control; layouts inspected at 1440×1000, 1366×768, 1024×768 and 900×650. No runtime errors.
 - Heavy simultaneous combat/mining/tractor fixture (~245 active ore, eight enemies, seven weapons) measured ~60 FPS in headless Canvas. Software WebGL measured ~35 FPS, motivating the default Canvas renderer and viewport-sized background.
 
+## HUD, navigation and fleet
+- HUD restyled: larger readable vitals with segmented bars, low-hull and high-heat alarms, ship name and fleet count in the header, collapsible session menu and controls help, and interface scaling on wide screens (1.25x from 1700 px, 1.6x from 2300 px).
+- Radar minimap (bottom right, DOM canvas): north-up and centred on the ship with three ranges (wheel or +/-), showing explored space, asteroids, drops, enemies, outposts and markers pinned to the rim. Click opens the sector map.
+- Compass strip (top centre): cardinal points slide with the ship's heading; bases, outposts, boss sites, hordes and player markers sit at their bearing and the one nearest dead ahead is named with its distance.
+- Map markers: click the sector map to drop a numbered marker (up to 12), click it again to remove it. Saved with the world.
+- Fleet: extra ships are bought at a station from stored minerals (each costs 60% more than the last). One ship flies; the others wait in the hangar with their own core level, modules and hull damage. Switching happens in the outfitter and unloads carried cargo to station storage first. Ships can be renamed.
+- Engine modules show exhaust flames under thrust; the nebula backdrop is slightly stronger.
+- 179 tests (10 new in `tests/fleet.test.ts`) and build pass. Browser: buy, rename, switch, markers, radar, compass and layouts at 1024x768 and 2000x1125; an older save loaded unchanged. Not played by a human; ship price and marker limit are first guesses.
+
 ## Publishing complete
 - Public source: https://github.com/N4STYN8/VOIDFORGE
 - Live game: https://n4styn8.github.io/VOIDFORGE/

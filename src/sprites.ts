@@ -88,7 +88,7 @@ export function paintBackdrop(seed: number) {
   n.fillStyle = '#050911'; n.fillRect(0, 0, 512, 512);
   n.globalCompositeOperation = 'lighter';
   for (let i = 0; i < 26; i++) {
-    const x = random() * 512, y = random() * 512, radius = 60 + random() * 150, color = palette[i % palette.length], alpha = 0.07 + random() * 0.13;
+    const x = random() * 512, y = random() * 512, radius = 60 + random() * 150, color = palette[i % palette.length], alpha = 0.1 + random() * 0.17;
     wrapped(512, x, y, radius, (px, py) => cloud(n, px, py, radius, color, alpha));
   }
   n.globalCompositeOperation = 'source-over';
