@@ -6,7 +6,7 @@ import { outfitterMarkup } from './outfitter.ts';
 import { EffectPool } from './effects.ts';
 import { drawParticles, drawEnergyBeam, drawProjectile, drawEmp } from './effectsRender.ts';
 import { GameModel } from './model.ts';
-import { cellOf, cellCenter, bounds as outpostBounds } from './outposts.ts';
+import { cellOf, cellCenter, bounds as outpostBounds, outpostStats, storedTotal, type Outpost } from './outposts.ts';
 import { WORLD, SHIP, RESOURCES, ENEMIES, ENEMY_AI, OUTPOST, STRUCTURES, type StructureKind, type Resource, EXPLORATION, MODULES, BUILD_GRID, equipment, upgradeCost, statsLabel, type EquipmentKind, type ModuleKind } from './data.ts';
 import './style.css';
 import { hashSeed } from './world.ts';
@@ -15,7 +15,7 @@ import { GameAudio } from './audio.ts';
 import { drawExplorationMap } from './map.ts';
 import { ensureAsteroidGeometry } from './mining.ts';
 import { drawModule } from './visuals.ts';
-import { paintBackdrop, paintAsteroid, paintStation, paintEnemy, paintOutpost, paintStructureIcon, crispModule, mix, ASTEROID_SPRITE, ENEMY_SPRITE, STATION_SPRITE } from './sprites.ts';
+import { paintBackdrop, paintAsteroid, paintStation, paintEnemy, paintOutpost, paintStructureIcon, paintTurretHead, crispModule, mix, ASTEROID_SPRITE, ENEMY_SPRITE, STATION_SPRITE } from './sprites.ts';
 class SpaceScene extends Phaser.Scene {
   private effects = new EffectPool();
   private saveElapsed = 0;
@@ -70,6 +70,8 @@ class SpaceScene extends Phaser.Scene {
   private structureIcons = new Map<StructureKind, string>();
   private gridGraphics!: Phaser.GameObjects.Graphics; private buildGhost!: Phaser.GameObjects.Image;
   private outpostSprites = new Map<number, { image: Phaser.GameObjects.Image; revision: number }>();
+  private turretSprites: Phaser.GameObjects.Image[] = []; private turretIndex = 0;
+  private outpostPanel = document.createElement('section'); private outpostPanelContent = ''; private panelOutpost?: Outpost;
   private hordeBannerContent = '';
   private bossBarContent = '';
   private status = document.getElementById('status')!;
@@ -125,9 +127,17 @@ class SpaceScene extends Phaser.Scene {
       if (button.dataset.buildClose) this.buildMode = false;
       button.blur(); this.renderBuildPanel();
     });
+    this.outpostPanel.id = 'outpost-panel'; this.outpostPanel.hidden = true; document.body.append(this.outpostPanel);
+    this.outpostPanel.addEventListener('pointerdown', event => event.stopPropagation());
+    this.outpostPanel.addEventListener('click', event => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button'), outpost = this.panelOutpost; if (!button || !outpost) return;
+      const moved = button.dataset.outpost === 'deposit' ? this.model.depositToOutpost(outpost) : this.model.withdrawFromOutpost(outpost);
+      this.audio.play(moved ? 'collect' : 'fail'); button.blur(); this.renderOutpostPanel();
+    });
     this.buildToggle.id = 'build-toggle'; this.buildToggle.hidden = true; this.buildToggle.textContent = `Build mode · ${OUTPOST.key}`; document.body.append(this.buildToggle);
     this.buildToggle.addEventListener('pointerdown', event => event.stopPropagation());
     this.buildToggle.addEventListener('click', () => { this.toggleBuildMode(); this.buildToggle.blur(); });
+    for (const kind of Object.keys(STRUCTURES) as StructureKind[]) if (STRUCTURES[kind].turret) this.textures.addCanvas(`turret-${kind}`, paintTurretHead(kind))!.setFilter(Phaser.Textures.FilterMode.NEAREST);
     for (const kind of Object.keys(STRUCTURES) as StructureKind[]) { const icon = paintStructureIcon(kind); this.structureIcons.set(kind, icon.toDataURL()); this.textures.addCanvas(`structure-${kind}`, icon)!.setFilter(Phaser.Textures.FilterMode.NEAREST); }
     this.hordeBanner.id = 'horde-banner'; this.hordeBanner.hidden = true; this.hordeBanner.setAttribute('role', 'alert'); document.body.append(this.hordeBanner);
     this.builder.id = 'builder'; this.builder.hidden = true;
@@ -311,7 +321,7 @@ class SpaceScene extends Phaser.Scene {
     const banner=warning>0?`<strong>ALERT</strong><span>HORDE INBOUND · ${Math.ceil(warning)}</span><small>Fight, or dock at a station to lose them</small>`:hunting?`<strong>HORDE</strong><span>${hunting} of ${Math.max(hunting,this.model.horde.total)} hostiles left</span>`:'';
     if(banner!==this.hordeBannerContent){this.hordeBanner.innerHTML=banner;this.hordeBannerContent=banner;}
     this.hordeBanner.hidden=!alert||this.building||this.mapOpen;this.hordeBanner.classList.toggle('boss-below',Boolean(boss));
-    this.renderBuildPanel();
+    this.renderBuildPanel(); this.renderOutpostPanel();
     document.body.classList.toggle('horde-alert',alert);document.body.classList.toggle('horde-warning',alert&&warning>0);
     }
     this.status.textContent = this.paused ? 'PAUSED — Press Esc to resume' : this.model.message;
@@ -363,12 +373,29 @@ class SpaceScene extends Phaser.Scene {
     const items = (Object.keys(STRUCTURES) as StructureKind[]).map(kind => {
       const def = STRUCTURES[kind], price = this.model.structureCost(kind), can = ores.every(ore => this.model.cargo[ore] >= price[ore]);
       const cost = ores.filter(ore => price[ore] > 0).map(ore => `<i class="${this.model.cargo[ore] >= price[ore] ? 'have' : 'lack'}">${price[ore]} ${ore}</i>`).join(' + ');
-      return `<button data-structure="${kind}" aria-pressed="${kind === this.buildKind}" class="${can ? 'affordable' : 'unaffordable'}" title="${def.description}"><img alt="" src="${this.structureIcons.get(kind)}"><span><b>${def.label}</b><small>${cost}</small><small>${def.health} hull · ${def.buildTime}s</small></span></button>`;
+      return `<button data-structure="${kind}" aria-pressed="${kind === this.buildKind}" class="${can ? 'affordable' : 'unaffordable'}" title="${def.description}"><img alt="" src="${this.structureIcons.get(kind)}"><span><b>${def.label}</b><small>${cost}</small></span></button>`;
     }).join('');
     const carried = ores.filter(ore => this.model.cargo[ore] > 0).map(ore => `${this.model.cargo[ore]} ${ore}`).join(' · ') || 'empty';
-    const status = this.buildHover ? `<p class="build-status blocked">${this.buildHover}</p>` : `<p class="build-status ready">Left click to build ${STRUCTURES[this.buildKind].label}.</p>`;
+    const chosen = STRUCTURES[this.buildKind], turret = chosen.turret;
+    const facts = [`${chosen.health} hull`, `${chosen.buildTime}s build`, chosen.generation ? `+${chosen.generation} power/s` : '', chosen.energyCapacity ? `+${chosen.energyCapacity} battery` : '', chosen.storage ? `+${chosen.storage} storage` : '', turret ? `${turret.damage} dmg every ${turret.cooldown}s · range ${turret.range} · ${turret.energy} energy/shot` : ''].filter(Boolean).join(' · ');
+    const status = `<p class="build-facts"><b>${chosen.label}</b> — ${chosen.description}<br>${facts}</p>` + (this.buildHover ? `<p class="build-status blocked">${this.buildHover}</p>` : `<p class="build-status ready">Left click to build ${chosen.label}.</p>`);
     const html = `<header><div><small>BUILD MODULE · LEVEL ${builder.level}</small><h2>Build Mode</h2></div><button data-build-close="true">Close · ${OUTPOST.key}</button></header><p class="build-cargo">Carried cargo: ${carried}</p><div class="build-catalog">${items}</div>${status}<p class="build-stats">Range ${builder.range} · Speed x${builder.speed}${builder.discount ? ` · Cost -${builder.discount}%` : ''} · ${this.model.outposts.length} outpost${this.model.outposts.length === 1 ? '' : 's'}</p><p class="build-hints"><kbd>Left click</kbd> build (hold to drag walls) · <kbd>${OUTPOST.rotateKey}</kbd> rotate · <kbd>Right click</kbd> / <kbd>Esc</kbd> exit</p>`;
     if (html !== this.buildPanelContent) { this.buildPanel.innerHTML = html; this.buildPanelContent = html; }
+  }
+  /** Readout for the nearest outpost: power, battery, storage and cargo transfer. */
+  private renderOutpostPanel() {
+    const outpost = this.building || this.mapOpen || this.model.dead ? undefined : this.model.outpostNear();
+    this.panelOutpost = outpost; this.outpostPanel.hidden = !outpost;
+    if (!outpost) return;
+    const stats = outpostStats(outpost), energy = Math.floor(outpost.energy ?? 0), used = storedTotal(outpost), blocked = this.model.transferError(outpost);
+    const pct = (n: number, max: number) => (max ? Math.max(0, Math.min(100, n / max * 100)) : 0).toFixed(1);
+    const ores = (Object.keys(this.model.cargo) as Resource[]).filter(ore => (outpost.stored?.[ore] ?? 0) > 0).map(ore => `${outpost.stored![ore]} ${ore}`).join(' · ') || 'empty';
+    const html = `<header><strong>${outpost.name.toUpperCase()}</strong><span>${outpost.structures.length} blocks · ${stats.turrets} turret${stats.turrets === 1 ? '' : 's'}</span></header>
+<div class="outpost-row"><span>Power</span><b>+${stats.generation}/s</b><span>Peak turret draw</span><b class="${stats.peakDemand > stats.generation ? 'warn' : ''}">${stats.peakDemand.toFixed(1)}/s</b></div>
+<div class="outpost-meter energy"><i style="width:${pct(energy, stats.energyCapacity)}%"></i></div><small>Battery ${energy} / ${stats.energyCapacity}${outpost.shortage ? ' · <em>ENERGY SHORTAGE: turrets waiting</em>' : ''}</small>
+<div class="outpost-meter storage"><i style="width:${pct(used, stats.storageCapacity)}%"></i></div><small>Storage ${used} / ${stats.storageCapacity} · ${ores}</small>
+<footer><button data-outpost="deposit" ${blocked ? 'disabled' : ''}>Store cargo</button><button data-outpost="withdraw" ${blocked ? 'disabled' : ''}>Load cargo</button><small>${blocked ?? 'Moves as much as fits.'}</small></footer>`;
+    if (html !== this.outpostPanelContent) { this.outpostPanel.innerHTML = html; this.outpostPanelContent = html; }
   }
   /** World-aligned grids: a faint large grid always, and the fine construction grid when zoomed in or building. */
   private drawGrids(view: Phaser.Geom.Rectangle, zoom: number) {
@@ -386,7 +413,7 @@ class SpaceScene extends Phaser.Scene {
     lines(step, this.buildMode ? 0xd9a441 : 0x5f86a8, alpha);
   }
   private drawOutposts(view: Phaser.Geom.Rectangle, now: number) {
-    const g = this.graphics, seen = new Set<number>(), size = OUTPOST.cell;
+    const g = this.graphics, seen = new Set<number>(), size = OUTPOST.cell; this.turretIndex = 0;
     for (const outpost of this.model.outposts) {
       seen.add(outpost.id);
       const b = outpostBounds(outpost), inView = (b.maxX + 1) * size > view.x - 40 && b.minX * size < view.right + 40 && (b.maxY + 1) * size > view.y - 40 && b.minY * size < view.bottom + 40;
@@ -404,9 +431,16 @@ class SpaceScene extends Phaser.Scene {
       for (const s of outpost.structures) {
         const x = s.cx * size, y = s.cy * size;
         if (s.progress < 1) { g.fillStyle(0x05070c); g.fillRect(x + 1, y + size - 4, size - 2, 3); g.fillStyle(0xf2d489); g.fillRect(x + 2, y + size - 3, (size - 4) * s.progress, 1); }
-        else if (s.kind === 'outpostCore') { g.fillStyle(0xffd27a, 0.25 + Math.sin(now * 3) * 0.15); g.fillCircle(x + size / 2, y + size / 2, 4.5); }
+        else if (s.kind === 'outpostCore' || s.kind === 'reactor') { g.fillStyle(0xffd27a, 0.25 + Math.sin(now * 3 + s.id) * 0.15); g.fillCircle(x + size / 2, y + size / 2, 4.5); }
+        else if (STRUCTURES[s.kind].turret) {
+          // Rotating turret heads are pooled sprites over the baked mount.
+          const head = this.turretSprites[this.turretIndex] ?? this.add.image(0, 0, `turret-${s.kind}`).setDepth(-0.5);
+          this.turretSprites[this.turretIndex++] = head;
+          head.setVisible(true).setTexture(`turret-${s.kind}`).setPosition(x + size / 2, y + size / 2).setRotation(s.angle ?? s.rot * Math.PI / 2);
+        }
       }
     }
+    for (let i = this.turretIndex; i < this.turretSprites.length; i++) this.turretSprites[i].setVisible(false);
     for (const [id, entry] of this.outpostSprites) if (!seen.has(id)) { entry.image.destroy(); if (this.textures.exists(`outpost-${id}`)) this.textures.remove(`outpost-${id}`); this.outpostSprites.delete(id); }
   }
   private drawBuildPreview(now: number) {

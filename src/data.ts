@@ -219,13 +219,26 @@ export const OUTPOST = {
   coreLevel: 4, cell: BUILD_GRID.cellSize, radius: 14, coreSpacing: 900, baseClearance: 340, energyPerBlock: 6, awaySpeed: 0.5, awayRange: 2,
   largeGrid: 160, gridZoom: [1.15, 1.75], key: 'F', rotateKey: 'R',
   fabricator: { hpPerSecond: 25, ironPerHp: 0.08, energyPerSecond: 8 },
+  /** Turrets only run for outposts within `activeRange` of the ship; cargo moves to and from an outpost within `transferRange` of its core. */
+  activeRange: 2600, transferRange: 240, panelRange: 620, turretScan: 0.3, turretAim: 0.14,
 };
-export type StructureKind = 'outpostCore' | 'wall' | 'reinforcedWall';
-export type StructureDefinition = { label: string; description: string; cost: Record<Resource, number>; health: number; /** Seconds at construction speed 1. */ buildTime: number; color: number };
+export type StructureKind = 'outpostCore' | 'wall' | 'reinforcedWall' | 'autocannonTurret' | 'missileTurret' | 'railgunTurret' | 'reactor' | 'storage';
+/** Automatic weapon mount: `energy` is drawn from the outpost battery per shot, `turn` is rad/s. */
+export type TurretDefinition = { weapon: WeaponKind; damage: number; cooldown: number; range: number; speed: number; lifetime: number; energy: number; turn: number; splash?: number; guided?: boolean };
+export type StructureDefinition = { label: string; description: string; cost: Record<Resource, number>; health: number; /** Seconds at construction speed 1. */ buildTime: number; color: number;
+  /** Energy per second added to the outpost battery. */ generation?: number; /** Battery capacity added. */ energyCapacity?: number; /** Mineral storage added (all ores combined). */ storage?: number; turret?: TurretDefinition };
 export const STRUCTURES: Record<StructureKind, StructureDefinition> = {
-  outpostCore: { label: 'Outpost Core', description: 'Founds a new outpost and anchors every block joined to it. Place this first; other blocks must connect back to it.', cost: cost(80, 40, 10), health: 600, buildTime: 8, color: 0xd9a441 },
+  outpostCore: { label: 'Outpost Core', description: 'Founds a new outpost and anchors every block joined to it. Provides a little power, battery and storage. Place this first; other blocks must connect back to it.', cost: cost(80, 40, 10), health: 600, buildTime: 8, color: 0xd9a441, generation: 10, energyCapacity: 100, storage: 200 },
   wall: { label: 'Wall block', description: 'Basic riveted plating. Stops hostile fire. Adjacent walls join into one structure.', cost: cost(8), health: 160, buildTime: 2, color: 0x6f7c8c },
   reinforcedWall: { label: 'Reinforced wall', description: 'Cross-braced plating with more than twice the strength of a wall block.', cost: cost(14, 6), health: 380, buildTime: 3.5, color: 0x9aa9bb },
+  autocannonTurret: { label: 'Autocannon turret', description: 'Rapid-fire automatic defence at short range. Cheap on energy.', cost: cost(40, 25), health: 220, buildTime: 5, color: 0xffce70,
+    turret: { weapon: 'cannon', damage: 10, cooldown: 0.22, range: 520, speed: 700, lifetime: 0.9, energy: 2, turn: 4 } },
+  missileTurret: { label: 'Missile turret', description: 'Long-range guided missiles with a blast radius. Slow to reload.', cost: cost(55, 35, 10), health: 200, buildTime: 7, color: 0xff9766,
+    turret: { weapon: 'rocket', damage: 45, cooldown: 2.6, range: 900, speed: 330, lifetime: 3.4, energy: 14, turn: 2.5, splash: 70, guided: true } },
+  railgunTurret: { label: 'Railgun turret', description: 'Heavy precision shots. Slow to turn and hungry for energy.', cost: cost(70, 40, 20), health: 240, buildTime: 8, color: 0xd8f2ff,
+    turret: { weapon: 'rail', damage: 120, cooldown: 2.2, range: 780, speed: 2200, lifetime: 0.5, energy: 22, turn: 1.6 } },
+  reactor: { label: 'Reactor', description: 'Generates energy for turrets and adds battery capacity. Reactors combine.', cost: cost(50, 30, 12), health: 200, buildTime: 7, color: 0xffda86, generation: 30, energyCapacity: 120 },
+  storage: { label: 'Storage block', description: 'Adds mineral storage to the outpost. If it is destroyed, anything that no longer fits spills out as pickups.', cost: cost(30, 10), health: 180, buildTime: 4, color: 0xc599e8, storage: 400 },
 };
 
 export const COLLISION = { restitution: 0.3, asteroidDrag: 0.4, safeSpeed: 40, damagePerSpeed: 0.09, maxDamage: 25, damageCooldown: 0.6 };

@@ -6,7 +6,7 @@ import { freshAbility,state,tick,activate,onFire,onHit,onMiningHit,onDamageTaken
 import { dangerAt, bossSites, ChunkWorld, SeedRandom, randomWorldSeed, type WorldSnapshot } from './world.ts';
 import { segmentPolygonHit, segmentCircleHit } from './asteroidGeometry.ts';
 import { clearLineOfSight, avoidMovingOre, nextEnemyState, type EnemyState } from './enemyAI.ts';
-import { cellOf, cellCenter, structureAt, outpostFor, connectedIds, outpostCenter, outpostRadius, structureOnSegment, maxHealth, wear, NEIGHBOURS, type Outpost, type Structure } from './outposts.ts';
+import { cellOf, cellCenter, structureAt, outpostFor, connectedIds, outpostCenter, outpostRadius, structureOnSegment, maxHealth, wear, NEIGHBOURS, outpostStats, emptyStore, storedTotal, type Outpost, type Structure } from './outposts.ts';
 import { ensureAsteroidGeometry,asteroidLocal,asteroidWorld, miningImpact, mineMaterial, type Asteroid } from './mining.ts';
 export type { Asteroid } from './mining.ts';
 import type { EffectEvent } from './effectEvents.ts';
@@ -17,7 +17,7 @@ export type Point = { x: number; y: number };
 export type Input = { x: number; y: number; aim: Point; fire: boolean; mine: boolean; dock: boolean; boost?:boolean; overclock?:boolean; view?: { x: number; y: number; width: number; height: number } };
 export type Enemy = Point & { horde?: boolean; populationExempt?: boolean; mount?: Point; phase2?: boolean; phase3?: boolean; cooldown3?: number; surge?: number; surgeTimer?: number; empTimer?: number; empCharge?: number; state?: EnemyState; lastSeen?: Point; memory?: number; clock?: number; retreat?: number; retreated?: boolean; reposition?: number; sidestep?: number; stuck?: number; px?: number; py?: number; shield?: number; shieldDelay?: number; cooldown2?: number; charge?: { t: number; angle: number; weapon: number }; sx?: number; sy?: number; parent?: number; home?: Point; populationRegion?:string;populationClass?:'normal'|'elite';populationPatrol?:Point & {id:number;angle:number};rewarded?:boolean; disabledFor?: number; vx?: number; vy?: number; impactCooldown?: number; kind?: EnemyKind; squad?: number; slot?: number; patrolAngle?: number; id: number; health: number; cooldown: number; angle: number };
 export type Drop = Point & {vx?:number;vy?:number; id: number; ore: Resource; amount: number };
-export type Bullet = Point & { id: number; vx: number; vy: number; life: number; enemy: boolean; damage?: number; homing?: number; rocket?: boolean; splash?: number; weapon?: WeaponKind; level?: number; attackerId?:number; penetrating?:number; hitIds?:number[]; enhanced?:boolean; guided?:boolean; fragment?:boolean; age?:number };
+export type Bullet = Point & { id: number; vx: number; vy: number; life: number; enemy: boolean; damage?: number; homing?: number; rocket?: boolean; splash?: number; weapon?: WeaponKind; level?: number; attackerId?:number; penetrating?:number; hitIds?:number[]; enhanced?:boolean; guided?:boolean; fragment?:boolean; age?:number; /** Fired by an outpost turret: survives off screen like hostile fire. */ turret?:boolean };
 const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 export class GameModel {
@@ -102,7 +102,8 @@ export class GameModel {
     this.energy -= OUTPOST.energyPerBlock;
     const structure: Structure = { id: this.id++, kind, cx, cy, rot: ((rot % 4) + 4) % 4, level: 1, health: STRUCTURES[kind].health, progress: 0 };
     let outpost = kind === 'outpostCore' ? undefined : outpostFor(this.outposts, cx, cy);
-    if (!outpost) { outpost = { id: this.id++, name: `Outpost ${this.outposts.length + 1}`, cx, cy, structures: [], revision: 0 }; this.outposts.push(outpost); }
+    if (!outpost) { outpost = { id: this.id++, name: `Outpost ${this.outposts.length + 1}`, cx, cy, structures: [], revision: 0, energy: 0, stored: emptyStore() }; this.outposts.push(outpost); }
+    if (STRUCTURES[kind].turret) structure.angle = structure.rot * Math.PI / 2;
     outpost.structures.push(structure); outpost.revision++;
     this.message = kind === 'outpostCore' ? `${outpost.name} founded. Build outward from the core.` : `${STRUCTURES[kind].label} under construction.`;
     this.cue('build', { x: cellCenter(cx), y: cellCenter(cy) });
@@ -117,11 +118,82 @@ export class GameModel {
     outpost.structures = outpost.structures.filter(s => !lost.includes(s)); outpost.revision++;
     if (structure.kind !== 'outpostCore') { const held = connectedIds(outpost); lost.push(...outpost.structures.filter(s => !held.has(s.id))); outpost.structures = outpost.structures.filter(s => held.has(s.id)); }
     for (const s of lost) this.addBlast({ x: cellCenter(s.cx), y: cellCenter(s.cy), radius: 18, life: 0.2 });
+    this.spillOutpostOverflow(outpost);
     if (!outpost.structures.length) { this.outposts = this.outposts.filter(o => o !== outpost); this.message = `${outpost.name} has been destroyed.`; }
     this.cue('moduleLost', { x: cellCenter(structure.cx), y: cellCenter(structure.cy) });
   }
+  /** Stored minerals that no longer fit (storage lost or outpost destroyed) spill out as pickups; nothing is deleted. */
+  private spillOutpostOverflow(outpost: Outpost) {
+    const stored = outpost.stored ??= emptyStore(), capacity = outpost.structures.length ? outpostStats(outpost).storageCapacity : 0;
+    let excess = storedTotal(outpost) - capacity; if (excess <= 0) return;
+    const centre = outpostCenter(outpost);
+    (Object.keys(stored) as Resource[]).sort((a, b) => stored[b] - stored[a]).forEach((ore, i) => {
+      const amount = Math.min(stored[ore], excess); if (amount <= 0) return;
+      stored[ore] -= amount; excess -= amount; this.drops.push({ id: this.id++, x: centre.x + (i - 2) * 20, y: centre.y + 34, ore, amount });
+    });
+  }
+  /** The closest outpost whose core is within `range` of the ship. */
+  outpostNear(range: number = OUTPOST.panelRange) {
+    return this.outposts.map(outpost => ({ outpost, distance: dist(outpostCenter(outpost), this.player) })).filter(o => o.distance <= range).sort((a, b) => a.distance - b.distance)[0]?.outpost;
+  }
+  /** Why cargo cannot be moved to or from this outpost right now; undefined when it can. */
+  transferError(outpost: Outpost): string | undefined {
+    if (this.dead) return 'Ship destroyed.';
+    if (!this.outposts.includes(outpost)) return 'That outpost no longer exists.';
+    if (!outpost.structures.some(s => s.kind === 'outpostCore' && s.progress >= 1)) return 'The Outpost Core is still under construction.';
+    if (dist(outpostCenter(outpost), this.player) > OUTPOST.transferRange) return `Move within ${OUTPOST.transferRange} m of the Outpost Core to transfer cargo.`;
+  }
+  /** Moves carried cargo into outpost storage until it is full. Returns the amount moved. */
+  depositToOutpost(outpost: Outpost) {
+    const error = this.transferError(outpost); if (error) { this.message = error; return 0; }
+    const stored = outpost.stored ??= emptyStore(); let room = outpostStats(outpost).storageCapacity - storedTotal(outpost), moved = 0;
+    for (const ore of Object.keys(this.cargo) as Resource[]) { const amount = Math.max(0, Math.min(this.cargo[ore], room)); this.cargo[ore] -= amount; stored[ore] += amount; room -= amount; moved += amount; }
+    this.message = moved ? `Stored ${moved} minerals at ${outpost.name}.` : room <= 0 ? `${outpost.name} storage is full.` : 'No cargo to store.';
+    return moved;
+  }
+  /** Moves stored minerals into the ship until its hold is full. Returns the amount moved. */
+  withdrawFromOutpost(outpost: Outpost) {
+    const error = this.transferError(outpost); if (error) { this.message = error; return 0; }
+    const stored = outpost.stored ??= emptyStore(); let room = this.cargoCapacity - this.cargoUsed, moved = 0;
+    for (const ore of Object.keys(stored) as Resource[]) { const amount = Math.max(0, Math.min(stored[ore], room)); stored[ore] -= amount; this.cargo[ore] += amount; room -= amount; moved += amount; }
+    this.message = moved ? `Loaded ${moved} minerals from ${outpost.name}.` : room <= 0 ? 'Cargo hold is full.' : `${outpost.name} storage is empty.`;
+    return moved;
+  }
+  private updateTurrets(outpost: Outpost, dt: number) {
+    outpost.shortage = false;
+    for (const s of outpost.structures) {
+      const turret = STRUCTURES[s.kind].turret; if (!turret || s.progress < 1) continue;
+      const x = cellCenter(s.cx), y = cellCenter(s.cy);
+      s.cooldown = Math.max(0, (s.cooldown ?? 0) - dt); s.scan = (s.scan ?? 0) - dt; s.angle ??= s.rot * Math.PI / 2;
+      let target = s.target === undefined ? undefined : this.enemies.find(e => e.id === s.target && e.health > 0 && dist(e, { x, y }) <= turret.range);
+      if (!target && s.scan <= 0) {
+        // Look for the nearest hostile in range a few times a second rather than every frame.
+        s.scan = OUTPOST.turretScan; let best = turret.range;
+        for (const e of this.enemies) { if (e.health <= 0) continue; const d = dist(e, { x, y }); if (d <= best) { best = d; target = e; } }
+      }
+      s.target = target?.id;
+      if (!target) continue;
+      const wanted = Math.atan2(target.y - y, target.x - x), turn = Math.atan2(Math.sin(wanted - s.angle), Math.cos(wanted - s.angle));
+      s.angle += clamp(turn, -turret.turn * dt, turret.turn * dt);
+      if (Math.abs(turn) > OUTPOST.turretAim || s.cooldown > 0) continue;
+      if ((outpost.energy ?? 0) < turret.energy) { outpost.shortage = true; continue; }
+      outpost.energy = (outpost.energy ?? 0) - turret.energy; s.cooldown = turret.cooldown;
+      const muzzle = OUTPOST.cell * 0.7, bullet: Bullet = { id: this.id++, x: x + Math.cos(s.angle) * muzzle, y: y + Math.sin(s.angle) * muzzle, vx: Math.cos(s.angle) * turret.speed, vy: Math.sin(s.angle) * turret.speed, life: turret.lifetime, enemy: false, damage: turret.damage, weapon: turret.weapon, turret: true };
+      if (turret.weapon === 'rocket') bullet.rocket = true;
+      if (turret.splash) bullet.splash = turret.splash;
+      if (turret.guided) { bullet.guided = true; bullet.age = 0; }
+      this.bullets.push(bullet);
+      this.effect({ type: 'muzzle', x: bullet.x, y: bullet.y, angle: s.angle, weapon: turret.weapon, silent: true }); this.cue(turret.weapon === 'cannon' ? 'fire' : turret.weapon, { x, y });
+    }
+  }
   private updateOutposts(dt: number) {
     const builder = this.builder, p = this.player;
+    for (const outpost of this.outposts) {
+      const stats = outpostStats(outpost);
+      outpost.stored ??= emptyStore();
+      outpost.energy = Math.min(stats.energyCapacity, (outpost.energy ?? 0) + stats.generation * dt);
+      if (stats.turrets && !this.dead && dist(outpostCenter(outpost), p) < OUTPOST.activeRange) this.updateTurrets(outpost, dt); else outpost.shortage = false;
+    }
     for (const outpost of this.outposts) {
       const near = builder !== undefined && dist(outpostCenter(outpost), p) < builder.range * OUTPOST.awayRange + outpostRadius(outpost);
       for (const s of outpost.structures) {
@@ -1100,7 +1172,7 @@ export class GameModel {
         b.vx = Math.cos(heading) * speed; b.vy = Math.sin(heading) * speed;
       }
       const start = { x: b.x, y: b.y }; b.x += b.vx * dt; b.y += b.vy * dt;
-      const view = input.view ?? { x: 0, y: 0, width: WORLD.width, height: WORLD.height }, margin = b.enemy ? ENEMY_AI.shotMargin : 12;
+      const view = input.view ?? { x: 0, y: 0, width: WORLD.width, height: WORLD.height }, margin = b.enemy || b.turret ? ENEMY_AI.shotMargin : 12;
       if (b.x < view.x - margin || b.y < view.y - margin || b.x > view.x + view.width + margin || b.y > view.y + view.height + margin) { b.life = 0; continue; }
       if (b.enemy && this.outposts.length) {
         // Hostile fire is stopped by, and damages, finished outpost blocks. The player's own shots pass over them.

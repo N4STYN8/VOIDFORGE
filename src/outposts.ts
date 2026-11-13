@@ -1,11 +1,13 @@
-import { OUTPOST, STRUCTURES, type StructureKind } from './data.ts';
+import { OUTPOST, STRUCTURES, type StructureKind, type Resource } from './data.ts';
 
 // Player-built outposts: pure data and grid helpers, independent of Phaser and the DOM.
 // Structures occupy square cells of the world construction grid (OUTPOST.cell world units,
 // aligned to world coordinates 0,0), so a cell index is just floor(world / cell).
 
-export type Structure = { id: number; kind: StructureKind; cx: number; cy: number; rot: number; level: number; health: number; /** 0-1; below 1 the block is still under construction and does nothing. */ progress: number };
-export type Outpost = { id: number; name: string; /** Cell of the Outpost Core, the structural anchor. */ cx: number; cy: number; structures: Structure[]; /** Bumped whenever the outpost's appearance changes, so its baked sprite is redrawn only then. */ revision: number };
+export type Structure = { id: number; kind: StructureKind; cx: number; cy: number; rot: number; level: number; health: number; /** 0-1; below 1 the block is still under construction and does nothing. */ progress: number;
+  /** Turret state: facing (radians), seconds until it may fire, seconds until it looks for a target again, current target id. */ angle?: number; cooldown?: number; scan?: number; target?: number };
+export type Outpost = { id: number; name: string; /** Cell of the Outpost Core, the structural anchor. */ cx: number; cy: number; structures: Structure[]; /** Bumped whenever the outpost's appearance changes, so its baked sprite is redrawn only then. */ revision: number;
+  /** Battery charge shared by the outpost's turrets. */ energy?: number; /** Minerals held in the outpost's storage. */ stored?: Record<Resource, number>; /** True while a turret wanted to fire but the battery was too low. */ shortage?: boolean };
 type Point = { x: number; y: number };
 
 export const cellOf = (world: number) => Math.floor(world / OUTPOST.cell);
@@ -73,3 +75,22 @@ export function structureOnSegment(outposts: Outpost[], from: Point, to: Point) 
   }
   return undefined;
 }
+
+export type OutpostStats = { generation: number; energyCapacity: number; storageCapacity: number; /** Energy per second if every turret fired continuously. */ peakDemand: number; turrets: number };
+const statCache = new WeakMap<Outpost, { stamp: string; stats: OutpostStats }>();
+/** Power and storage totals from finished blocks; recomputed only when the outpost changes. */
+export function outpostStats(outpost: Outpost): OutpostStats {
+  const stamp = `${outpost.revision}:${outpost.structures.length}`, cached = statCache.get(outpost);
+  if (cached?.stamp === stamp) return cached.stats;
+  const stats: OutpostStats = { generation: 0, energyCapacity: 0, storageCapacity: 0, peakDemand: 0, turrets: 0 };
+  for (const s of outpost.structures) {
+    if (s.progress < 1) continue;
+    const def = STRUCTURES[s.kind];
+    stats.generation += def.generation ?? 0; stats.energyCapacity += def.energyCapacity ?? 0; stats.storageCapacity += def.storage ?? 0;
+    if (def.turret) { stats.turrets++; stats.peakDemand += def.turret.energy / def.turret.cooldown; }
+  }
+  statCache.set(outpost, { stamp, stats });
+  return stats;
+}
+export const emptyStore = (): Record<Resource, number> => ({ iron: 0, copper: 0, crystal: 0, ice: 0, radioactive: 0 });
+export const storedTotal = (outpost: Outpost) => Object.values(outpost.stored ?? {}).reduce((a, b) => a + b, 0);

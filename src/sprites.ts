@@ -1,7 +1,7 @@
 import type { Asteroid } from './model.ts';
 import { ensureAsteroidGeometry } from './mining.ts';
 import { containsPoint, type Vertex } from './asteroidGeometry.ts';
-import { RESOURCES, ENEMIES, OUTPOST, type EnemyKind, type StructureKind } from './data.ts';
+import { RESOURCES, ENEMIES, OUTPOST, STRUCTURES, type EnemyKind, type StructureKind } from './data.ts';
 import { bounds, neighbourMask, wear, type Outpost } from './outposts.ts';
 
 // Baked top-down pixel-art sprites painted with the plain Canvas 2D API.
@@ -526,7 +526,7 @@ function paintBlock(ctx: Ctx, x: number, y: number, kind: StructureKind, mask: n
   px(1, size - 2, STEEL[0], size - 2, 1); px(size - 2, 1, STEEL[0], 1, size - 2);
   const east = mask & 1, south = mask & 2, west = mask & 4, north = mask & 8, core = kind === 'outpostCore';
   // Copper pipe runs toward every joined neighbour, meeting at the centre.
-  if (!core) {
+  if (!core && kind !== 'storage') {
     if (east) px(8, 7, COPPER[1], 8, 2); if (west) px(0, 7, COPPER[1], 8, 2); if (south) px(7, 8, COPPER[1], 2, 8); if (north) px(7, 0, COPPER[1], 2, 8);
     if (east || west) px(west ? 0 : 8, 7, COPPER[2], (east && west) ? 16 : 8, 1); if (mask) px(7, 7, COPPER[0], 2, 2);
   }
@@ -549,6 +549,18 @@ function paintBlock(ctx: Ctx, x: number, y: number, kind: StructureKind, mask: n
       const d = Math.hypot(gx + 0.5, gy + 0.5), tooth = Math.round(Math.atan2(gy + 0.5, gx + 0.5) / (Math.PI / 4)) % 2 === 0;
       if (d < 3) px(8 + gx, 8 + gy, d < 1.6 ? 0xfff0c0 : 0xffb347); else if (d < 4.2) px(8 + gx, 8 + gy, STEEL[0]); else if (d < 5.4 || (d < 6.4 && tooth)) px(8 + gx, 8 + gy, gx + gy < 0 ? BRASS[3] : BRASS[1]);
     }
+  }
+  if (STRUCTURES[kind].turret) {
+    // Turret mount: a dark bearing ring; the rotating head is a separate sprite.
+    for (let gy = -6; gy <= 6; gy++) for (let gx = -6; gx <= 6; gx++) { const d = Math.hypot(gx + 0.5, gy + 0.5); if (d < 4.6) px(8 + gx, 8 + gy, STEEL[0]); else if (d < 5.8) px(8 + gx, 8 + gy, gx + gy < 0 ? BRASS[2] : BRASS[0]); }
+  } else if (kind === 'reactor') {
+    // Boiler core: glowing chamber in a brass collar with four copper feeds.
+    px(7, 2, COPPER[1], 2, 12); px(2, 7, COPPER[1], 12, 2);
+    for (let gy = -5; gy <= 5; gy++) for (let gx = -5; gx <= 5; gx++) { const d = Math.hypot(gx + 0.5, gy + 0.5); if (d < 2.2) px(8 + gx, 8 + gy, 0xfff0c0); else if (d < 3.4) px(8 + gx, 8 + gy, 0xffb347); else if (d < 4.6) px(8 + gx, 8 + gy, gx + gy < 0 ? BRASS[3] : BRASS[1]); }
+  } else if (kind === 'storage') {
+    // Strapped cargo crate with a centre hatch.
+    px(3, 3, STEEL[3], 10, 10); px(3, 3, STEEL[4], 10, 1); px(3, 12, STEEL[0], 10, 1);
+    px(5, 3, BRASS[1], 1, 10); px(10, 3, BRASS[1], 1, 10); px(6, 6, 0x7d5fa0, 4, 4); px(6, 6, 0xc599e8, 4, 1); px(7, 8, BRASS[3], 2, 1);
   }
   // Wear: cracks and scorch marks accumulate with damage.
   const random = seeded(id * 31 + 7);
@@ -573,5 +585,23 @@ export function paintOutpost(outpost: Outpost) {
 export function paintStructureIcon(kind: StructureKind) {
   const canvas = canvasOf(OUTPOST.cell), ctx = canvas.getContext('2d')!;
   paintBlock(ctx, 0, 0, kind, 0, 0, true, 1);
+  if (STRUCTURES[kind].turret) { const head = paintTurretHead(kind); ctx.drawImage(head, (OUTPOST.cell - head.width) / 2, (OUTPOST.cell - head.height) / 2); }
+  return canvas;
+}
+/** The rotating head of a turret, barrels along +x. Drawn over the baked mount and turned toward its target. */
+export function paintTurretHead(kind: StructureKind) {
+  const size = 30, c = size / 2, canvas = canvasOf(size), ctx = canvas.getContext('2d')!, px = (x: number, y: number, color: number, w = 1, h = 1) => dot(ctx, c + x, c + y, color, w, h);
+  const hub = (r: number, light: number, dark: number) => { for (let y = -r; y <= r; y++) for (let x = -r; x <= r; x++) { const d = Math.hypot(x + 0.5, y + 0.5); if (d < r - 1) px(x, y, x + y < 0 ? light : dark); else if (d < r) px(x, y, OUTLINE); } };
+  if (kind === 'autocannonTurret') {
+    for (const y of [-3, 1]) { px(1, y - 1, OUTLINE, 11, 4); px(1, y, STEEL[4], 10, 2); px(1, y, STEEL[3], 10, 1); px(10, y, BRASS[3], 1, 2); }
+    hub(5, BRASS[2], BRASS[0]); px(-1, -1, COPPER[2], 2, 2);
+  } else if (kind === 'missileTurret') {
+    px(-4, -6, OUTLINE, 13, 12); px(-3, -5, STEEL[3], 11, 10); px(-3, -5, STEEL[4], 11, 1); px(-3, 4, STEEL[1], 11, 1);
+    for (const y of [-4, 1]) for (const x of [1, 5]) { px(x, y, OUTLINE, 3, 3); px(x + 1, y + 1, 0xff9766); }
+    px(-3, -1, BRASS[2], 3, 2);
+  } else {
+    for (const y of [-3, 2]) { px(0, y - 1, OUTLINE, 14, 3); px(0, y, STEEL[4], 13, 1); px(12, y, 0xd8f2ff); }
+    px(2, -1, 0x7fd0ff, 9, 2); hub(5, STEEL[4], STEEL[2]); px(-2, -2, BRASS[2], 4, 4); px(-1, -1, 0xd8f2ff, 2, 2);
+  }
   return canvas;
 }

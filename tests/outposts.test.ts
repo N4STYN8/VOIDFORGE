@@ -2,9 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fixtureModel } from './fixtures.ts';
 import { GameModel } from '../src/model.ts';
-import { MODULES, OUTPOST, STRUCTURES, MAX_MODULE_LEVEL, type Resource } from '../src/data.ts';
+import { MODULES, OUTPOST, STRUCTURES, MAX_MODULE_LEVEL, type Resource, type StructureKind } from '../src/data.ts';
 import { ABILITIES } from '../src/abilityConfig.ts';
-import { cellOf, cellCenter, structureAt, connectedIds, neighbourMask, outpostRadius, wear } from '../src/outposts.ts';
+import { cellOf, cellCenter, structureAt, connectedIds, neighbourMask, outpostRadius, wear, outpostStats, storedTotal } from '../src/outposts.ts';
 
 const idle = { x: 0, y: 0, aim: { x: 0, y: 0 }, fire: false, mine: false, dock: false };
 const rich = { iron: 5000, copper: 5000, crystal: 5000, ice: 5000, radioactive: 5000 };
@@ -14,6 +14,7 @@ function builderShip(level = 1) {
   m.coreLevel = 5; m.modules = [{ x: 1, y: 0, kind: 'builder', level, cooldown: 0, integrity: 999 }];
   m.cargoOverride = 1e9; m.cargo = { ...rich }; m.player.x = 9000; m.player.y = 9000; m.player.vx = 0; m.player.vy = 0;
   m.update(0.01, idle); m.energy = m.maxEnergy;
+  (m as unknown as { spawnTimer: number }).spawnTimer = 1e9; m.enemies = []; m.squads = [];
   return m;
 }
 const cell = (m: GameModel, dx = 0, dy = 3) => ({ cx: cellOf(m.player.x) + dx, cy: cellOf(m.player.y) + dy });
@@ -134,4 +135,111 @@ test('the level-5 Industrial Fabricator repairs nearby blocks from carried iron 
   const low = builderShip(4), c = cell(low); low.placeStructure('outpostCore', c.cx, c.cy); for (let i = 0; i < 80; i++) low.update(0.05, idle);
   low.damageStructure(low.outposts[0], low.outposts[0].structures[0], 100); const held = low.outposts[0].structures[0].health;
   for (let i = 0; i < 40; i++) low.update(0.05, idle); assert.equal(low.outposts[0].structures[0].health, held);
+});
+
+/** A finished outpost: core at the ship's cell + (0, 3), with the listed blocks placed relative to it. */
+function fort(blocks: [number, number, StructureKind, number?][]) {
+  const m = builderShip(5), at = cell(m);
+  assert.ok(m.placeStructure('outpostCore', at.cx, at.cy));
+  for (const [dx, dy, kind, rot] of blocks) { m.energy = m.maxEnergy; assert.ok(m.placeStructure(kind, at.cx + dx, at.cy + dy, rot ?? 0), `${kind} at ${dx},${dy}: ${m.message}`); }
+  for (let i = 0; i < 160; i++) m.update(0.05, idle);
+  const outpost = m.outposts[0]; assert.ok(outpost.structures.every(s => s.progress === 1));
+  return { m, outpost, at, block: (kind: StructureKind) => outpost.structures.find(s => s.kind === kind)! };
+}
+
+test('outpost power: cores and reactors charge a battery that only finished blocks contribute to', () => {
+  const { m, outpost, at } = fort([[1, 0, 'reactor'], [-1, 0, 'autocannonTurret'], [0, 1, 'railgunTurret']]);
+  const stats = outpostStats(outpost), core = STRUCTURES.outpostCore, reactor = STRUCTURES.reactor, cannon = STRUCTURES.autocannonTurret.turret!, rail = STRUCTURES.railgunTurret.turret!;
+  assert.equal(stats.generation, core.generation! + reactor.generation!); assert.equal(stats.energyCapacity, core.energyCapacity! + reactor.energyCapacity!); assert.equal(stats.turrets, 2);
+  assert.ok(Math.abs(stats.peakDemand - (cannon.energy / cannon.cooldown + rail.energy / rail.cooldown)) < 1e-9);
+  for (let i = 0; i < 400; i++) m.update(0.05, idle);
+  assert.equal(outpost.energy, stats.energyCapacity);
+  // A block under construction adds nothing until it is finished.
+  m.energy = m.maxEnergy; assert.ok(m.placeStructure('reactor', at.cx + 2, at.cy), m.message); assert.equal(outpostStats(outpost).generation, stats.generation);
+  for (let i = 0; i < 80; i++) m.update(0.05, idle);
+  assert.equal(outpostStats(outpost).generation, stats.generation + reactor.generation!);
+});
+
+test('turrets turn toward hostiles in range, fire through the shared projectile system and kill them', () => {
+  const { m, outpost, block } = fort([[1, 0, 'reactor'], [-1, 0, 'autocannonTurret', 2]]), turret = block('autocannonTurret'), def = STRUCTURES.autocannonTurret.turret!;
+  assert.equal(turret.angle, Math.PI); m.modules = []; m.bullets = []; outpost.energy = outpostStats(outpost).energyCapacity;
+  const tx = cellCenter(turret.cx), ty = cellCenter(turret.cy);
+  // Out of range: ignored.
+  m.enemies = [{ id: 70, x: tx, y: ty - def.range - 150, health: 60, cooldown: 99, angle: 0, disabledFor: 99 }];
+  for (let i = 0; i < 20; i++) m.update(0.05, idle);
+  assert.equal(m.bullets.filter(b => b.turret).length, 0); assert.equal(turret.target, undefined);
+  // In range: it has to turn first, then fires; each shot costs battery energy.
+  m.enemies = [{ id: 71, x: tx, y: ty - 300, health: 60, cooldown: 99, angle: 0, disabledFor: 99 }];
+  // It scans a few times a second, then has to turn a quarter circle before the first shot.
+  for (let i = 0; i < 8; i++) m.update(0.05, idle);
+  assert.equal(turret.target, 71); assert.equal(m.bullets.filter(b => b.turret).length, 0); assert.notEqual(turret.angle, Math.PI);
+  let fired = false;
+  for (let i = 0; i < 60 && m.enemies.length; i++) { m.update(0.05, idle); fired ||= m.bullets.some(b => b.turret && b.weapon === 'cannon' && !b.enemy && b.damage === def.damage); }
+  assert.ok(fired); assert.ok(Math.abs(Math.atan2(Math.sin(turret.angle! + Math.PI / 2), Math.cos(turret.angle! + Math.PI / 2))) < 0.2);
+  assert.equal(m.enemies.length, 0); assert.equal(m.kills, 1);
+  // Each shot draws from the battery (with generation switched off the charge only falls).
+  m.enemies = [{ id: 72, x: tx, y: ty - 300, health: 5000, cooldown: 99, angle: 0, disabledFor: 99 }]; m.bullets = [];
+  let shots = 0; const seen = new Set<number>(); let drained = 0;
+  for (let i = 0; i < 30; i++) { outpost.energy = 50; m.update(0.05, idle); drained += 50 + outpostStats(outpost).generation * 0.05 - outpost.energy!; for (const b of m.bullets) if (b.turret && !seen.has(b.id)) { seen.add(b.id); shots++; } }
+  assert.ok(shots >= 4); assert.ok(Math.abs(drained - shots * def.energy) < 1e-6);
+});
+
+test('an energy shortage stops turrets until the battery recovers; missiles are guided and rail shots hit hard', () => {
+  const { m, outpost, block } = fort([[-1, 0, 'railgunTurret', 3], [1, 0, 'missileTurret', 3]]), rail = block('railgunTurret'), def = STRUCTURES.railgunTurret.turret!;
+  m.modules = []; m.bullets = [];
+  m.enemies = [{ id: 80, x: cellCenter(rail.cx), y: cellCenter(rail.cy) - 400, health: 5000, cooldown: 99, angle: 0, disabledFor: 999 }];
+  outpost.structures.forEach(s => { s.cooldown = 0; });
+  for (let i = 0; i < 12; i++) { outpost.energy = 0; m.update(0.05, idle); }
+  assert.equal(m.bullets.filter(b => b.turret).length, 0); assert.equal(outpost.shortage, true);
+  outpost.energy = outpostStats(outpost).energyCapacity;
+  let railShot = false, missile = false;
+  for (let i = 0; i < 80; i++) {
+    m.update(0.05, idle);
+    railShot ||= m.bullets.some(b => b.weapon === 'rail' && b.damage === def.damage);
+    missile ||= m.bullets.some(b => b.rocket === true && b.guided === true && b.splash === STRUCTURES.missileTurret.turret!.splash);
+  }
+  assert.ok(railShot); assert.ok(missile); assert.ok(m.enemies[0].health <= 5000 - def.damage);
+  // Turrets stand down when the ship is far away (no distant simulation).
+  m.bullets = []; m.player.x += OUTPOST.activeRange + 2000; outpost.structures.forEach(s => { s.cooldown = 0; });
+  for (let i = 0; i < 20; i++) m.update(0.05, idle);
+  assert.equal(m.bullets.filter(b => b.turret).length, 0);
+});
+
+test('outpost storage holds cargo within capacity, transfers both ways without loss, and spills rather than deletes', () => {
+  const { m, outpost, block } = fort([[1, 0, 'storage'], [0, 1, 'wall']]), capacity = STRUCTURES.outpostCore.storage! + STRUCTURES.storage.storage!;
+  assert.equal(outpostStats(outpost).storageCapacity, capacity);
+  const none = { iron: 0, copper: 0, crystal: 0, ice: 0, radioactive: 0 };
+  m.cargoOverride = undefined; m.cargo = { ...none, iron: 60, copper: 30, crystal: 10 }; m.drops = [];
+  const total = () => m.cargoUsed + storedTotal(outpost) + m.drops.reduce((n, d) => n + d.amount, 0), before = total();
+  // Too far: nothing moves.
+  const homeX = m.player.x; m.player.x += OUTPOST.transferRange + 400;
+  assert.equal(m.depositToOutpost(outpost), 0); assert.match(m.message, /Move within/); m.player.x = homeX;
+  assert.equal(m.depositToOutpost(outpost), 100); assert.equal(m.cargoUsed, 0);
+  assert.deepEqual(outpost.stored, { ...none, iron: 60, copper: 30, crystal: 10 }); assert.equal(total(), before);
+  // Capacity limit on the way in.
+  m.cargoOverride = 1e9; m.cargo = { ...none, iron: 5000 };
+  assert.equal(m.depositToOutpost(outpost), capacity - 100); assert.equal(storedTotal(outpost), capacity); assert.equal(m.cargo.iron, 5000 - (capacity - 100));
+  assert.equal(m.depositToOutpost(outpost), 0); assert.match(m.message, /full/);
+  // Hold limit on the way out.
+  m.cargoOverride = undefined; m.cargo = { ...none }; const all = storedTotal(outpost);
+  assert.equal(m.withdrawFromOutpost(outpost), m.cargoCapacity); assert.equal(m.cargoUsed, m.cargoCapacity); assert.equal(storedTotal(outpost), all - m.cargoCapacity);
+  // Losing the storage block spills what no longer fits as pickups; nothing vanishes.
+  m.cargo = { ...none }; m.drops = []; const held = storedTotal(outpost);
+  m.damageStructure(outpost, block('storage'), 9999);
+  assert.equal(storedTotal(outpost), STRUCTURES.outpostCore.storage!); assert.equal(m.drops.reduce((n, d) => n + d.amount, 0), held - STRUCTURES.outpostCore.storage!);
+  m.drops = []; const left = storedTotal(outpost);
+  m.damageStructure(outpost, block('outpostCore'), 9999);
+  assert.equal(m.outposts.length, 0); assert.equal(m.drops.reduce((n, d) => n + d.amount, 0), left);
+});
+
+test('battery charge, stored minerals and turret facing survive a save', () => {
+  const { m, outpost, block } = fort([[1, 0, 'storage'], [-1, 0, 'autocannonTurret', 1]]);
+  m.cargo = { iron: 40, copper: 20, crystal: 0, ice: 0, radioactive: 5 }; m.depositToOutpost(outpost); outpost.energy = 37.5; block('autocannonTurret').angle = 2.25;
+  const restored = GameModel.fromSave(JSON.parse(JSON.stringify(m.toSave()))), copy = restored.outposts[0];
+  assert.equal(copy.energy, 37.5); assert.deepEqual(copy.stored, { iron: 40, copper: 20, crystal: 0, ice: 0, radioactive: 5 });
+  assert.equal(copy.structures.find(s => s.kind === 'autocannonTurret')!.angle, 2.25); assert.deepEqual(outpostStats(copy), outpostStats(outpost));
+  // An outpost saved before power and storage existed still works.
+  const old = JSON.parse(JSON.stringify(m.toSave())); delete old.outposts[0].energy; delete old.outposts[0].stored;
+  const upgraded = GameModel.fromSave(old); upgraded.update(0.05, idle);
+  assert.ok(upgraded.outposts[0].energy! >= 0); assert.deepEqual(upgraded.outposts[0].stored, { iron: 0, copper: 0, crystal: 0, ice: 0, radioactive: 0 });
 });
