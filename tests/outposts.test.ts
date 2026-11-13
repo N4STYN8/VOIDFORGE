@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fixtureModel } from './fixtures.ts';
 import { GameModel } from '../src/model.ts';
-import { MODULES, OUTPOST, STRUCTURES, MAX_MODULE_LEVEL, type Resource, type StructureKind } from '../src/data.ts';
+import { MODULES, OUTPOST, STRUCTURES, DRONES, MAX_MODULE_LEVEL, type Resource, type StructureKind } from '../src/data.ts';
 import { ABILITIES } from '../src/abilityConfig.ts';
 import { cellOf, cellCenter, structureAt, connectedIds, neighbourMask, outpostRadius, wear, outpostStats, storedTotal } from '../src/outposts.ts';
 
@@ -242,4 +242,84 @@ test('battery charge, stored minerals and turret facing survive a save', () => {
   const old = JSON.parse(JSON.stringify(m.toSave())); delete old.outposts[0].energy; delete old.outposts[0].stored;
   const upgraded = GameModel.fromSave(old); upgraded.update(0.05, idle);
   assert.ok(upgraded.outposts[0].energy! >= 0); assert.deepEqual(upgraded.outposts[0].stored, { iron: 0, copper: 0, crystal: 0, ice: 0, radioactive: 0 });
+});
+
+const rockAt = (id: number, x: number, y: number, amount: number, ore: Resource = 'iron') => ({ id, x, y, vx: 0, vy: 0, radius: 30, ore, amount, health: amount, originalAmount: amount });
+const run = (m: GameModel, seconds: number) => { for (let i = 0; i < seconds / 0.05; i++) m.update(0.05, idle); };
+
+test('mining drones launch, mine finite ore, carry it home and never create or lose minerals', () => {
+  const { m, outpost, block } = fort([[1, 0, 'reactor'], [0, 1, 'storage'], [-1, 0, 'droneHangar']]), hangar = block('droneHangar');
+  m.cargo = { iron: 0, copper: 0, crystal: 0, ice: 0, radioactive: 0 }; m.drops = []; m.modules = [];
+  const hx = cellCenter(hangar.cx), hy = cellCenter(hangar.cy);
+  m.asteroids = [rockAt(501, hx - 220, hy, 70), rockAt(502, hx - 200, hy + 160, 45, 'copper')];
+  const inWorld = () => m.asteroids.reduce((n, a) => n + a.amount, 0) + storedTotal(outpost) + (outpost.drones ?? []).reduce((n, d) => n + d.load, 0) + m.drops.reduce((n, d) => n + d.amount, 0) + m.cargoUsed;
+  const start = inWorld(); assert.equal(start, 115);
+  run(m, 3);
+  const drones = outpost.drones!; assert.equal(drones.length, STRUCTURES.droneHangar.drones);
+  assert.ok(drones.every(d => d.hangar === hangar.id)); assert.ok(drones.some(d => d.state !== 'idle'));
+  let sawMining = false, sawReturn = false, peak = 0;
+  for (let i = 0; i < 2400 && m.asteroids.length; i++) {
+    m.update(0.05, idle); assert.equal(inWorld(), start);
+    for (const d of drones) { sawMining ||= d.state === 'mining' && Boolean(d.beam); sawReturn ||= d.state === 'returning' && d.load > 0; peak = Math.max(peak, d.load); assert.ok(d.load <= DRONES.capacity); }
+  }
+  assert.ok(sawMining); assert.ok(sawReturn); assert.equal(peak, DRONES.capacity);
+  run(m, 20);
+  // Both rocks are gone and every unit of ore is accounted for in storage (plus any rubble pickups), nothing extra.
+  assert.equal(m.asteroids.length, 0); assert.equal(inWorld(), start);
+  assert.ok(outpost.stored!.iron > 0 && outpost.stored!.copper > 0); assert.ok(storedTotal(outpost) >= 100);
+  assert.ok(drones.every(d => d.state === 'idle' && d.load === 0));
+});
+
+test('drones respect range, crowding, power and storage limits', () => {
+  const { m, outpost, block } = fort([[-1, 0, 'droneHangar'], [1, 0, 'droneHangar']]), hangar = block('droneHangar'), hx = cellCenter(hangar.cx), hy = cellCenter(hangar.cy);
+  m.modules = []; assert.equal(outpostStats(outpost).storageCapacity, STRUCTURES.outpostCore.storage);
+  // Out of range: nobody launches.
+  m.asteroids = [rockAt(601, hx - DRONES.range - 300, hy, 500)]; run(m, 4);
+  assert.equal(outpost.drones!.length, 4); assert.ok(outpost.drones!.every(d => d.state === 'idle'));
+  // One rock in range: at most perAsteroid drones work it.
+  m.asteroids = [rockAt(602, hx - 200, hy, 5000)]; let most = 0;
+  for (let i = 0; i < 200; i++) { m.update(0.05, idle); most = Math.max(most, outpost.drones!.filter(d => d.target === 602).length); }
+  assert.equal(most, DRONES.perAsteroid);
+  // No battery: launches wait and the shortage is flagged.
+  const idleNow = () => outpost.drones!.filter(d => d.state === 'idle').length;
+  run(m, 60); outpost.drones!.forEach(d => { d.state = 'idle'; d.target = undefined; d.load = 0; d.ore = undefined; d.timer = 0; });
+  outpost.stored = { iron: 0, copper: 0, crystal: 0, ice: 0, radioactive: 0 };
+  for (let i = 0; i < 20; i++) { outpost.energy = 0; m.update(0.05, idle); }
+  assert.equal(idleNow(), 4); assert.equal(outpost.shortage, true);
+  // Full storage: drones stay parked, and a loaded drone waits at the hangar instead of dumping its load.
+  outpost.energy = 100; outpost.stored = { iron: STRUCTURES.outpostCore.storage!, copper: 0, crystal: 0, ice: 0, radioactive: 0 }; run(m, 3); assert.equal(idleNow(), 4);
+  const d = outpost.drones![0]; d.state = 'returning'; d.load = 9; d.ore = 'iron'; run(m, 3);
+  assert.equal(d.load, 9); assert.equal(d.state, 'returning'); assert.equal(storedTotal(outpost), STRUCTURES.outpostCore.storage);
+  outpost.stored.iron -= 50; run(m, 1); assert.equal(d.load, 0); assert.equal(outpost.stored.iron, STRUCTURES.outpostCore.storage! - 41);
+});
+
+test('losing a hangar releases what its drones carried; drones and their cargo survive a save', () => {
+  const { m, outpost, block } = fort([[0, 1, 'storage'], [-1, 0, 'droneHangar']]), hangar = block('droneHangar'), hx = cellCenter(hangar.cx), hy = cellCenter(hangar.cy);
+  m.modules = []; m.drops = []; m.asteroids = [rockAt(701, hx - 180, hy, 400, 'crystal')];
+  for (let i = 0; i < 400 && !outpost.drones?.some(d => d.load >= 6); i++) m.update(0.05, idle);
+  const carried = outpost.drones!.reduce((n, d) => n + d.load, 0); assert.ok(carried >= 6);
+  const restored = GameModel.fromSave(JSON.parse(JSON.stringify(m.toSave())));
+  assert.deepEqual(restored.outposts[0].drones, outpost.drones); assert.equal(restored.outposts[0].drones!.reduce((n, d) => n + d.load, 0), carried);
+  m.damageStructure(outpost, hangar, 9999);
+  assert.equal(outpost.drones!.length, 0); assert.equal(m.drops.filter(d => d.ore === 'crystal').reduce((n, d) => n + d.amount, 0), carried);
+});
+
+test('docking at an outpost Docking station unloads cargo and repairs from outpost minerals', () => {
+  const { m, outpost, block } = fort([[1, 0, 'storage'], [0, 1, 'wall'], [0, 2, 'wall'], [0, 3, 'dockingStation']]), dock = block('dockingStation'), none = { iron: 0, copper: 0, crystal: 0, ice: 0, radioactive: 0 };
+  m.modules = []; m.cargoOverride = undefined;
+  const dockInput = { ...idle, dock: true }, pad = { x: cellCenter(dock.cx) + 40, y: cellCenter(dock.cy) + 40 };
+  // Nowhere near: the usual hint, nothing moves.
+  m.player.x = pad.x + 2000; m.cargo = { ...none, iron: 30 }; m.update(0.05, dockInput);
+  assert.match(m.message, /Docking station/); assert.equal(m.cargo.iron, 30); assert.equal(m.dockAt(), undefined);
+  // At the pad (well outside the core's own transfer range): cargo is stored and the hull is repaired from outpost stock.
+  m.player.x = pad.x; m.player.y = pad.y; m.update(0.05, idle); assert.ok(Math.hypot(pad.x - cellCenter(outpost.cx), pad.y - cellCenter(outpost.cy)) < 400); assert.equal(m.dockAt(), outpost);
+  outpost.stored = { ...none, iron: 100 }; m.player.health = m.maxHealth - 50; const cost = m.repairCost.iron; assert.ok(cost > 0);
+  m.update(0.05, dockInput);
+  assert.equal(m.cargo.iron, 0); assert.equal(m.player.health, m.maxHealth); assert.equal(outpost.stored.iron, 100 + 30 - cost); assert.match(m.message, /repaired/);
+  // Not enough minerals: cargo is still stored, but no free repair.
+  outpost.stored = { ...none }; m.player.health = m.maxHealth - 80; m.cargo = { ...none, copper: 5 }; const hurt = m.player.health;
+  m.update(0.05, dockInput);
+  assert.equal(m.player.health, hurt); assert.equal(outpost.stored.copper, 5); assert.equal(m.cargo.copper, 0); assert.match(m.message, /Not enough minerals/);
+  // An unfinished docking station does nothing.
+  dock.progress = 0.5; assert.equal(m.dockAt(), undefined);
 });

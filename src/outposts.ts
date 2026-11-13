@@ -7,7 +7,9 @@ import { OUTPOST, STRUCTURES, type StructureKind, type Resource } from './data.t
 export type Structure = { id: number; kind: StructureKind; cx: number; cy: number; rot: number; level: number; health: number; /** 0-1; below 1 the block is still under construction and does nothing. */ progress: number;
   /** Turret state: facing (radians), seconds until it may fire, seconds until it looks for a target again, current target id. */ angle?: number; cooldown?: number; scan?: number; target?: number };
 export type Outpost = { id: number; name: string; /** Cell of the Outpost Core, the structural anchor. */ cx: number; cy: number; structures: Structure[]; /** Bumped whenever the outpost's appearance changes, so its baked sprite is redrawn only then. */ revision: number;
-  /** Battery charge shared by the outpost's turrets. */ energy?: number; /** Minerals held in the outpost's storage. */ stored?: Record<Resource, number>; /** True while a turret wanted to fire but the battery was too low. */ shortage?: boolean };
+  /** Battery charge shared by the outpost's turrets. */ energy?: number; /** Minerals held in the outpost's storage. */ stored?: Record<Resource, number>; /** True while a turret wanted to fire but the battery was too low. */ shortage?: boolean; drones?: Drone[] };
+/** A mining drone. `hangar` is the id of its Drone Hangar block; it carries `load` units of a single `ore`. */
+export type Drone = { id: number; hangar: number; x: number; y: number; angle: number; state: 'idle' | 'outbound' | 'mining' | 'returning'; target?: number; ore?: Resource; load: number; timer: number; /** Where its mining beam currently touches the rock. */ beam?: Point };
 type Point = { x: number; y: number };
 
 export const cellOf = (world: number) => Math.floor(world / OUTPOST.cell);

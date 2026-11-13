@@ -104,7 +104,8 @@
 - [x] Phase 3: Outpost Core, wall, reinforced wall, visual connections, construction time, damage, connectivity, save/load
 - [x] Phase 4: autocannon/missile/railgun turrets, reactors and battery, storage blocks and cargo transfer
 - [ ] Phase 4 leftovers from the building list: shield generator, cooling unit, radar tower
-- [ ] Phase 5: mining drones and ship-to-outpost resource transfer (docking station)
+- [x] Phase 5: mining drones (hangar) and docking station unload/repair
+- [ ] Phase 5 leftover: drone repair bay, drone damage from enemies
 - [ ] Phase 6: upgrade and repair stations, five-level building upgrades
 - [ ] Phase 7: enemy raids on outposts, away-from-player simulation
 - [ ] Phase 8: effects, sound, balancing, performance pass

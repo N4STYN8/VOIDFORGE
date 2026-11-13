@@ -120,3 +120,4 @@ body.build-mode #game canvas { cursor:cell; }
 #outpost-panel small { display:block; margin-top:2px; color:#b8a67a; } #outpost-panel em { font-style:normal; color:#ff8fa3; }
 #outpost-panel footer { display:flex; align-items:center; gap:6px; margin-top:6px; } #outpost-panel footer button { padding:4px 9px; font-size:10px; border-color:#94702a; background:#2a2010; color:#f2d489; white-space:nowrap; } #outpost-panel footer small { margin:0; flex:1; min-width:0; }
 body.horde-alert #outpost-panel { bottom:108px; }
+#outpost-panel .dock-hint { color:#bfeaff; }

@@ -557,6 +557,16 @@ function paintBlock(ctx: Ctx, x: number, y: number, kind: StructureKind, mask: n
     // Boiler core: glowing chamber in a brass collar with four copper feeds.
     px(7, 2, COPPER[1], 2, 12); px(2, 7, COPPER[1], 12, 2);
     for (let gy = -5; gy <= 5; gy++) for (let gx = -5; gx <= 5; gx++) { const d = Math.hypot(gx + 0.5, gy + 0.5); if (d < 2.2) px(8 + gx, 8 + gy, 0xfff0c0); else if (d < 3.4) px(8 + gx, 8 + gy, 0xffb347); else if (d < 4.6) px(8 + gx, 8 + gy, gx + gy < 0 ? BRASS[3] : BRASS[1]); }
+  } else if (kind === 'droneHangar') {
+    // Hangar bay: dark opening with hazard chevrons and two launch rails.
+    px(3, 3, STEEL[0], 10, 10); px(3, 3, BRASS[1], 10, 1); px(3, 12, BRASS[0], 10, 1);
+    for (const gx of [4, 7, 10]) { px(gx, 4, 0xd9a441); px(gx + 1, 5, 0xd9a441); }
+    px(5, 7, STEEL[3], 1, 5); px(10, 7, STEEL[3], 1, 5); px(7, 8, 0x8fd08a, 2, 2); px(7, 10, COPPER[1], 2, 2);
+  } else if (kind === 'dockingStation') {
+    // Docking pad: lit landing square with corner guide lights.
+    px(3, 3, STEEL[1], 10, 10); px(4, 4, 0x16323c, 8, 8);
+    for (const [gx, gy] of [[4, 4], [11, 4], [4, 11], [11, 11]]) px(gx, gy, 0x7fd6f2);
+    px(7, 5, 0xbfeaff, 2, 6); px(5, 7, 0xbfeaff, 6, 2); px(7, 7, 0xffffff, 2, 2);
   } else if (kind === 'storage') {
     // Strapped cargo crate with a centre hatch.
     px(3, 3, STEEL[3], 10, 10); px(3, 3, STEEL[4], 10, 1); px(3, 12, STEEL[0], 10, 1);
@@ -586,6 +596,13 @@ export function paintStructureIcon(kind: StructureKind) {
   const canvas = canvasOf(OUTPOST.cell), ctx = canvas.getContext('2d')!;
   paintBlock(ctx, 0, 0, kind, 0, 0, true, 1);
   if (STRUCTURES[kind].turret) { const head = paintTurretHead(kind); ctx.drawImage(head, (OUTPOST.cell - head.width) / 2, (OUTPOST.cell - head.height) / 2); }
+  return canvas;
+}
+/** A mining drone, nose along +x: brass hull, copper thruster and a green mining lens. */
+export function paintDrone() {
+  const size = 14, c = size / 2, canvas = canvasOf(size), ctx = canvas.getContext('2d')!, px = (x: number, y: number, color: number, w = 1, h = 1) => dot(ctx, c + x, c + y, color, w, h);
+  px(-5, -3, OUTLINE, 10, 6); px(-4, -2, BRASS[1], 8, 4); px(-4, -2, BRASS[3], 8, 1); px(-4, 1, BRASS[0], 8, 1);
+  px(-6, -1, OUTLINE, 2, 2); px(-6, -1, COPPER[2], 1, 2); px(3, -1, OUTLINE, 3, 2); px(4, -1, 0x9dffb0, 2, 2); px(-1, -4, STEEL[3], 2, 1); px(-1, 3, STEEL[3], 2, 1); px(-2, -1, STEEL[0], 3, 2);
   return canvas;
 }
 /** The rotating head of a turret, barrels along +x. Drawn over the baked mount and turned toward its target. */

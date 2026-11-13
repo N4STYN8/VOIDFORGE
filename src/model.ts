@@ -6,12 +6,12 @@ import { freshAbility,state,tick,activate,onFire,onHit,onMiningHit,onDamageTaken
 import { dangerAt, bossSites, ChunkWorld, SeedRandom, randomWorldSeed, type WorldSnapshot } from './world.ts';
 import { segmentPolygonHit, segmentCircleHit } from './asteroidGeometry.ts';
 import { clearLineOfSight, avoidMovingOre, nextEnemyState, type EnemyState } from './enemyAI.ts';
-import { cellOf, cellCenter, structureAt, outpostFor, connectedIds, outpostCenter, outpostRadius, structureOnSegment, maxHealth, wear, NEIGHBOURS, outpostStats, emptyStore, storedTotal, type Outpost, type Structure } from './outposts.ts';
+import { cellOf, cellCenter, structureAt, outpostFor, connectedIds, outpostCenter, outpostRadius, structureOnSegment, maxHealth, wear, NEIGHBOURS, outpostStats, emptyStore, storedTotal, type Outpost, type Structure, type Drone } from './outposts.ts';
 import { ensureAsteroidGeometry,asteroidLocal,asteroidWorld, miningImpact, mineMaterial, type Asteroid } from './mining.ts';
 export type { Asteroid } from './mining.ts';
 import type { EffectEvent } from './effectEvents.ts';
 import { collideAsteroid, collide, type Body } from './collisions.ts';
-import { WORLD, SHIP, WEAPONS, ENEMIES, ENEMY_AI, ENEMY_SPAWN, HORDE, OUTPOST, STRUCTURES, type StructureKind, DANGER, BOSS, HEARING, type EnemyDefinition, type EnemyWeapon, COLLISION, ORE_COMBAT, PATROL, MODULE_DURABILITY, REPAIR, MODULES, BUILD_GRID, BASES, BASE_RADIUS, EXPLORATION, RESOURCES, type EnemyKind, CORE, ROCKET, WEAPON_TYPES, SHIP_SYSTEMS, VFX, type WeaponKind, equipment, upgradeCost, type EquipmentStats, type EquipmentKind, type ModuleKind, type Resource } from './data.ts';
+import { WORLD, SHIP, WEAPONS, ENEMIES, ENEMY_AI, ENEMY_SPAWN, HORDE, OUTPOST, STRUCTURES, DRONES, type StructureKind, DANGER, BOSS, HEARING, type EnemyDefinition, type EnemyWeapon, COLLISION, ORE_COMBAT, PATROL, MODULE_DURABILITY, REPAIR, MODULES, BUILD_GRID, BASES, BASE_RADIUS, EXPLORATION, RESOURCES, type EnemyKind, CORE, ROCKET, WEAPON_TYPES, SHIP_SYSTEMS, VFX, type WeaponKind, equipment, upgradeCost, type EquipmentStats, type EquipmentKind, type ModuleKind, type Resource } from './data.ts';
 export type ShipModule = { x: number; y: number; kind: ModuleKind; level: number; cooldown: number; integrity: number; ability?:AbilityState; targetIds?: number[]; boostRemaining?:number; boostCooldown?:number };
 export type Point = { x: number; y: number };
 export type Input = { x: number; y: number; aim: Point; fire: boolean; mine: boolean; dock: boolean; boost?:boolean; overclock?:boolean; view?: { x: number; y: number; width: number; height: number } };
@@ -118,7 +118,7 @@ export class GameModel {
     outpost.structures = outpost.structures.filter(s => !lost.includes(s)); outpost.revision++;
     if (structure.kind !== 'outpostCore') { const held = connectedIds(outpost); lost.push(...outpost.structures.filter(s => !held.has(s.id))); outpost.structures = outpost.structures.filter(s => held.has(s.id)); }
     for (const s of lost) this.addBlast({ x: cellCenter(s.cx), y: cellCenter(s.cy), radius: 18, life: 0.2 });
-    this.spillOutpostOverflow(outpost);
+    this.dropOrphanDrones(outpost); this.spillOutpostOverflow(outpost);
     if (!outpost.structures.length) { this.outposts = this.outposts.filter(o => o !== outpost); this.message = `${outpost.name} has been destroyed.`; }
     this.cue('moduleLost', { x: cellCenter(structure.cx), y: cellCenter(structure.cy) });
   }
@@ -141,7 +141,7 @@ export class GameModel {
     if (this.dead) return 'Ship destroyed.';
     if (!this.outposts.includes(outpost)) return 'That outpost no longer exists.';
     if (!outpost.structures.some(s => s.kind === 'outpostCore' && s.progress >= 1)) return 'The Outpost Core is still under construction.';
-    if (dist(outpostCenter(outpost), this.player) > OUTPOST.transferRange) return `Move within ${OUTPOST.transferRange} m of the Outpost Core to transfer cargo.`;
+    if (dist(outpostCenter(outpost), this.player) > OUTPOST.transferRange && this.dockAt() !== outpost) return `Move within ${OUTPOST.transferRange} m of the Outpost Core, or to a Docking station, to transfer cargo.`;
   }
   /** Moves carried cargo into outpost storage until it is full. Returns the amount moved. */
   depositToOutpost(outpost: Outpost) {
@@ -159,8 +159,81 @@ export class GameModel {
     this.message = moved ? `Loaded ${moved} minerals from ${outpost.name}.` : room <= 0 ? 'Cargo hold is full.' : `${outpost.name} storage is empty.`;
     return moved;
   }
+  /** The outpost whose finished Docking station the ship is close enough to use, if any. */
+  dockAt(): Outpost | undefined {
+    for (const outpost of this.outposts) for (const s of outpost.structures) {
+      const range = STRUCTURES[s.kind].dock;
+      if (range && s.progress >= 1 && dist({ x: cellCenter(s.cx), y: cellCenter(s.cy) }, this.player) <= range) return outpost;
+    }
+    return undefined;
+  }
+  /** Docking (E) at an outpost: unload cargo into its storage, then repair from carried and outpost minerals if they cover the cost. */
+  dockAtOutpost(outpost: Outpost) {
+    const moved = this.depositToOutpost(outpost), stored = outpost.stored ??= emptyStore(), price = this.repairCost, ores = Object.keys(price) as Resource[];
+    const needed = ores.some(ore => price[ore] > 0);
+    if (!needed) { this.message = moved ? `Docked at ${outpost.name}: stored ${moved} minerals. No repairs needed.` : `Docked at ${outpost.name}. Nothing to unload or repair.`; return; }
+    if (ores.some(ore => this.cargo[ore] + stored[ore] < price[ore])) { this.message = `Docked at ${outpost.name}: stored ${moved} minerals. Not enough minerals here for repairs.`; return; }
+    for (const ore of ores) { const carried = Math.min(this.cargo[ore], price[ore]); this.cargo[ore] -= carried; stored[ore] -= price[ore] - carried; }
+    this.player.health = this.maxHealth; this.shield = this.maxShield;
+    for (const m of this.modules) m.integrity = this.moduleMaxIntegrity(m);
+    this.message = `Docked at ${outpost.name}: stored ${moved} minerals and repaired the ship from outpost stores.`;
+  }
+  /** Drones whose hangar is gone are lost; whatever they carried is released as pickups. */
+  private dropOrphanDrones(outpost: Outpost) {
+    const drones = outpost.drones; if (!drones?.length) return;
+    const hangars = new Set(outpost.structures.filter(s => STRUCTURES[s.kind].drones).map(s => s.id));
+    for (const d of drones) if (!hangars.has(d.hangar) && d.load > 0 && d.ore) this.releaseOre(d, d.ore, d.load);
+    outpost.drones = drones.filter(d => hangars.has(d.hangar));
+  }
+  private updateDrones(outpost: Outpost, dt: number) {
+    const drones = outpost.drones ??= [], stored = outpost.stored ??= emptyStore(), capacity = outpostStats(outpost).storageCapacity;
+    const hangars = outpost.structures.filter(s => STRUCTURES[s.kind].drones && s.progress >= 1);
+    for (const h of hangars) for (let have = drones.filter(d => d.hangar === h.id).length; have < STRUCTURES[h.kind].drones!; have++) drones.push({ id: this.id++, hangar: h.id, x: cellCenter(h.cx), y: cellCenter(h.cy), angle: 0, state: 'idle', load: 0, timer: have * 0.7 });
+    for (const d of drones) {
+      const hangar = hangars.find(h => h.id === d.hangar); if (!hangar) continue;
+      const home = { x: cellCenter(hangar.cx), y: cellCenter(hangar.cy) };
+      d.timer = Math.max(0, d.timer - dt); d.beam = undefined;
+      const fly = (to: Point, stop: number) => {
+        const gap = dist(d, to); if (gap <= stop + 0.5) return true;
+        const step = Math.min(gap - stop, DRONES.speed * dt); d.angle = Math.atan2(to.y - d.y, to.x - d.x); d.x += (to.x - d.x) / gap * step; d.y += (to.y - d.y) / gap * step;
+        return gap - step <= stop + 0.5;
+      };
+      if (d.state === 'idle') {
+        d.x = home.x; d.y = home.y;
+        if (d.timer > 0 || storedTotal(outpost) >= capacity) continue;
+        if ((outpost.energy ?? 0) < DRONES.launchEnergy) { outpost.shortage = true; continue; }
+        // Nearest rock with ore that is not already crowded by other drones.
+        let target: Asteroid | undefined, best = DRONES.range;
+        for (const a of this.asteroids) {
+          if (a.amount <= 0) continue; const gap = dist(a, home); if (gap > best) continue;
+          if (drones.filter(o => o !== d && o.target === a.id).length >= DRONES.perAsteroid) continue;
+          best = gap; target = a;
+        }
+        if (!target) { d.timer = DRONES.retry; continue; }
+        outpost.energy = (outpost.energy ?? 0) - DRONES.launchEnergy; d.target = target.id; d.state = 'outbound';
+      } else if (d.state === 'outbound' || d.state === 'mining') {
+        const rock = this.asteroids.find(a => a.id === d.target && a.amount > 0);
+        // Rock gone, drifted out of reach, or a different ore than the load already aboard: head home.
+        if (!rock || dist(rock, home) > DRONES.range * DRONES.leash || (d.load > 0 && d.ore !== rock.ore)) { d.target = undefined; d.state = 'returning'; continue; }
+        const arrived = fly(rock, rock.radius + DRONES.standoff);
+        if (d.state === 'outbound') { if (arrived) d.state = 'mining'; continue; }
+        if (!arrived) continue;
+        // The same finite extraction the ship uses: only what leaves the rock goes into the drone.
+        const impact = miningImpact(rock, d, rock), removed = mineMaterial(rock, DRONES.rate * dt, impact);
+        d.beam = impact; d.angle = Math.atan2(rock.y - d.y, rock.x - d.x);
+        if (removed > 0) { d.ore = rock.ore; d.load += removed; this.emitDebris(impact, { x: impact.x - rock.x, y: impact.y - rock.y }, RESOURCES[rock.ore].color, rock.id + rock.amount); }
+        if (rock.amount <= 0) this.destroyAsteroid(rock.id);
+        if (d.load >= DRONES.capacity || rock.amount <= 0) { d.target = undefined; d.state = 'returning'; }
+      } else if (fly(home, 2)) {
+        // Unload what fits; a full outpost leaves the drone waiting at its hangar with the rest.
+        const amount = d.ore ? Math.max(0, Math.min(d.load, capacity - storedTotal(outpost))) : 0;
+        if (d.ore && amount > 0) { stored[d.ore] += amount; d.load -= amount; }
+        if (d.load > 0) continue;
+        d.ore = undefined; d.state = 'idle'; d.timer = DRONES.recharge;
+      }
+    }
+  }
   private updateTurrets(outpost: Outpost, dt: number) {
-    outpost.shortage = false;
     for (const s of outpost.structures) {
       const turret = STRUCTURES[s.kind].turret; if (!turret || s.progress < 1) continue;
       const x = cellCenter(s.cx), y = cellCenter(s.cy);
@@ -192,7 +265,11 @@ export class GameModel {
       const stats = outpostStats(outpost);
       outpost.stored ??= emptyStore();
       outpost.energy = Math.min(stats.energyCapacity, (outpost.energy ?? 0) + stats.generation * dt);
-      if (stats.turrets && !this.dead && dist(outpostCenter(outpost), p) < OUTPOST.activeRange) this.updateTurrets(outpost, dt); else outpost.shortage = false;
+      outpost.shortage = false;
+      // Turrets and drones are simulated only for outposts near the ship.
+      if (this.dead || dist(outpostCenter(outpost), p) >= OUTPOST.activeRange) continue;
+      if (stats.turrets) this.updateTurrets(outpost, dt);
+      if (outpost.drones?.length || outpost.structures.some(s => STRUCTURES[s.kind].drones)) this.updateDrones(outpost, dt);
     }
     for (const outpost of this.outposts) {
       const near = builder !== undefined && dist(outpostCenter(outpost), p) < builder.range * OUTPOST.awayRange + outpostRadius(outpost);
@@ -980,7 +1057,7 @@ export class GameModel {
       for (const ore of Object.keys(this.cargo) as Resource[]) { this.stored[ore] += this.cargo[ore]; this.cargo[ore] = 0; }
       if (this.repairShip()) this.message = 'Cargo stored. Ship repaired; minerals paid.';
       else this.message = 'Cargo stored. Insufficient minerals for repairs; check the shop (Q).';
-    } else if (input.dock) this.message = 'Move within 220m of the green station to dock.';
+    } else if (input.dock) { const outpost = this.dockAt(); if (outpost) this.dockAtOutpost(outpost); else this.message = 'Move within 220m of the green station, or to an outpost Docking station, to dock.'; }
     const safe = this.atStation;
     // Announce when the player crosses into more dangerous space.
     const danger = this.danger;

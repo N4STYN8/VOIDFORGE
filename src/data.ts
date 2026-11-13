@@ -222,11 +222,18 @@ export const OUTPOST = {
   /** Turrets only run for outposts within `activeRange` of the ship; cargo moves to and from an outpost within `transferRange` of its core. */
   activeRange: 2600, transferRange: 240, panelRange: 620, turretScan: 0.3, turretAim: 0.14,
 };
-export type StructureKind = 'outpostCore' | 'wall' | 'reinforcedWall' | 'autocannonTurret' | 'missileTurret' | 'railgunTurret' | 'reactor' | 'storage';
+export type StructureKind = 'outpostCore' | 'wall' | 'reinforcedWall' | 'autocannonTurret' | 'missileTurret' | 'railgunTurret' | 'reactor' | 'storage' | 'droneHangar' | 'dockingStation';
+/**
+ * Mining drones. Each flies to an asteroid within `range` of its hangar, mines it through the normal
+ * finite-ore extraction at `rate` ore/s, carries up to `capacity` of one ore home and unloads into
+ * outpost storage. Launching costs `launchEnergy` from the outpost battery; `perAsteroid` limits crowding.
+ */
+export const DRONES = { speed: 95, rate: 3, capacity: 20, range: 750, leash: 1.35, launchEnergy: 4, recharge: 2, standoff: 14, perAsteroid: 2, retry: 1.5 };
 /** Automatic weapon mount: `energy` is drawn from the outpost battery per shot, `turn` is rad/s. */
 export type TurretDefinition = { weapon: WeaponKind; damage: number; cooldown: number; range: number; speed: number; lifetime: number; energy: number; turn: number; splash?: number; guided?: boolean };
 export type StructureDefinition = { label: string; description: string; cost: Record<Resource, number>; health: number; /** Seconds at construction speed 1. */ buildTime: number; color: number;
-  /** Energy per second added to the outpost battery. */ generation?: number; /** Battery capacity added. */ energyCapacity?: number; /** Mineral storage added (all ores combined). */ storage?: number; turret?: TurretDefinition };
+  /** Energy per second added to the outpost battery. */ generation?: number; /** Battery capacity added. */ energyCapacity?: number; /** Mineral storage added (all ores combined). */ storage?: number; turret?: TurretDefinition;
+  /** Mining drones this block houses. */ drones?: number; /** Radius within which the ship can dock (E) to unload and repair from outpost stores. */ dock?: number };
 export const STRUCTURES: Record<StructureKind, StructureDefinition> = {
   outpostCore: { label: 'Outpost Core', description: 'Founds a new outpost and anchors every block joined to it. Provides a little power, battery and storage. Place this first; other blocks must connect back to it.', cost: cost(80, 40, 10), health: 600, buildTime: 8, color: 0xd9a441, generation: 10, energyCapacity: 100, storage: 200 },
   wall: { label: 'Wall block', description: 'Basic riveted plating. Stops hostile fire. Adjacent walls join into one structure.', cost: cost(8), health: 160, buildTime: 2, color: 0x6f7c8c },
@@ -238,6 +245,8 @@ export const STRUCTURES: Record<StructureKind, StructureDefinition> = {
   railgunTurret: { label: 'Railgun turret', description: 'Heavy precision shots. Slow to turn and hungry for energy.', cost: cost(70, 40, 20), health: 240, buildTime: 8, color: 0xd8f2ff,
     turret: { weapon: 'rail', damage: 120, cooldown: 2.2, range: 780, speed: 2200, lifetime: 0.5, energy: 22, turn: 1.6 } },
   reactor: { label: 'Reactor', description: 'Generates energy for turrets and adds battery capacity. Reactors combine.', cost: cost(50, 30, 12), health: 200, buildTime: 7, color: 0xffda86, generation: 30, energyCapacity: 120 },
+  droneHangar: { label: 'Drone hangar', description: 'Houses two mining drones that mine nearby asteroids and bring the ore back to outpost storage. Needs battery energy to launch and free storage to unload.', cost: cost(60, 40, 15), health: 260, buildTime: 8, color: 0x8fd08a, drones: 2 },
+  dockingStation: { label: 'Docking station', description: 'Fly close and press E to unload cargo into outpost storage and repair the ship from outpost minerals.', cost: cost(50, 30, 10), health: 240, buildTime: 6, color: 0x7fd6f2, dock: 150 },
   storage: { label: 'Storage block', description: 'Adds mineral storage to the outpost. If it is destroyed, anything that no longer fits spills out as pickups.', cost: cost(30, 10), health: 180, buildTime: 4, color: 0xc599e8, storage: 400 },
 };
 

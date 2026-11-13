@@ -15,7 +15,7 @@ import { GameAudio } from './audio.ts';
 import { drawExplorationMap } from './map.ts';
 import { ensureAsteroidGeometry } from './mining.ts';
 import { drawModule } from './visuals.ts';
-import { paintBackdrop, paintAsteroid, paintStation, paintEnemy, paintOutpost, paintStructureIcon, paintTurretHead, crispModule, mix, ASTEROID_SPRITE, ENEMY_SPRITE, STATION_SPRITE } from './sprites.ts';
+import { paintBackdrop, paintAsteroid, paintStation, paintEnemy, paintOutpost, paintStructureIcon, paintTurretHead, paintDrone, crispModule, mix, ASTEROID_SPRITE, ENEMY_SPRITE, STATION_SPRITE } from './sprites.ts';
 class SpaceScene extends Phaser.Scene {
   private effects = new EffectPool();
   private saveElapsed = 0;
@@ -71,6 +71,7 @@ class SpaceScene extends Phaser.Scene {
   private gridGraphics!: Phaser.GameObjects.Graphics; private buildGhost!: Phaser.GameObjects.Image;
   private outpostSprites = new Map<number, { image: Phaser.GameObjects.Image; revision: number }>();
   private turretSprites: Phaser.GameObjects.Image[] = []; private turretIndex = 0;
+  private droneSprites: Phaser.GameObjects.Image[] = []; private droneIndex = 0;
   private outpostPanel = document.createElement('section'); private outpostPanelContent = ''; private panelOutpost?: Outpost;
   private hordeBannerContent = '';
   private bossBarContent = '';
@@ -137,6 +138,7 @@ class SpaceScene extends Phaser.Scene {
     this.buildToggle.id = 'build-toggle'; this.buildToggle.hidden = true; this.buildToggle.textContent = `Build mode · ${OUTPOST.key}`; document.body.append(this.buildToggle);
     this.buildToggle.addEventListener('pointerdown', event => event.stopPropagation());
     this.buildToggle.addEventListener('click', () => { this.toggleBuildMode(); this.buildToggle.blur(); });
+    this.textures.addCanvas('mining-drone', paintDrone())!.setFilter(Phaser.Textures.FilterMode.NEAREST);
     for (const kind of Object.keys(STRUCTURES) as StructureKind[]) if (STRUCTURES[kind].turret) this.textures.addCanvas(`turret-${kind}`, paintTurretHead(kind))!.setFilter(Phaser.Textures.FilterMode.NEAREST);
     for (const kind of Object.keys(STRUCTURES) as StructureKind[]) { const icon = paintStructureIcon(kind); this.structureIcons.set(kind, icon.toDataURL()); this.textures.addCanvas(`structure-${kind}`, icon)!.setFilter(Phaser.Textures.FilterMode.NEAREST); }
     this.hordeBanner.id = 'horde-banner'; this.hordeBanner.hidden = true; this.hordeBanner.setAttribute('role', 'alert'); document.body.append(this.hordeBanner);
@@ -377,7 +379,7 @@ class SpaceScene extends Phaser.Scene {
     }).join('');
     const carried = ores.filter(ore => this.model.cargo[ore] > 0).map(ore => `${this.model.cargo[ore]} ${ore}`).join(' · ') || 'empty';
     const chosen = STRUCTURES[this.buildKind], turret = chosen.turret;
-    const facts = [`${chosen.health} hull`, `${chosen.buildTime}s build`, chosen.generation ? `+${chosen.generation} power/s` : '', chosen.energyCapacity ? `+${chosen.energyCapacity} battery` : '', chosen.storage ? `+${chosen.storage} storage` : '', turret ? `${turret.damage} dmg every ${turret.cooldown}s · range ${turret.range} · ${turret.energy} energy/shot` : ''].filter(Boolean).join(' · ');
+    const facts = [`${chosen.health} hull`, `${chosen.buildTime}s build`, chosen.generation ? `+${chosen.generation} power/s` : '', chosen.energyCapacity ? `+${chosen.energyCapacity} battery` : '', chosen.storage ? `+${chosen.storage} storage` : '', chosen.drones ? `${chosen.drones} mining drones` : '', chosen.dock ? `dock range ${chosen.dock}` : '', turret ? `${turret.damage} dmg every ${turret.cooldown}s · range ${turret.range} · ${turret.energy} energy/shot` : ''].filter(Boolean).join(' · ');
     const status = `<p class="build-facts"><b>${chosen.label}</b> — ${chosen.description}<br>${facts}</p>` + (this.buildHover ? `<p class="build-status blocked">${this.buildHover}</p>` : `<p class="build-status ready">Left click to build ${chosen.label}.</p>`);
     const html = `<header><div><small>BUILD MODULE · LEVEL ${builder.level}</small><h2>Build Mode</h2></div><button data-build-close="true">Close · ${OUTPOST.key}</button></header><p class="build-cargo">Carried cargo: ${carried}</p><div class="build-catalog">${items}</div>${status}<p class="build-stats">Range ${builder.range} · Speed x${builder.speed}${builder.discount ? ` · Cost -${builder.discount}%` : ''} · ${this.model.outposts.length} outpost${this.model.outposts.length === 1 ? '' : 's'}</p><p class="build-hints"><kbd>Left click</kbd> build (hold to drag walls) · <kbd>${OUTPOST.rotateKey}</kbd> rotate · <kbd>Right click</kbd> / <kbd>Esc</kbd> exit</p>`;
     if (html !== this.buildPanelContent) { this.buildPanel.innerHTML = html; this.buildPanelContent = html; }
@@ -390,10 +392,13 @@ class SpaceScene extends Phaser.Scene {
     const stats = outpostStats(outpost), energy = Math.floor(outpost.energy ?? 0), used = storedTotal(outpost), blocked = this.model.transferError(outpost);
     const pct = (n: number, max: number) => (max ? Math.max(0, Math.min(100, n / max * 100)) : 0).toFixed(1);
     const ores = (Object.keys(this.model.cargo) as Resource[]).filter(ore => (outpost.stored?.[ore] ?? 0) > 0).map(ore => `${outpost.stored![ore]} ${ore}`).join(' · ') || 'empty';
+    const drones = outpost.drones ?? [], busy = (state: string) => drones.filter(d => d.state === state).length, docked = this.model.dockAt() === outpost;
+    const droneLine = drones.length ? `<small>Drones ${drones.length}: ${busy('mining')} mining · ${busy('outbound') + busy('returning')} flying · ${busy('idle')} parked${used >= stats.storageCapacity ? ' · <em>storage full</em>' : ''}</small>` : '';
+    const dockLine = docked ? `<small class="dock-hint"><kbd>E</kbd> dock: unload cargo and repair from outpost stores</small>` : '';
     const html = `<header><strong>${outpost.name.toUpperCase()}</strong><span>${outpost.structures.length} blocks · ${stats.turrets} turret${stats.turrets === 1 ? '' : 's'}</span></header>
 <div class="outpost-row"><span>Power</span><b>+${stats.generation}/s</b><span>Peak turret draw</span><b class="${stats.peakDemand > stats.generation ? 'warn' : ''}">${stats.peakDemand.toFixed(1)}/s</b></div>
 <div class="outpost-meter energy"><i style="width:${pct(energy, stats.energyCapacity)}%"></i></div><small>Battery ${energy} / ${stats.energyCapacity}${outpost.shortage ? ' · <em>ENERGY SHORTAGE: turrets waiting</em>' : ''}</small>
-<div class="outpost-meter storage"><i style="width:${pct(used, stats.storageCapacity)}%"></i></div><small>Storage ${used} / ${stats.storageCapacity} · ${ores}</small>
+<div class="outpost-meter storage"><i style="width:${pct(used, stats.storageCapacity)}%"></i></div><small>Storage ${used} / ${stats.storageCapacity} · ${ores}</small>${droneLine}${dockLine}
 <footer><button data-outpost="deposit" ${blocked ? 'disabled' : ''}>Store cargo</button><button data-outpost="withdraw" ${blocked ? 'disabled' : ''}>Load cargo</button><small>${blocked ?? 'Moves as much as fits.'}</small></footer>`;
     if (html !== this.outpostPanelContent) { this.outpostPanel.innerHTML = html; this.outpostPanelContent = html; }
   }
@@ -413,7 +418,7 @@ class SpaceScene extends Phaser.Scene {
     lines(step, this.buildMode ? 0xd9a441 : 0x5f86a8, alpha);
   }
   private drawOutposts(view: Phaser.Geom.Rectangle, now: number) {
-    const g = this.graphics, seen = new Set<number>(), size = OUTPOST.cell; this.turretIndex = 0;
+    const g = this.graphics, seen = new Set<number>(), size = OUTPOST.cell; this.turretIndex = 0; this.droneIndex = 0;
     for (const outpost of this.model.outposts) {
       seen.add(outpost.id);
       const b = outpostBounds(outpost), inView = (b.maxX + 1) * size > view.x - 40 && b.minX * size < view.right + 40 && (b.maxY + 1) * size > view.y - 40 && b.minY * size < view.bottom + 40;
@@ -440,6 +445,15 @@ class SpaceScene extends Phaser.Scene {
         }
       }
     }
+    for (const outpost of this.model.outposts) for (const d of outpost.drones ?? []) {
+      // Mining drones: pooled sprites, hidden while parked in the hangar, with a thin beam while cutting.
+      if (d.state === 'idle' || d.x < view.x - 30 || d.x > view.right + 30 || d.y < view.y - 30 || d.y > view.bottom + 30) continue;
+      const sprite = this.droneSprites[this.droneIndex] ?? this.add.image(0, 0, 'mining-drone').setDepth(0.5);
+      this.droneSprites[this.droneIndex++] = sprite; sprite.setVisible(true).setPosition(d.x, d.y).setRotation(d.angle);
+      if (d.beam) { g.lineStyle(2.5, 0x75ebc3, 0.25); g.lineBetween(d.x, d.y, d.beam.x, d.beam.y); g.lineStyle(1, 0xdfffe9, 0.6 + Math.sin(now * 30 + d.id) * 0.3); g.lineBetween(d.x, d.y, d.beam.x, d.beam.y); g.fillStyle(0xdfffe9, 0.9); g.fillRect(d.beam.x - 1, d.beam.y - 1, 2, 2); }
+      if (d.load > 0 && d.ore) { g.fillStyle(RESOURCES[d.ore].color); g.fillRect(d.x - 1, d.y - 8, 2, 2); }
+    }
+    for (let i = this.droneIndex; i < this.droneSprites.length; i++) this.droneSprites[i].setVisible(false);
     for (let i = this.turretIndex; i < this.turretSprites.length; i++) this.turretSprites[i].setVisible(false);
     for (const [id, entry] of this.outpostSprites) if (!seen.has(id)) { entry.image.destroy(); if (this.textures.exists(`outpost-${id}`)) this.textures.remove(`outpost-${id}`); this.outpostSprites.delete(id); }
   }
