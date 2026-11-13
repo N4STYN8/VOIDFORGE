@@ -13,6 +13,7 @@ import { WORLD, SHIP, RESOURCES, ENEMIES, ENEMY_AI, WAYPOINTS, OUTPOST, STRUCTUR
 import './style.css';
 import './cockpit.css';
 import './outfitter.css';
+import './map.css';
 import { hashSeed } from './world.ts';
 import { loadSavedGame, saveGame, saveText, backupSavedGame } from './persistence.ts';
 /** The save found at start-up; storage is read before the game is created because the large store is asynchronous. */
@@ -40,7 +41,9 @@ class SpaceScene extends Phaser.Scene {
   private shipSprites:Phaser.GameObjects.Image[]=[];
   private builderElapsed=0;
   private asteroidSprites: Phaser.GameObjects.Image[] = [];
-  private mapView = { zoom: 1, centerX: 0.5, centerY: 0.5 };
+  private mapFollow = true;
+  private mapPointer = false;
+  private mapView = { zoom: 8, centerX: 0.5, centerY: 0.5 };
   private audio = new GameAudio();
   private settings!:GameSettings;
   private mapOpen = false;
@@ -125,19 +128,29 @@ class SpaceScene extends Phaser.Scene {
     window.addEventListener('pointerdown', () => this.audio.unlock());
     window.addEventListener('keydown', () => this.audio.unlock());
     this.mapWindow.id = 'map-window'; this.mapWindow.hidden = true;
-    this.mapWindow.innerHTML = '<header><div><small>NAVIGATION / EXPLORED SPACE</small><h2>Sector map</h2></div><button id="close-map">Close · M / Esc</button></header><canvas width="640" height="640" aria-label="Explored space map"></canvas><p>Dark areas are unexplored · Green: active base · Amber: locked base<br>Explored space is tinted by threat: <span style="color:#7d9ab0">blue low</span> · <span style="color:#e8c45a">olive medium</span> · <span style="color:#f08a4b">rust high</span> · <span style="color:#f0527a">magenta extreme</span><br>Click the map to drop a marker (click a marker to remove it); markers show on the radar and compass.<br>Explore to discover outposts. G activates nearby locked bases · Wheel zooms · Drag pans.</p>';
+    this.mapWindow.innerHTML = '<header><div><small>NAVIGATION / LIVE TELEMETRY</small><h2>Sector chart</h2></div><button id="close-map">Close · M / Esc</button></header><div class="map-toolbar"><button data-chart="follow" aria-pressed="true">Follow ship</button><button data-chart="world">World</button><button data-chart="out" aria-label="Zoom map out">−</button><button data-chart="in" aria-label="Zoom map in">+</button></div><div class="chart-surface"><canvas width="720" height="720" aria-label="Explored space map"></canvas><span class="chart-north">N ↑</span></div><div class="map-telemetry" aria-live="off"></div><div class="map-legend"><span>● Ship</span><span>■ Active base</span><span>◇ Locked / marker</span><span>● Contact</span></div><p>WASD flies · Shift bursts · Flight stays live<br>Wheel zooms · Drag pans · Click adds/removes a marker<br>Only explored space is charted. Threat tint: blue → amber → red.</p>';
+
     document.body.append(this.mapWindow); this.mapCanvas = this.mapWindow.querySelector('canvas')!;
-    this.mapWindow.querySelector('button')!.addEventListener('click', () => { this.mapOpen = false; });
+    this.mapWindow.querySelector('#close-map')!.addEventListener('click', () => { this.setMapOpen(false); });
+    this.mapWindow.addEventListener('pointerenter',()=>{this.mapPointer=true;});
+    this.mapWindow.addEventListener('pointerleave',()=>{this.mapPointer=false;});
+    this.mapWindow.querySelectorAll<HTMLButtonElement>('[data-chart]').forEach(button=>button.addEventListener('click',()=>{
+      const action=button.dataset.chart;
+      if(action==='follow'){this.mapFollow=true;this.mapView.zoom=8;}
+      else if(action==='world'){this.mapFollow=false;this.mapView={zoom:1,centerX:.5,centerY:.5};}
+      else {this.mapView.zoom=Phaser.Math.Clamp(this.mapView.zoom*(action==='in'?1.4:1/1.4),1,24);this.clampMap();}
+      this.mapElapsed=200;button.blur();
+    }));
     // Radar minimap (bottom right) and compass strip (top centre): DOM canvases so they stay crisp and scale with the HUD.
     this.radar.id = 'nav-radar'; this.radarCanvas.width = this.radarCanvas.height = 220;
     this.radar.innerHTML = '<header><small data-radar-label>RADAR</small><span><button data-radar="in" title="Zoom radar in">+</button><button data-radar="out" title="Zoom radar out">−</button><button data-radar="map" title="Open the sector map (M)">Map · M</button></span></header>';
     this.radar.append(this.radarCanvas); document.body.append(this.radar);
     this.radar.addEventListener('pointerdown', event => event.stopPropagation());
-    this.radarCanvas.addEventListener('click', () => { this.mapOpen = true; });
+    this.radarCanvas.addEventListener('click', () => { this.setMapOpen(true); });
     this.radar.addEventListener('wheel', event => { event.preventDefault(); this.radarRange = Phaser.Math.Clamp(this.radarRange + (event.deltaY > 0 ? 1 : -1), 0, SpaceScene.RADAR_RANGES.length - 1); this.mapElapsed = 200; }, { passive: false });
     this.radar.addEventListener('click', event => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button'); if (!button) return;
-      if (button.dataset.radar === 'map') this.mapOpen = !this.mapOpen;
+      if (button.dataset.radar === 'map') this.setMapOpen(!this.mapOpen);
       else if (button.dataset.radar) this.radarRange = Phaser.Math.Clamp(this.radarRange + (button.dataset.radar === 'out' ? 1 : -1), 0, SpaceScene.RADAR_RANGES.length - 1);
       this.mapElapsed = 200; button.blur();
     });
@@ -253,6 +266,7 @@ class SpaceScene extends Phaser.Scene {
     });
     this.mapCanvas.addEventListener('wheel', event => {
       event.preventDefault();
+      this.mapFollow=false;
       const rect = this.mapCanvas.getBoundingClientRect();
       const u = (event.clientX - rect.left) / rect.width, v = (event.clientY - rect.top) / rect.height;
       const previous = this.mapView.zoom, next = Phaser.Math.Clamp(previous * Math.exp(-event.deltaY * 0.0015), 1, 24);
@@ -262,9 +276,10 @@ class SpaceScene extends Phaser.Scene {
     }, { passive: false });
     let drag: { x: number; y: number } | undefined;
     let travelled = 0;
-    this.mapCanvas.addEventListener('pointerdown', event => { drag = { x: event.clientX, y: event.clientY }; travelled = 0; this.mapCanvas.setPointerCapture(event.pointerId); });
+    this.mapCanvas.addEventListener('pointerdown', event => { if(event.button!==0)return; drag = { x: event.clientX, y: event.clientY }; travelled = 0; this.mapCanvas.setPointerCapture(event.pointerId); });
     this.mapCanvas.addEventListener('pointermove', event => {
       if (!drag) return;
+      this.mapFollow=false;
       const rect = this.mapCanvas.getBoundingClientRect(), z = this.mapView.zoom;
       this.mapView.centerX = Phaser.Math.Clamp(this.mapView.centerX - (event.clientX - drag.x) / rect.width / z, 0.5 / z, 1 - 0.5 / z);
       this.mapView.centerY = Phaser.Math.Clamp(this.mapView.centerY - (event.clientY - drag.y) / rect.height / z, 0.5 / z, 1 - 0.5 / z);
@@ -287,7 +302,7 @@ class SpaceScene extends Phaser.Scene {
     this.game.events.on('blur', () => { this.paused = true; });
   }
   update(_time: number, delta: number) {
-    if (Phaser.Input.Keyboard.JustDown(this.keys.M)) { this.mapOpen = !this.mapOpen; this.building = false; }
+    if (Phaser.Input.Keyboard.JustDown(this.keys.M)) { this.setMapOpen(!this.mapOpen); this.building = false; }
     if ((Phaser.Input.Keyboard.JustDown(this.keys.B) || Phaser.Input.Keyboard.JustDown(this.keys.Q)) && !this.mapOpen) {
       if (this.building) this.building = false;
       else if (this.model.atStation && !this.model.dead) this.building = true;
@@ -305,18 +320,18 @@ class SpaceScene extends Phaser.Scene {
     if (Phaser.Input.Keyboard.JustDown(this.keys.N)){this.audio.toggleMute();this.settings.sync();}
     if(Phaser.Input.Keyboard.JustDown(this.keys.V)){this.effects.enabled=!this.effects.enabled;this.settings.persist();}
     const beforeHull = this.model.player.health, beforeShield = this.model.shield, beforeKills = this.model.kills, beforeHits = this.model.enemyHits, beforeOreHits = this.model.oreHits;
-    if (Phaser.Input.Keyboard.JustDown(this.keys.G) && !this.paused && !this.building && !this.mapOpen && !this.settings.open) { if (this.model.unlockBase()) this.audio.play('build'); }
+    if (Phaser.Input.Keyboard.JustDown(this.keys.G) && !this.paused && !this.building && !this.settings.open) { if (this.model.unlockBase()) this.audio.play('build'); }
     const boost=Phaser.Input.Keyboard.JustDown(this.keys.SHIFT)||this.commandInput.has('boost');
     const dock = Phaser.Input.Keyboard.JustDown(this.keys.E)||this.commandInput.has('dock');
     const pointer = this.input.activePointer;
     const aim = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
     const bounds = this.cameras.main.worldView;
     if (this.buildMode && !this.paused && !this.settings.open) this.updateBuildMode(aim, pointer);
-    if (!this.paused && !this.building && !this.mapOpen && !this.settings.open) this.model.update(delta / 1000, {
+    if (!this.paused && !this.building && !this.settings.open) this.model.update(delta / 1000, {
       x: Number(this.keys.D.isDown) - Number(this.keys.A.isDown), y: Number(this.keys.S.isDown) - Number(this.keys.W.isDown),
-      aim, fire: !this.buildMode && pointer.leftButtonDown(), overclock:Phaser.Input.Keyboard.JustDown(this.keys.C)||this.commandInput.has('overclock'), boost, mine: !this.buildMode && (pointer.rightButtonDown() || this.keys.SPACE.isDown), dock, view: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+      aim, fire: !this.buildMode && !(this.mapOpen&&this.mapPointer) && pointer.leftButtonDown(), overclock:Phaser.Input.Keyboard.JustDown(this.keys.C)||this.commandInput.has('overclock'), boost, mine: !this.buildMode && ((!(this.mapOpen&&this.mapPointer)&&pointer.rightButtonDown()) || this.keys.SPACE.isDown), dock, view: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
     });
-    if (!this.paused && !this.building && !this.mapOpen && !this.settings.open) {
+    if (!this.paused && !this.building && !this.settings.open) {
       for(const event of this.model.effects){if(event.type==='cue'&&event.cue)this.audio.play(event.cue,event.pitch,event.volume);else if(event.type==='muzzle'&&event.weapon&&!event.silent)this.audio.playWeapon(event.weapon,event.level===5?.8:1);if(event.type==='arc')this.audio.play('pulse');if(event.type==='collection')this.audio.play('collect');if(event.type==='shield')this.audio.play('shield');}
       // Hull hits crunch, shield hits ring (the shield cue comes from its own event), and losing the ship has its own sound.
       if (this.model.dead && beforeHull > 0) this.audio.play('death'); else if (this.model.player.health < beforeHull) this.audio.play('hull');
@@ -325,10 +340,10 @@ class SpaceScene extends Phaser.Scene {
       if (this.model.kills > beforeKills) this.audio.play('explosion');
     }
     this.commandInput.clear();
-    const audible=!this.paused&&!this.building&&!this.mapOpen&&!this.settings.open&&!this.model.dead;
+    const audible=!this.paused&&!this.building&&!this.settings.open&&!this.model.dead;
     this.audio.setLoop('mine',audible?this.model.miningLinks.length:0);this.audio.setLoop('tractor',audible?this.model.tractorLinks.length:0);
     for (const b of this.model.bullets) this.lastBullet = Math.max(this.lastBullet, b.id);
-    if (!this.paused && !this.building && !this.mapOpen && !this.settings.open) {
+    if (!this.paused && !this.building && !this.settings.open) {
       this.effects.update(Math.min(delta/1000,.05),bounds);this.effects.consume(this.model.effects,bounds);this.effects.continuous(this.model.miningLinks,this.model.bullets,bounds);this.effects.ambient(this.model.asteroids,bounds);
     }
     const p = this.model.player;
@@ -340,7 +355,11 @@ class SpaceScene extends Phaser.Scene {
     if (!this.compass.hidden) drawCompass(this.compass, this.model);
     this.builderElapsed+=delta;if(this.builderElapsed>=100){this.renderBuilder();this.builderElapsed=0;}
     this.mapWindow.hidden = !this.mapOpen;
-    if (this.mapOpen && refreshMap) drawExplorationMap(this.mapCanvas, this.model, this.mapView);
+    document.body.classList.toggle('chart-open',this.mapOpen);
+    if(this.mapOpen){
+      if(this.mapFollow){this.mapView.centerX=p.x/WORLD.width;this.mapView.centerY=p.y/WORLD.height;this.clampMap();}
+      if(refreshMap){drawExplorationMap(this.mapCanvas,this.model,this.mapView);this.mapWindow.querySelector('.map-telemetry')!.textContent=`${this.mapFollow?'TRACKING SHIP':'FREE CHART'} · ${(WORLD.width/this.mapView.zoom/1000).toFixed(1)} km span · X ${Math.round(p.x).toLocaleString()} / Y ${Math.round(p.y).toLocaleString()}${this.paused?' · PAUSED':''}`;this.mapWindow.querySelector('[data-chart="follow"]')!.setAttribute('aria-pressed',String(this.mapFollow));}
+    }
     if (refreshMap) this.mapElapsed = 0;
     this.saveElapsed += delta;
     if (this.saveElapsed >= 10000) { const error = saveGame(this.model, this.saveFailed); if (error) this.model.message = error; this.saveElapsed = 0; }
@@ -348,8 +367,8 @@ class SpaceScene extends Phaser.Scene {
     if (this.hudElapsed >= 100) {
     this.hudElapsed = 0;
     const destination = this.model.bases.filter(base => this.model.isExplored(base) || base.unlocked).reduce((best, base) => Math.hypot(p.x - base.x, p.y - base.y) < Math.hypot(p.x - best.x, p.y - best.y) ? base : best);
-    this.cockpit.update(this.model,aim,this.paused||this.building||this.mapOpen||this.settings.open,this.buildMode);
-    document.body.classList.toggle('cockpit-modal',this.building||this.mapOpen||this.settings.open);
+    this.cockpit.update(this.model,aim,this.paused||this.building||this.settings.open,this.buildMode);
+    document.body.classList.toggle('cockpit-modal',this.building||this.settings.open);
     const html=flightHud(this.model,{base:destination,direction:this.directionToStation(),zoom:this.cameras.main.zoom,muted:this.audio.muted,effects:this.effects.enabled,detailsOpen:this.hud.querySelector<HTMLDetailsElement>('details')?.open??false});
     if(html!==this.hudContent){this.hud.innerHTML=html;this.hudContent=html;}
     // Boss bar: shown while a boss is close enough to matter.
@@ -574,12 +593,14 @@ class SpaceScene extends Phaser.Scene {
     const label = this.radar.querySelector<HTMLElement>('[data-radar-label]');
     if (label) label.textContent = `RADAR ${(range / 1000).toFixed(1)} km`;
   }
+  private clampMap(){const margin=.5/this.mapView.zoom;this.mapView.centerX=Phaser.Math.Clamp(this.mapView.centerX,margin,1-margin);this.mapView.centerY=Phaser.Math.Clamp(this.mapView.centerY,margin,1-margin);}
+  private setMapOpen(open:boolean){this.mapOpen=open;this.mapPointer=false;if(open){this.building=false;this.buildMode=false;this.mapFollow=true;this.mapView.zoom=8;this.mapElapsed=200;}}
   private cockpitCommand(action:CockpitAction){
     this.audio.unlock();
     if(this.settings.open)return;
     // Navigation/settings remain usable while paused, just like their keyboard equivalents.
     if(action==='settings'){this.settings.show();return;}
-    if(action==='map'){this.mapOpen=!this.mapOpen;this.building=false;this.buildMode=false;return;}
+    if(action==='map'){this.setMapOpen(!this.mapOpen);this.building=false;this.buildMode=false;return;}
     if(action==='shop'){if(!this.mapOpen&&this.model.atStation&&!this.model.dead)this.building=!this.building;return;}
     if(this.paused||this.building||this.mapOpen||this.model.dead)return;
     if(action==='build')this.toggleBuildMode();else this.commandInput.add(action);
