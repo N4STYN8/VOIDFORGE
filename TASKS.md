@@ -215,3 +215,8 @@ Choices: own Node + WebSocket relay; sector grid; owners keep changes to their s
 - [x] Replace rejected primitive art with detailed reference-derived menu illustration; preserve working HTML controls and independent animation
 - [x] Integrate latest multiplayer update safely; expose real lobby entry and verify menu disconnect/no-save behavior with a local relay
 - [x] Remove menu flyby ships; add bounded settings-aware button sounds and an explicit New Game warning with default Cancel focus
+
+## Compact HUD
+- [x] Replace full-height compact frame with floating instruments and centered short console
+- [x] Verify toggle/full restoration, persisted preference, command identity/actions and five responsive sizes
+- [ ] User review of compact combat readability

@@ -2,7 +2,8 @@ import {materialIcon} from './materialSymbols.ts';
 /** Locally bundled, palette-tinted geometric HUD symbols. */
 export const cockpitIcon=materialIcon;
 /** Fixed geometry is regenerated only on viewport resize, never by the game loop. */
-export function frameMarkup(width:number,height:number,left:number,right:number){
+export function frameMarkup(width:number,height:number,left:number,right:number,compact=false){
+ if(compact)return `<path d="M0 0H${width}V54H0z" fill="#06141e" fill-opacity=".96" stroke="#315d6c"/><path d="M12 4H${width-12}M12 50H${width-12}" stroke="#1e414e"/><path d="M8 82V64h24M${width-8} 82V64h-24" fill="none" stroke="#4b9aa6" stroke-width="2"/><path d="M16 5h44M${width-60} 49h44" stroke="#68cfda" stroke-width="2"/>`;
  if(width<700)return `<path d="M0 0H${width}V56H0zM0 ${height-114}l16 10H${width-16}l16-10V${height}H0z" fill="#152635" stroke="#496979"/><path d="M4 60V${height-122}M${width-4} 60V${height-122}" stroke="#4c6a7a" stroke-width="2"/><path d="M20 4h50M${width-70} ${height-5}h50" stroke="#70ccea" stroke-width="2"/>`;
  const bottom=height-114,L=Math.round(left)+26,R=width-Math.round(right)-26;
  const grain=`<defs><pattern id="armor-grain" width="24" height="24" patternUnits="userSpaceOnUse"><path d="M2 2h8M13 10h7M4 20h9" stroke="#7895a7" stroke-opacity=".13"/><path d="M0 6h6M14 22h10" stroke="#020812" stroke-opacity=".4"/><rect x="19" y="3" width="2" height="1" fill="#9ab4bf" fill-opacity=".12"/></pattern><pattern id="vent-lines" width="7" height="7" patternUnits="userSpaceOnUse"><path d="M1 0v7" stroke="#040b13" stroke-width="3"/><path d="M4 0v7" stroke="#426073"/></pattern></defs>`;

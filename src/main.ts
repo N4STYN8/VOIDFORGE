@@ -13,6 +13,7 @@ import { cellOf, cellCenter, bounds as outpostBounds, outpostStats, stationLayou
 import { SECTOR, WORLD, SHIP, RESOURCES, ENEMIES, ENEMY_AI, WAYPOINTS, OUTPOST, STRUCTURES, STRUCTURE_ABILITIES, type StructureKind, type Resource, EXPLORATION, MODULES, BUILD_GRID, equipment, upgradeCost, statsLabel, type EquipmentKind, type ModuleKind, FLEET } from './data.ts';
 import './style.css';
 import './cockpit.css';
+import './compactHud.css';
 import './outfitter.css';
 import './map.css';
 import { hashSeed } from './world.ts';
