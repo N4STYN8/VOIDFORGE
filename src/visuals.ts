@@ -57,6 +57,11 @@ export function drawModule(g: Phaser.GameObjects.Graphics, x: number, y: number,
     rect(-5,-4,9,8,0x8295a3);rect(-3,-3,7,6,0x36516b);rect(-6,-3,3,6,0x0a1621);rect(-6,-2,1,4,color);
     g.fillStyle(color,.5);g.fillTriangle(-7,-2.5,-12,0,-7,2.5);g.fillStyle(0xd7f8ff);g.fillTriangle(-7,-1.2,-10,0,-7,1.2);
     rect(1,-3,2,1,0xc9e2ec);rect(1,2,2,1,0xc9e2ec);
+  }else if(kind==='builder'){
+    // Brass fabricator: gear housing with a copper construction arm.
+    rect(-5,-4,10,8,0x4a3b22);g.fillStyle(0x1a140c);g.fillCircle(-1,0,4.4);g.lineStyle(1.4,color);g.strokeCircle(-1,0,3.1);
+    for(const [dx,dy]of [[0,-4.4],[0,3.4],[-4.4,-.5],[3.4,-.5]])rect(-1+dx-.5,dy,1,1,color);
+    g.fillStyle(0xf2d489);g.fillCircle(-1,0,1.2);rect(2,-1,6,2,0xb87333);rect(7,-2.5,1.5,5,0xe8d9b0);
   }else{
     rect(-5,-4,10,8,0x515c71);rect(-4,-3,8,6,0x9680ae);for(const y of [-2,1])rect(-4,y,8,1,0x4d405e);rect(-2,-4,1,8,0xd0c1de);rect(2,-4,1,8,0xd0c1de);
   }

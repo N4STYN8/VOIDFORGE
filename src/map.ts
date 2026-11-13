@@ -1,4 +1,4 @@
-import { EXPLORATION, RESOURCES, WORLD, DANGER, ENEMIES } from './data.ts';
+import { EXPLORATION, RESOURCES, WORLD, DANGER, ENEMIES, OUTPOST } from './data.ts';
 import type { GameModel } from './model.ts';
 // Danger never changes for a seed, so each explored cell is rated once.
 const dangerCache = new Map<string, Map<string, number>>();
@@ -22,6 +22,12 @@ export function drawExplorationMap(canvas: HTMLCanvasElement, model: GameModel, 
   for (const rock of model.chartedAsteroids) {
     if (!model.isExplored(rock)) continue;
     ctx.fillStyle = '#' + RESOURCES[rock.ore].color.toString(16).padStart(6, '0'); ctx.fillRect(rock.x * scale, rock.y * scale, 2, 2);
+  }
+  for (const outpost of model.outposts) {
+    // Player outposts: a brass square with the outpost's name.
+    const x = (outpost.cx + 0.5) * OUTPOST.cell * scale, y = (outpost.cy + 0.5) * OUTPOST.cell * scale;
+    ctx.fillStyle = '#d9a441'; ctx.fillRect(x - 3, y - 3, 6, 6); ctx.strokeStyle = '#f2d489'; ctx.lineWidth = 1; ctx.strokeRect(x - 4.5, y - 4.5, 9, 9);
+    ctx.font = '10px monospace'; ctx.fillText(outpost.name, Math.min(x + 8, size - 110), y + 4);
   }
   for (const base of model.bases) {
     if (!model.isExplored(base)) continue;

@@ -144,9 +144,9 @@ export const BASES = [
 export const BASE_RADIUS = 220;
 
 export type WeaponKind = 'cannon' | 'pulse' | 'rail' | 'plasma' | 'rocket' | 'flak' | 'emp';
-export type ModuleKind = WeaponKind | 'miner' | 'cargo' | 'armor' | 'engine' | 'shield' | 'tractor' | 'reactor' | 'cooler';
+export type ModuleKind = WeaponKind | 'miner' | 'cargo' | 'armor' | 'engine' | 'shield' | 'tractor' | 'reactor' | 'cooler' | 'builder';
 export type EquipmentKind = ModuleKind | 'core';
-export type EquipmentStats = { damage?: number; cooldown?: number; mining?: number; pickup?: number; hull?: number; speed?: number; acceleration?: number; splash?: number; shield?: number; recharge?: number; tractor?: number; pull?: number; targets?: number; power?: number; heat?: number; generation?: number; energyCapacity?: number; cooling?: number; heatCapacity?: number; empRange?: number; cargo?:number; stun?: number; burstSpeed?:number; burstThrust?:number; boostDuration?:number; boostCooldown?:number; boostPower?:number; boostHeat?:number };
+export type EquipmentStats = { damage?: number; cooldown?: number; mining?: number; pickup?: number; hull?: number; speed?: number; acceleration?: number; splash?: number; shield?: number; recharge?: number; tractor?: number; pull?: number; targets?: number; power?: number; heat?: number; generation?: number; energyCapacity?: number; cooling?: number; heatCapacity?: number; empRange?: number; cargo?:number; stun?: number; burstSpeed?:number; burstThrust?:number; boostDuration?:number; boostCooldown?:number; boostPower?:number; boostHeat?:number; buildRange?:number; buildSpeed?:number; buildDiscount?:number };
 export type EquipmentDefinition = { label: string; color: number; mass: number; cost: Record<Resource, number>; weapon?: WeaponKind; description: string; levels: EquipmentStats[] };
 const cost = (iron: number, copper = 0, crystal = 0, ice = 0, radioactive = 0): Record<Resource, number> => ({ iron, copper, crystal, ice, radioactive });
 export const MODULES: Record<ModuleKind, EquipmentDefinition> = {
@@ -165,6 +165,7 @@ export const MODULES: Record<ModuleKind, EquipmentDefinition> = {
   engine: { label: 'Speed booster', color: 0x6db9ff, mass: 2, cost: cost(20,15), description: 'Powered cruise bonuses. Level 2+ adds a Shift-triggered burst with energy/heat cost and cooldown.', levels: [{speed:25,acceleration:80,power:6,heat:3},{speed:45,acceleration:140,power:9,heat:5,burstSpeed:150,burstThrust:400,boostDuration:1.8,boostCooldown:6,boostPower:18,boostHeat:12},{speed:70,acceleration:220,power:13,heat:8,burstSpeed:240,burstThrust:650,boostDuration:2.2,boostCooldown:5,boostPower:24,boostHeat:18}] },
   reactor: { label: 'Reactor', color: 0xffda86, mass: 8, cost: cost(30,15,5), description: 'Adds energy production and storage. Reactors combine their output.', levels: [{generation:35,energyCapacity:70},{generation:60,energyCapacity:110},{generation:100,energyCapacity:170}] },
   cooler: { label: 'Cooling system', color: 0x9edfff, mass: 4, cost: cost(20,10,0,10), description: 'Adds heat dissipation and thermal capacity. Cooling systems combine.', levels: [{cooling:18,heatCapacity:25},{cooling:30,heatCapacity:40},{cooling:48,heatCapacity:65}] },
+  builder: { label: 'Build module', color: 0xd9a441, mass: 6, cost: cost(60,40,15), description: 'Requires Core level 4. Enters Build Mode (F) to construct outposts on the world grid from carried cargo. Must be intact and the ship must not be short of energy.', levels: [{buildRange:240,buildSpeed:1},{buildRange:320,buildSpeed:1.5},{buildRange:320,buildSpeed:1.5,buildDiscount:10}] },
 };
 export const CORE: EquipmentDefinition = { label: 'Core', color: 0x73c9ee, mass: 12, cost: cost(30,15), description: 'Core tiers unlock item tiers and improve hull, power and cooling. No module-count cap.', levels: [{hull:100,generation:40,energyCapacity:100,cooling:12,heatCapacity:100},{hull:150,generation:60,energyCapacity:160,cooling:16,heatCapacity:140},{hull:225,generation:90,energyCapacity:240,cooling:22,heatCapacity:200}] };
 export const MAX_MODULE_LEVEL=5;
@@ -185,6 +186,7 @@ const ADVANCED_LEVELS:Record<EquipmentKind,[EquipmentStats,EquipmentStats]>={
  engine:[{speed:100,acceleration:310,power:18,heat:11,burstSpeed:320,burstThrust:850,boostDuration:2.5,boostCooldown:4.5,boostPower:32,boostHeat:24},{speed:135,acceleration:420,power:24,heat:15,burstSpeed:420,burstThrust:1100,boostDuration:2.8,boostCooldown:4,boostPower:42,boostHeat:32}],
  reactor:[{generation:150,energyCapacity:250},{generation:220,energyCapacity:360}],
  cooler:[{cooling:70,heatCapacity:95},{cooling:100,heatCapacity:140}],
+ builder:[{buildRange:400,buildSpeed:2.5,buildDiscount:10},{buildRange:480,buildSpeed:3,buildDiscount:15}],
 };
 for(const [kind,levels]of Object.entries(ADVANCED_LEVELS)) (kind==='core'?CORE:MODULES[kind as ModuleKind]).levels.push(...levels);
 export const ROCKET = { speed: 330, lifetime: 3.2 };
@@ -207,18 +209,103 @@ export function statsLabel(stats: EquipmentStats) {
   return Object.entries(stats).map(([key, value]) => `${({ damage: 'Damage', cooldown: 'Shot interval (s)', mining: 'Ore/s', cargo:'Cargo capacity +',pickup: 'Pickup +m', hull: 'Hull', speed: 'Speed +', acceleration: 'Thrust +', splash: 'Blast radius', shield: 'Shield', recharge: 'Recharge/s', tractor: 'Beam range', pull: 'Pull speed', targets: 'Targets', power:'Energy',heat:'Heat',generation:'Power/s',energyCapacity:'Energy capacity',cooling:'Cooling/s',heatCapacity:'Heat capacity',empRange:'EMP radius',stun:'Disable (s)',burstSpeed:'Burst speed +',burstThrust:'Burst thrust +',boostDuration:'Burst duration (s)',boostCooldown:'Burst cooldown (s)',boostPower:'Burst energy',boostHeat:'Burst heat' } as Record<string, string>)[key]} ${value}`).join(' · ');
 }
 export const BUILD_GRID = { radius: 3, cellSize: 16, pickupBonus: 30 };
+/**
+ * Player-built outposts. Blocks sit on a world-aligned construction grid whose cell equals a ship
+ * module tile. `radius` is how many cells from its core an outpost may extend; `coreSpacing` and
+ * `baseClearance` keep cores apart and away from stations. Building spends carried cargo and
+ * `energyPerBlock` ship energy. `gridZoom` is the camera zoom range over which the fine grid fades in.
+ */
+export const OUTPOST = {
+  coreLevel: 4, cell: BUILD_GRID.cellSize, radius: 14, coreSpacing: 900, baseClearance: 340, energyPerBlock: 6, awaySpeed: 0.5, awayRange: 2,
+  largeGrid: 160, gridZoom: [1.15, 1.75], key: 'F', rotateKey: 'R',
+  fabricator: { hpPerSecond: 25, ironPerHp: 0.08, energyPerSecond: 8 },
+  /** Turrets only run for outposts within `activeRange` of the ship; cargo moves to and from an outpost within `transferRange` of its core. */
+  activeRange: 2600, transferRange: 240, panelRange: 620, turretScan: 0.3, turretAim: 0.14,
+  /** Blocks above `stationLevel` need an Upgrade station in the outpost. Manual repair costs `repairIronPerHp` iron per hull point. */
+  maxLevel: 5, stationLevel: 2, repairIronPerHp: 0.08, repairEnergyPerSecond: 6, shieldEnergyPerPoint: 0.4, shieldDelay: 4,
+  /** Time away is banked up to `awayCap` seconds and settled when the ship comes back within `resolveRange`. */
+  awayCap: 1800, awayMin: 20, resolveRange: 1500, /** Seconds to wait near the outpost so streamed asteroids are loaded before settling. */ resolveDelay: 3,
+  /** Raids: seconds between raids on an outpost, party size and away-raid damage by danger level, and the stored value below which raiders do not bother. */
+  raid: { interval: [420, 720], size: [2, 3, 4, 6], awayDamage: [250, 500, 900, 1500], minValue: 120, distance: 950, radarWarning: 12, retreatAt: 0.35, giveUp: 2600, defenceSeconds: 20 },
+};
+/** Per-level multipliers for outpost blocks (index = level - 1). `output` scales power, battery, storage, shields, cooling and repair. */
+export const STRUCTURE_LEVELS = { health: [1, 1.3, 1.65, 2.05, 2.5], output: [1, 1.4, 1.8, 2.3, 3], damage: [1, 1.25, 1.55, 1.9, 2.3], drones: [2, 4, 6, 8, 10] };
+export type StructureKind = 'outpostCore' | 'wall' | 'reinforcedWall' | 'autocannonTurret' | 'missileTurret' | 'railgunTurret' | 'shieldGenerator' | 'reactor' | 'coolingUnit' | 'storage' | 'droneHangar' | 'droneRepairBay' | 'upgradeStation' | 'repairStation' | 'radarTower' | 'dockingStation';
+/**
+ * Mining drones. Each flies to an asteroid within `range` of its hangar, mines it through the normal
+ * finite-ore extraction at `rate` ore/s, carries up to `capacity` of one ore home and unloads into
+ * outpost storage. Launching costs `launchEnergy` from the outpost battery; `perAsteroid` limits crowding.
+ */
+export const DRONES = { speed: 95, rate: 3, capacity: 20, range: 750, leash: 1.35, launchEnergy: 4, recharge: 2, standoff: 14, perAsteroid: 2, retry: 1.5,
+  /** Every `serviceEvery` trips a drone is serviced for `serviceTime` s (`bayServiceTime` with a Drone repair bay). `awayRate` is ore/s per drone while the ship is away. */
+  serviceEvery: 6, serviceTime: 12, bayServiceTime: 3, awayRate: 1.1 };
+/** Automatic weapon mount: `energy` is drawn from the outpost battery per shot, `turn` is rad/s. */
+export type TurretDefinition = { weapon: WeaponKind; damage: number; cooldown: number; range: number; speed: number; lifetime: number; energy: number; turn: number; splash?: number; guided?: boolean; /** Heat added to the outpost per shot. */ heat?: number };
+export type StructureDefinition = { label: string; description: string; cost: Record<Resource, number>; health: number; /** Seconds at construction speed 1. */ buildTime: number; color: number;
+  /** Energy per second added to the outpost battery. */ generation?: number; /** Battery capacity added. */ energyCapacity?: number; /** Mineral storage added (all ores combined). */ storage?: number; turret?: TurretDefinition;
+  /** Mining drones this block houses. */ drones?: number; /** Radius within which the ship can dock (E) to unload and repair from outpost stores. */ dock?: number;
+  /** Shield pool added, its recharge per second and the radius (cells) of blocks it protects. */ shield?: number; shieldRegen?: number; shieldRadius?: number;
+  /** Heat removed per second and heat capacity added. */ cooling?: number; heatCapacity?: number;
+  /** Hull points per second repaired on nearby blocks, paid in stored iron and battery energy. */ repair?: number; repairRadius?: number;
+  /** Fraction added to turret range across the outpost; also gives warning of raids. */ radar?: number;
+  /** Lets blocks in this outpost be upgraded past OUTPOST.stationLevel. */ upgrades?: boolean; /** Speeds up drone servicing. */ droneService?: boolean };
+export const STRUCTURES: Record<StructureKind, StructureDefinition> = {
+  outpostCore: { label: 'Outpost Core', description: 'Founds a new outpost and anchors every block joined to it. Provides a little power, battery and storage. Place this first; other blocks must connect back to it.', cost: cost(80, 40, 10), health: 600, buildTime: 8, color: 0xd9a441, generation: 10, energyCapacity: 100, storage: 200, cooling: 4, heatCapacity: 60 },
+  wall: { label: 'Wall block', description: 'Basic riveted plating. Stops hostile fire. Adjacent walls join into one structure.', cost: cost(8), health: 160, buildTime: 2, color: 0x6f7c8c },
+  reinforcedWall: { label: 'Reinforced wall', description: 'Cross-braced plating with more than twice the strength of a wall block.', cost: cost(14, 6), health: 380, buildTime: 3.5, color: 0x9aa9bb },
+  autocannonTurret: { label: 'Autocannon turret', description: 'Rapid-fire automatic defence at short range. Cheap on energy.', cost: cost(40, 25), health: 220, buildTime: 5, color: 0xffce70,
+    turret: { weapon: 'cannon', damage: 10, cooldown: 0.22, range: 520, speed: 700, lifetime: 0.9, energy: 2, turn: 4, heat: 1.2 } },
+  missileTurret: { label: 'Missile turret', description: 'Long-range guided missiles with a blast radius. Slow to reload.', cost: cost(55, 35, 10), health: 200, buildTime: 7, color: 0xff9766,
+    turret: { weapon: 'rocket', damage: 45, cooldown: 2.6, range: 900, speed: 330, lifetime: 3.4, energy: 14, turn: 2.5, splash: 70, guided: true, heat: 9 } },
+  railgunTurret: { label: 'Railgun turret', description: 'Heavy precision shots. Slow to turn and hungry for energy.', cost: cost(70, 40, 20), health: 240, buildTime: 8, color: 0xd8f2ff,
+    turret: { weapon: 'rail', damage: 120, cooldown: 2.2, range: 780, speed: 2200, lifetime: 0.5, energy: 22, turn: 1.6, heat: 14 } },
+  reactor: { label: 'Reactor', description: 'Generates energy for turrets and adds battery capacity. Reactors combine.', cost: cost(50, 30, 12), health: 200, buildTime: 7, color: 0xffda86, generation: 30, energyCapacity: 120 },
+  shieldGenerator: { label: 'Shield generator', description: 'Projects a shield over blocks within six cells. It absorbs damage before hulls do and recharges from the battery after a pause.', cost: cost(60, 40, 25), health: 220, buildTime: 8, color: 0x79dfff, shield: 220, shieldRegen: 9, shieldRadius: 6 },
+  coolingUnit: { label: 'Cooling unit', description: 'Removes heat made by turret fire and raises heat capacity. Overheated turrets stop until the outpost cools.', cost: cost(35, 20, 0, 12), health: 180, buildTime: 5, color: 0x9edfff, cooling: 14, heatCapacity: 80 },
+  droneRepairBay: { label: 'Drone repair bay', description: 'Services mining drones in a quarter of the usual time, so they spend more of it mining.', cost: cost(45, 30, 10), health: 200, buildTime: 6, color: 0x8fd08a, droneService: true },
+  upgradeStation: { label: 'Upgrade station', description: 'Lets every block in this outpost be upgraded beyond level 2, up to level 5.', cost: cost(70, 50, 30, 0, 5), health: 240, buildTime: 9, color: 0xc7a6ff, upgrades: true },
+  repairStation: { label: 'Repair station', description: 'Automatically repairs damaged blocks within eight cells, spending stored iron and battery energy.', cost: cost(50, 30, 12), health: 220, buildTime: 7, color: 0x78dec0, repair: 18, repairRadius: 8 },
+  radarTower: { label: 'Radar tower', description: 'Extends turret range across the outpost and gives advance warning of incoming raids.', cost: cost(40, 30, 18), health: 170, buildTime: 6, color: 0xa9cfe5, radar: 0.15 },
+  droneHangar: { label: 'Drone hangar', description: 'Houses mining drones (2 at level 1, up to 10 at level 5) that mine nearby asteroids and bring the ore back to outpost storage. Needs battery energy to launch and free storage to unload.', cost: cost(60, 40, 15), health: 260, buildTime: 8, color: 0x8fd08a, drones: 2 },
+  dockingStation: { label: 'Docking station', description: 'Fly close and press E to unload cargo into outpost storage and repair the ship from outpost minerals.', cost: cost(50, 30, 10), health: 240, buildTime: 6, color: 0x7fd6f2, dock: 150 },
+  storage: { label: 'Storage block', description: 'Adds mineral storage to the outpost. If it is destroyed, anything that no longer fits spills out as pickups.', cost: cost(30, 10), health: 180, buildTime: 4, color: 0xc599e8, storage: 400 },
+};
+/** Level-5 specials for outpost blocks. Names and text are shown in Build Mode; the numbers they use are in STRUCTURE_SPECIAL. */
+export const STRUCTURE_ABILITIES: Record<StructureKind, { name: string; description: string }> = {
+  outpostCore: { name: 'Command Network', description: 'When turrets engage, all turrets in the outpost fire 30% faster for 8 seconds. 30-second cooldown.' },
+  wall: { name: 'Layered Plating', description: 'Takes 25% less damage.' },
+  reinforcedWall: { name: 'Reactive Plating', description: 'Takes 35% less damage.' },
+  autocannonTurret: { name: 'Gatling Fury', description: 'Sustained fire ramps the fire rate up to +60% over 3 seconds.' },
+  missileTurret: { name: 'Swarm Strike', description: 'Each launch adds 2 guided mini-missiles at 30% damage.' },
+  railgunTurret: { name: 'Hypervelocity Round', description: 'Every third shot penetrates up to 3 enemies.' },
+  shieldGenerator: { name: 'Reflective Barrier', description: 'Reflects 25% of the damage its shield absorbs back at the attacker.' },
+  reactor: { name: 'Emergency Overdrive', description: 'Doubles this reactor\'s output while the battery is below 25%.' },
+  coolingUnit: { name: 'Cryogenic Purge', description: 'When the outpost overheats, instantly removes half its heat. 20-second cooldown.' },
+  storage: { name: 'Compression', description: 'Adds a further 25% storage.' },
+  droneHangar: { name: 'Advanced Mining Swarm', description: 'Drones spread out one per asteroid where they can and go for the most valuable ore in range first.' },
+  droneRepairBay: { name: 'Field Refit', description: 'Drones need servicing half as often.' },
+  upgradeStation: { name: 'Master Fabrication', description: 'Block upgrades in this outpost cost 15% less.' },
+  repairStation: { name: 'Emergency Reconstruction', description: 'Repairs three times as fast on blocks below 30% hull.' },
+  radarTower: { name: 'Early Warning Network', description: 'Raid warnings come twice as early and turret range bonus rises to 25%.' },
+  dockingStation: { name: 'Rapid Service', description: 'Ship repairs at this outpost cost 30% less.' },
+};
+export const STRUCTURE_SPECIAL = {
+  command: { bonus: 0.3, duration: 8, cooldown: 30 }, wallReduction: 0.25, reinforcedReduction: 0.35, gatling: { maxBonus: 0.6, ramp: 3, cool: 1 },
+  swarm: { count: 2, fraction: 0.3 }, railEvery: 3, reflect: 0.25, overdriveBelow: 0.25, purge: { fraction: 0.5, cooldown: 20 }, compression: 0.25,
+  refit: 2, fabrication: 0.15, reconstruction: { below: 0.3, multiplier: 3 }, radar: 0.25, radarWarning: 2, rapidService: 0.3,
+};
 
 export const COLLISION = { restitution: 0.3, asteroidDrag: 0.4, safeSpeed: 40, damagePerSpeed: 0.09, maxDamage: 25, damageCooldown: 0.6 };
 
 export const EXPLORATION = { cell: 480, radius: 850 };
-export const MODULE_DURABILITY: Record<ModuleKind, number[]> = { reactor:[60,90,130],cooler:[40,60,85],pulse:[40,60,85],rail:[55,80,110],plasma:[45,70,100],flak:[45,70,100],emp:[40,60,90],tractor:[40,60,85],cannon:[45,65,90],miner:[40,60,85],rocket:[50,75,105],cargo:[35,55,80],armor:[100,150,220],engine:[40,60,85],shield:[35,55,80] };
+export const MODULE_DURABILITY: Record<ModuleKind, number[]> = { reactor:[60,90,130],cooler:[40,60,85],pulse:[40,60,85],rail:[55,80,110],plasma:[45,70,100],flak:[45,70,100],emp:[40,60,90],tractor:[40,60,85],cannon:[45,65,90],miner:[40,60,85],rocket:[50,75,105],cargo:[35,55,80],armor:[100,150,220],engine:[40,60,85],shield:[35,55,80],builder:[45,65,90] };
 for(const durability of Object.values(MODULE_DURABILITY))durability.push(Math.round(durability[2]*1.4),Math.round(durability[2]*1.9));
 export const REPAIR = { ironPerHull: 0.2, copperPerModule: 0.05, salvageFraction: 0.5, emergencyMining: 3 };
 export const PATROL = { groupSize: 3, spacing: 65, speed: 55, turnRate: 0.08, sharedDetectionMultiplier: 1.4 };
 export const ORE_COMBAT = { materialPerDamage: 0.1, recovery: 0.35, impulsePerDamage: 0.3, maxShotSpeed: 12 };
 
 export const MODULE_CATEGORIES = {
-  Weapons:['cannon','pulse','rail','plasma','rocket','flak','emp'], Mining:['miner'], Collection:['tractor','cargo'], Defense:['shield','armor'], Propulsion:['engine'], Power:['reactor'], Utility:['cooler'],
+  Weapons:['cannon','pulse','rail','plasma','rocket','flak','emp'], Mining:['miner'], Collection:['tractor','cargo'], Defense:['shield','armor'], Propulsion:['engine'], Power:['reactor'], Utility:['cooler','builder'],
 } satisfies Record<string,ModuleKind[]>;
-export const MODULE_SHORT:Record<EquipmentKind,string>={core:'Core',cannon:'Auto',pulse:'Pulse',rail:'Rail',plasma:'Plasma',rocket:'Missile',flak:'Flak',emp:'EMP',miner:'Mining',tractor:'Tractor',cargo:'Cargo',armor:'Armor',shield:'Shield',engine:'Booster',reactor:'Reactor',cooler:'Cooler'};
-export const STAT_LABELS:Partial<Record<keyof EquipmentStats,string>>={damage:'Damage',cooldown:'Fire rate (shots/s)',mining:'Mining (ore/s)',cargo:'Cargo capacity +',pickup:'Pickup reach +',hull:'Hull',speed:'Cruise speed +',acceleration:'Thrust +',splash:'Blast radius',shield:'Shield',recharge:'Recharge /s',tractor:'Tractor range',pull:'Pull speed',targets:'Target slots',power:'Operating energy',heat:'Operating heat',generation:'Power output /s',energyCapacity:'Energy capacity',cooling:'Cooling /s',heatCapacity:'Heat capacity',empRange:'EMP radius',stun:'Disable (s)',burstSpeed:'Burst speed +',burstThrust:'Burst thrust +',boostDuration:'Burst duration (s)',boostCooldown:'Burst cooldown (s)',boostPower:'Burst energy',boostHeat:'Burst heat'};
+export const MODULE_SHORT:Record<EquipmentKind,string>={core:'Core',cannon:'Auto',pulse:'Pulse',rail:'Rail',plasma:'Plasma',rocket:'Missile',flak:'Flak',emp:'EMP',miner:'Mining',tractor:'Tractor',cargo:'Cargo',armor:'Armor',shield:'Shield',engine:'Booster',reactor:'Reactor',cooler:'Cooler',builder:'Build'};
+export const STAT_LABELS:Partial<Record<keyof EquipmentStats,string>>={damage:'Damage',cooldown:'Fire rate (shots/s)',mining:'Mining (ore/s)',cargo:'Cargo capacity +',pickup:'Pickup reach +',hull:'Hull',speed:'Cruise speed +',acceleration:'Thrust +',splash:'Blast radius',shield:'Shield',recharge:'Recharge /s',tractor:'Tractor range',pull:'Pull speed',targets:'Target slots',power:'Operating energy',heat:'Operating heat',generation:'Power output /s',energyCapacity:'Energy capacity',cooling:'Cooling /s',heatCapacity:'Heat capacity',empRange:'EMP radius',stun:'Disable (s)',burstSpeed:'Burst speed +',burstThrust:'Burst thrust +',boostDuration:'Burst duration (s)',boostCooldown:'Burst cooldown (s)',boostPower:'Burst energy',boostHeat:'Burst heat',buildRange:'Construction range',buildSpeed:'Construction speed x',buildDiscount:'Construction cost -%'};
