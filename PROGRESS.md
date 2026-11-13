@@ -1,5 +1,33 @@
 # Progress
 
+## Shared space stage 6 — scaling (local branch claude/mmo-sectors, uncommitted)
+- Interest management, encode-once broadcast, backlog skipping, packed state, `/stats`, `npm run load-test`.
+- Load test, 1,000 pilots in 250 sectors for 20 s: relay 30% of one core, 111 MB, no skipped frames, latency p50 22 ms, p95 33 ms, p99 38 ms (generator on the same PC), 9,354 messages/s in, 28,062 frames/s and 40.7 Mbit/s out. Before the wire-format work it was 57 Mbit/s. Bandwidth, not CPU, is the Pi's likely limit.
+- Validation: 248 tests and build; browser re-check with the packed protocol: lobby join, remote ship, 30 mirrored enemies after respawn, no console errors.
+- Next: deploy the relay on the Pi (needs explicit go-ahead from both developers), then `npm run load-test -- 1000 4 20 wss://voidforge.2dq.us` from another machine.
+
+## Shared space stage 5 — progression matchmaking (local branch claude/mmo-sectors, uncommitted)
+- Relay profiles and `match`; matched cells link to another pilot's home sector and stay linked (`galaxy.links`).
+- Validation: 247 tests and build. Live: from the browser's home grid, crossing east into a never-visited cell matched the bot pilot (same starter progression); the cell became "Test Pilot's sector", the browser met the bot there as a hostile stranger, and the bot (owner) was the authority.
+
+## Shared space stage 4 — PvP and alliances (local branch claude/mmo-sectors, uncommitted)
+- Open PvP outside safe rings, lobby allies immune, victim-side damage cap, killer takes carried cargo, paid rebuild at the home station (`PVP` in data.ts, `rebuildAtHome`).
+- Validation: 244 tests and build; `tests/pvp-network.test.ts` runs two full pilots over a real relay: a stranger is shot down, all 37 carried minerals move to the shooter with the total unchanged, the victim owes a rebuild; lobby allies deal no damage. Browser: the stranger bot is classed hostile, the warning shows, allies stay cyan.
+
+## Shared space stage 3 — shared rocks, enemies and salvage (local branch claude/mmo-sectors, uncommitted)
+- Room authority, enemy mirroring, shared enemy fire, hit forwarding, kill salvage to the killer, rock claim leases and rock state copies (`src/shared.ts`, `src/sharedLink.ts`, relay rooms).
+- Validation: 237 tests and build. Live check in Chrome against the relay and a headless authority bot with raiders: the browser became the follower, mirrored 15 enemies, raiders switched to attack and their fire reached it, a forwarded lethal hit removed the raider and delivered 6 salvage as the follower's pickups, a rock claim was granted after one round trip and mining then proceeded. Found and fixed: the bot mixed `Date.now` with `performance.now`; enemies hit by a visitor remembered the authority's position.
+
+## Shared space stage 2 — relay, lobbies and invites (local branch claude/mmo-sectors, uncommitted)
+- `server/` relay with no dependencies, sector rooms, lobbies with codes and invite links; guests fly their own ship into the host's world and follow the host; remote ships, names and hull on screen, radar and compass. Pi setup notes in server/README.md (not deployed).
+- Validation: 230 tests and the build pass. Browser (Chrome tab, local relay plus `npm run relay-bot` host): invite link and typed code both join, guest moves into the host world and sees the bot ship moving with its paint and layout, Leave returns home with no stale ships, keyboard returns after typing, Create lobby shows code and members. Found and fixed: Phaser loop clock vs performance.now mismatch, late updates from the previous room.
+
+## Shared space stage 1 — sector grid (local branch claude/mmo-sectors, uncommitted)
+- User decisions: own Node relay on the Pi (`wss://voidforge.2dq.us`, Let's Encrypt), sector grid, owners keep sector changes, open PvP outside safe zones, killer takes carried cargo and the victim pays to rebuild at home, target 1,000 players. Staged plan in TASKS.md and ARCHITECTURE.md.
+- Built offline: thrusting into any world edge for 1.5 s enters the neighbouring sector (`src/sectorGrid.ts`, `src/sectors.ts`, `SECTOR` in data.ts). Unvisited sectors generate from home seed + grid position; visited sectors are stored whole in the optional `galaxy` save field; ship, cargo, stored minerals and hangar travel with the pilot. The session label shows the sector.
+- Ships arrive at rest and slide along the entry edge clear of rocks (a browser check caught a full-speed arrival hitting a rock). Validation: 221 tests and the build pass; browser check crossed home → E1 → home with cargo, hull and sector records preserved through Save/Load and a reload, and no console errors. The browser pane ran at about 1.5 FPS (throttled), so feel and frame time at the edge still need a human play.
+- Next: see stage 6.
+
 ## Space-station look for outposts (local branch claude/station-visuals, uncommitted)
 - Outposts are now drawn as space stations instead of rows of identical brass squares. Every block type has its own module art: octagonal command hub with lit windows, gun bastions, fusion-torus reactors, radiator arrays, shield emitters with corner pylons, cargo frames stacked with coloured containers, launch-bay hangars, docking collars, a radar dish on a lattice mast, a white repair module, a crystal fabricator and a green service pad.
 - Walls become continuous hull plating with seams, rivets and cabin windows; reinforced walls get armour ribs and hazard corners. Corridor tubes join every pair of neighbouring blocks, so a station reads as modules joined by passages.

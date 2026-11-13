@@ -1,0 +1,36 @@
+import { NetClient } from '../src/net.ts';
+import { GameModel, type Enemy } from '../src/model.ts';
+import { worldRef, progressionScore } from '../src/sectors.ts';
+import { SharedLink } from '../src/sharedLink.ts';
+
+/**
+ * Developer test pilot for the relay. It runs a real headless GameModel as the owner (and so the
+ * authority) of a seeded sector, flies a slow circle inside its home station's safe ring and shares
+ * rocks, enemies and shots like a browser would.
+ *   node --experimental-strip-types scripts/relayBot.ts [ws://127.0.0.1:8787] [JOIN-CODE|-] [seed] [--raiders] [--visitor] [--orbit=N]
+ * With no code (or "-") it creates a lobby and prints the invite code; a browser joins with
+ * http://localhost:5173/?relay=ws://127.0.0.1:8787&join=CODE. `--raiders` adds a raider pack 900 units
+ * from the station for testing shared enemies. `--visitor` joins no lobby and is not the sector owner (a
+ * stranger for PvP tests, carrying 20 iron); `--orbit=N` sets the circle radius. It never touches browser saves.
+ */
+const args = process.argv.slice(2), raiders = args.includes('--raiders'), visitor = args.includes('--visitor'), orbit = Number(args.find(a => a.startsWith('--orbit='))?.slice(8) ?? 160), [url = 'ws://127.0.0.1:8787', code = '-', seed = 'relay-bot-world'] = args.filter(a => !a.startsWith('--'));
+const model = new GameModel(seed), net = new NetClient(), link = new SharedLink(net, () => model), centre = { x: model.bases[0].x, y: model.bases[0].y }, clock = () => performance.now() / 1000, start = clock();
+net.onNote = text => console.log(`[bot] ${text}`);
+net.connect(url, visitor ? 'Stranger' : 'Test Pilot');
+if (visitor) model.cargo.iron = 20; else if (code !== '-') net.join(code); else net.create();
+if (raiders) for (let i = 0; i < 3; i++) (model as unknown as { spawnEnemy(kind: string, x: number, y: number, angle: number): Enemy }).spawnEnemy('raider', centre.x + 900 + i * 60, centre.y + 300, Math.PI);
+let announced = '', reported = 0;
+setInterval(() => {
+  const now = clock(), angle = (now - start) * 0.4;
+  model.update(0.05, { x: 0, y: 0, aim: { x: centre.x, y: centre.y - 500 }, fire: false, mine: false, dock: false });
+  if (!model.dead) Object.assign(model.player, { x: centre.x + Math.cos(angle) * orbit, y: centre.y + Math.sin(angle) * orbit, vx: -Math.sin(angle) * orbit * 0.4, vy: Math.cos(angle) * orbit * 0.4, angle: angle + Math.PI / 2 });
+  net.setSector({ ...worldRef(model), spot: [Math.round(model.player.x), Math.round(model.player.y)] }, !visitor);
+  const p = model.player;
+  net.sendState(now, { x: p.x, y: p.y, vx: p.vx, vy: p.vy, angle: p.angle, health: p.health, maxHealth: model.maxHealth, paint: 3, thrust: true,
+    blocks: [['core', 0, 0, model.coreLevel], ...model.modules.map(m => [m.kind, m.x, m.y, m.level] as [string, number, number, number])] });
+  if (!visitor) net.profile(model.galaxy.home, progressionScore(model));
+  link.frame(model, now);
+  const lobby = net.lobby ? `${net.lobby.code}:${net.lobby.members.map(m => m.name).join(',')}` : '';
+  if (lobby !== announced) { announced = lobby; if (net.lobby) console.log(`[bot] lobby ${net.lobby.code} members: ${net.lobby.members.map(m => m.name).join(', ')}`); }
+  if (now - reported > 5) { reported = now; console.log(`[bot] role ${model.shared?.role ?? 'alone'} · enemies ${model.enemies.length} · pilots here ${net.room?.members ?? 1} · hull ${Math.round(model.player.health)} · targets ${(model.shared?.targets ?? []).map(t => `${Math.round(t.x)},${Math.round(t.y)}`).join(' ') || 'none'} · cargo ${model.cargoUsed}${model.rebuildDue ? ' · destroyed, rebuild due' : ''} · ${model.message}`); }
+}, 50);
