@@ -7,6 +7,7 @@
 - [x] Bounded guided missiles, fragments and nova fields; recognizable lightweight feedback
 - [x] UI comparisons, ability names/descriptions/cooldowns, unlock and maximum indicators
 - [x] 90 regression tests; build; actual browser upgrade and ~60 FPS L5 large-ship combat check
+- [x] Successful Pages deployment and live five-tier upgrade/combat verification
 - [ ] Human balance pass on advanced economy and special-ability power/heat interactions
 
 ## Current completed stage — module freedom, effects and outfitter
