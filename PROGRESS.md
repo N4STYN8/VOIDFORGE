@@ -129,7 +129,15 @@
 - Map markers: click the sector map to drop a numbered marker (up to 12), click it again to remove it. Saved with the world.
 - Fleet: extra ships are bought at a station from stored minerals (each costs 60% more than the last). One ship flies; the others wait in the hangar with their own core level, modules and hull damage. Switching happens in the outfitter and unloads carried cargo to station storage first. Ships can be renamed.
 - Engine modules show exhaust flames under thrust; the nebula backdrop is slightly stronger.
-- 179 tests (10 new in `tests/fleet.test.ts`) and build pass. Browser: buy, rename, switch, markers, radar, compass and layouts at 1024x768 and 2000x1125; an older save loaded unchanged. Not played by a human; ship price and marker limit are first guesses.
+- Hull paint: eight paints (`FLEET.paints`), picked from swatches in the outfitter fleet strip. Each ship keeps its own; new ships get the next paint. Cosmetic and free. Painted module textures are baked once per paint on first use.
+- 180 tests (11 in `tests/fleet.test.ts`) and build pass. Browser: buy, rename, switch, markers, radar, compass and layouts at 1024x768 and 2000x1125; an older save loaded unchanged. Not played by a human; ship price and marker limit are first guesses.
+
+## Save storage fix
+- Reported bug: "Save failed: browser storage is unavailable or full" on a long-played world. Cause: every disturbed asteroid adds about 900 characters to the save, and `localStorage` holds roughly 5 MB per site (shared with the new-world backup copy).
+- Saves now also go to IndexedDB, which has far more room. `localStorage` is still written when the save fits, so a closing tab keeps its progress; when it does not fit, the older copy there is left alone and the IndexedDB copy is used. Loading takes the newest valid copy.
+- Save text keeps non-integer numbers to four decimals: about 35% smaller (238k to 153k characters on the test world). Export uses the same text.
+- The new-world/import backup moved to IndexedDB and the old `localStorage` backup is removed once that succeeds.
+- 187 tests (7 in `tests/persistence.test.ts`) and build pass. Browser: start-up load, save to both stores, and a forced quota error on `localStorage` that still saved and reloaded. Not tested on the live site or with a real multi-megabyte world.
 
 ## Publishing complete
 - Public source: https://github.com/N4STYN8/VOIDFORGE

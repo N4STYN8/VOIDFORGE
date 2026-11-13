@@ -7,16 +7,18 @@ import { EffectPool } from './effects.ts';
 import { drawParticles, drawEnergyBeam, drawProjectile, drawEmp } from './effectsRender.ts';
 import { GameModel } from './model.ts';
 import { cellOf, cellCenter, bounds as outpostBounds, outpostStats, storedTotal, structureAt, maxHealth, turretOf, dronesOf, outputOf, type Outpost, type Structure } from './outposts.ts';
-import { WORLD, SHIP, RESOURCES, ENEMIES, ENEMY_AI, WAYPOINTS, OUTPOST, STRUCTURES, STRUCTURE_ABILITIES, type StructureKind, type Resource, EXPLORATION, MODULES, BUILD_GRID, equipment, upgradeCost, statsLabel, type EquipmentKind, type ModuleKind } from './data.ts';
+import { WORLD, SHIP, RESOURCES, ENEMIES, ENEMY_AI, WAYPOINTS, OUTPOST, STRUCTURES, STRUCTURE_ABILITIES, type StructureKind, type Resource, EXPLORATION, MODULES, BUILD_GRID, equipment, upgradeCost, statsLabel, type EquipmentKind, type ModuleKind, FLEET } from './data.ts';
 import './style.css';
 import { hashSeed } from './world.ts';
-import { loadSavedGame, saveGame, backupSavedGame } from './persistence.ts';
+import { loadSavedGame, saveGame, saveText, backupSavedGame } from './persistence.ts';
+/** The save found at start-up; storage is read before the game is created because the large store is asynchronous. */
+let startModel: GameModel | null = null;
 import { GameAudio } from './audio.ts';
 import { drawExplorationMap, mapToWorld } from './map.ts';
 import { drawRadar, drawCompass } from './nav.ts';
 import { ensureAsteroidGeometry } from './mining.ts';
 import { drawModule } from './visuals.ts';
-import { paintBackdrop, paintAsteroid, paintStation, paintEnemy, paintOutpost, paintStructureIcon, paintTurretHead, paintDrone, crispModule, mix, ASTEROID_SPRITE, ENEMY_SPRITE, STATION_SPRITE } from './sprites.ts';
+import { paintBackdrop, paintAsteroid, paintStation, paintEnemy, paintOutpost, paintStructureIcon, paintTurretHead, paintDrone, crispModule, paintHull, mix, ASTEROID_SPRITE, ENEMY_SPRITE, STATION_SPRITE } from './sprites.ts';
 class SpaceScene extends Phaser.Scene {
   private effects = new EffectPool();
   private saveElapsed = 0;
@@ -48,7 +50,9 @@ class SpaceScene extends Phaser.Scene {
   private movingModule = false;
   private baseLabels: Phaser.GameObjects.Text[] = [];
   private lastBullet = -1;
-  private model = loadSavedGame() ?? new GameModel();
+  private model = startModel ?? new GameModel();
+  /** Shows a storage failure that only became known after an asynchronous write. */
+  private saveFailed = (message: string) => { this.model.message = message; };
   private targetLabel!: Phaser.GameObjects.Text;
   private radar = document.createElement('section'); private radarCanvas = document.createElement('canvas'); private radarRange = 1; private compass = document.createElement('canvas');
   private effectsGraphics!: Phaser.GameObjects.Graphics;
@@ -90,22 +94,22 @@ class SpaceScene extends Phaser.Scene {
     this.sessionControls.addEventListener('click', event => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button'); if (!button) return;
       const action = button.dataset.session;
-      if (action === 'save') this.model.message = saveGame(this.model) ?? 'World saved locally.';
-      if (action === 'load') { const saved = loadSavedGame(); if (saved) this.switchModel(saved); else this.model.message = 'No valid local save found.'; }
+      if (action === 'save') this.model.message = saveGame(this.model, this.saveFailed) ?? 'World saved locally.';
+      if (action === 'load') void loadSavedGame().then(saved => { if (saved) this.switchModel(saved); else this.model.message = 'No valid local save found.'; });
       if (action === 'new') {
         const input = this.sessionControls.querySelector<HTMLInputElement>('#seed-input')!;
-        try { const next = input.value.trim() ? new GameModel(input.value.trim()) : new GameModel(); backupSavedGame(); this.switchModel(next); saveGame(this.model); input.value = ''; }
+        try { const next = input.value.trim() ? new GameModel(input.value.trim()) : new GameModel(); const backup = backupSavedGame(); this.switchModel(next); void backup.finally(() => saveGame(this.model, this.saveFailed)); input.value = ''; }
         catch { this.model.message = 'Could not generate that seed. Choose another seed.'; }
       }
       if (action === 'export') {
-        const blob = new Blob([JSON.stringify(this.model.toSave())], { type: 'application/json' }), url = URL.createObjectURL(blob), link = document.createElement('a');
+        const blob = new Blob([saveText(this.model)], { type: 'application/json' }), url = URL.createObjectURL(blob), link = document.createElement('a');
         link.href = url; link.download = `voidforge-${this.model.seed.replace(/[^a-z0-9-]/gi, '').slice(0, 40)}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
       }
       button.blur();
     });
     this.sessionControls.querySelector<HTMLInputElement>('#import-save')!.addEventListener('change', async event => {
       const input = event.target as HTMLInputElement, file = input.files?.[0]; if (!file) return;
-      try { const model = GameModel.fromSave(JSON.parse(await file.text())); backupSavedGame(); this.switchModel(model); saveGame(model); }
+      try { const model = GameModel.fromSave(JSON.parse(await file.text())); const backup = backupSavedGame(); this.switchModel(model); void backup.finally(() => saveGame(model, this.saveFailed)); }
       catch { this.model.message = 'That file is not a supported VOIDFORGE save.'; }
       input.value = '';
     });
@@ -187,6 +191,7 @@ class SpaceScene extends Phaser.Scene {
       const button=(event.target as HTMLElement).closest<HTMLButtonElement>('button');if(!button)return;
       if(button.dataset.ship){if(action(this.model.switchShip(Number(button.dataset.ship)))){this.selectedCell={x:0,y:0};this.detailMode='module';this.movingModule=false;this.buildCenter={x:0,y:0};}}
       else if(button.dataset.buyShip)action(this.model.buyShip());
+      else if(button.dataset.paint){this.model.setShipPaint(Number(button.dataset.paint));this.audio.play('build');}
       else if(button.dataset.pan){const direction=button.dataset.pan;if(direction==='home')this.buildCenter={x:0,y:0};else{this.buildCenter.x+=direction==='right'?2:direction==='left'?-2:0;this.buildCenter.y+=direction==='down'?2:direction==='up'?-2:0;}}
       else if(button.dataset.gridzoom)this.gridRadius=Math.max(1,Math.min(6,this.gridRadius+(button.dataset.gridzoom==='out'?1:-1)));
       else if(button.dataset.kind){this.selectedModule=button.dataset.kind as ModuleKind;this.detailMode='install';this.movingModule=false;this.actionFailed=false;}
@@ -328,7 +333,7 @@ class SpaceScene extends Phaser.Scene {
     if (this.mapOpen && refreshMap) drawExplorationMap(this.mapCanvas, this.model, this.mapView);
     if (refreshMap) this.mapElapsed = 0;
     this.saveElapsed += delta;
-    if (this.saveElapsed >= 10000) { const error = saveGame(this.model); if (error) this.model.message = error; this.saveElapsed = 0; }
+    if (this.saveElapsed >= 10000) { const error = saveGame(this.model, this.saveFailed); if (error) this.model.message = error; this.saveElapsed = 0; }
     this.hudElapsed += delta;
     if (this.hudElapsed >= 100) {
     this.hudElapsed = 0;
@@ -557,6 +562,16 @@ class SpaceScene extends Phaser.Scene {
     const label = this.radar.querySelector<HTMLElement>('[data-radar-label]');
     if (label) label.textContent = `RADAR ${(range / 1000).toFixed(1)} km`;
   }
+  /** Texture for one block of the flown ship in its paint. Painted variants are baked once, on first use. */
+  private shipTexture(kind: EquipmentKind, level: number) {
+    const base = `icon-${kind}-${level}`, paint = this.model.shipPaint; if (!paint) return base;
+    const key = `${base}-p${paint}`;
+    if (!this.textures.exists(key)) {
+      const source = this.textures.get(base).getSourceImage(); if (!(source instanceof HTMLCanvasElement)) return base;
+      this.textures.addCanvas(key, paintHull(source, FLEET.paints[paint].color, FLEET.paintStrength))!.setFilter(Phaser.Textures.FilterMode.NEAREST);
+    }
+    return key;
+  }
   private renderBuilder() {
     this.builder.hidden = !this.building;
     if (!this.building || this.moduleDragActive) return;
@@ -722,8 +737,8 @@ class SpaceScene extends Phaser.Scene {
         const point=this.model.modulePoint(m,heading);
         for(const [dx,dy]of [[1,0],[0,1]])if(occupied.has(`${m.x+dx},${m.y+dy}`)){const other=this.model.modulePoint({x:m.x+dx,y:m.y+dy},heading);if(visible(point)||visible(other))g.lineBetween(point.x,point.y,other.x,other.y);}
         if(!visible(point))continue;
-        const sprite=this.shipSprites[index]??this.add.image(point.x,point.y,`icon-${m.kind}-${m.level}`).setDepth(1);
-        this.shipSprites[index++]=sprite;sprite.setVisible(true).setPosition(point.x,point.y).setTexture(`icon-${m.kind}-${m.level}`).setRotation(heading+Math.PI/2);
+        const key=this.shipTexture(m.kind,m.level),sprite=this.shipSprites[index]??this.add.image(point.x,point.y,key).setDepth(1);
+        this.shipSprites[index++]=sprite;sprite.setVisible(true).setPosition(point.x,point.y).setTexture(key).setRotation(heading+Math.PI/2);
       }
       for(;index<this.shipSprites.length;index++)this.shipSprites[index].setVisible(false);
       // Engine exhaust: stepped pixel flames behind every booster while thrusting, longer during a burst.
@@ -756,4 +771,4 @@ class SpaceScene extends Phaser.Scene {
     }
   }
 }
-new Phaser.Game({ type: new URLSearchParams(location.search).get('renderer')==='webgl'?Phaser.WEBGL:Phaser.CANVAS, parent: 'game', backgroundColor: '#080e1a', scale: { mode: Phaser.Scale.RESIZE, width: window.innerWidth, height: window.innerHeight }, scene: SpaceScene, render: { antialias: true } });
+void loadSavedGame().catch(() => null).then(saved => { startModel = saved; new Phaser.Game({ type: new URLSearchParams(location.search).get('renderer')==='webgl'?Phaser.WEBGL:Phaser.CANVAS, parent: 'game', backgroundColor: '#080e1a', scale: { mode: Phaser.Scale.RESIZE, width: window.innerWidth, height: window.innerHeight }, scene: SpaceScene, render: { antialias: true } }); });

@@ -169,3 +169,7 @@ body.horde-alert #outpost-panel { bottom:108px; }
 /* Large displays: scale the whole interface instead of leaving it tiny. */
 @media (min-width:1700px) and (min-height:900px) { #hud, #status, #help, #session-controls, #nav-radar, #compass, #boss-bar, #horde-banner, #outpost-panel, #build-panel { zoom:1.25; } #builder, #map-window, #settings-menu { zoom:1.12; } }
 @media (min-width:2300px) and (min-height:1200px) { #hud, #status, #help, #session-controls, #nav-radar, #compass, #boss-bar, #horde-banner, #outpost-panel, #build-panel { zoom:1.6; } #builder, #map-window, #settings-menu { zoom:1.35; } }
+.fleet-ship { border-left:5px solid var(--paint,#8194a2); }
+.fleet-paint { display:flex; gap:3px; flex:none; } .fleet-paint .paint { width:18px; height:18px; padding:0; min-width:0; background:var(--paint); border:2px solid #0a121c; box-shadow:inset 2px 2px 0 #ffffff40, inset -2px -2px 0 #00000055; } .fleet-paint .paint.on { border-color:#f2fbff; outline:1px solid #75ebc3; }
+.fleet-bar { flex-wrap:wrap; row-gap:8px; } .fleet-ships { flex:1 1 280px; scrollbar-width:thin; scrollbar-color:#3b566e #0b1423; }
+.fleet-ship.flying { border-left-color:var(--paint,#75ebc3); }

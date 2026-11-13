@@ -108,3 +108,14 @@ test('a map click converts back to the world position at any zoom and pan', () =
     }
   }
 });
+
+test('each ship keeps its own paint and bad paint values fall back to bare metal', () => {
+  const m = docked(); assert.equal(m.shipPaint, 0);
+  m.buyShip(); m.buyShip(); assert.deepEqual(m.hangar.map(ship => ship.paint), [1, 2]);
+  assert.ok(m.setShipPaint(4)); assert.equal(m.setShipPaint(FLEET.paints.length), false); assert.equal(m.setShipPaint(-1), false); assert.equal(m.setShipPaint(1.5), false); assert.equal(m.shipPaint, 4);
+  assert.ok(m.switchShip(m.hangar[0].id)); assert.equal(m.shipPaint, 1); assert.equal(m.hangar[0].paint, 4);
+  const save = JSON.parse(JSON.stringify(m.toSave())), loaded = GameModel.fromSave(save);
+  assert.equal(loaded.shipPaint, 1); assert.deepEqual(loaded.hangar.map(ship => ship.paint), [4, 2]);
+  save.shipPaint = 99; save.hangar[0].paint = 'red';
+  const odd = GameModel.fromSave(save); assert.equal(odd.shipPaint, 0); assert.ok(odd.switchShip(odd.hangar[0].id)); assert.equal(odd.shipPaint, 0);
+});
