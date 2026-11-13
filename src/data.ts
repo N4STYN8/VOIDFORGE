@@ -335,6 +335,16 @@ export const COLLISION = { restitution: 0.3, asteroidDrag: 0.4, safeSpeed: 40, d
 export const EXPLORATION = { cell: 480, radius: 850 };
 export const MODULE_DURABILITY: Record<ModuleKind, number[]> = { reactor:[60,90,130],cooler:[40,60,85],pulse:[40,60,85],rail:[55,80,110],plasma:[45,70,100],flak:[45,70,100],emp:[40,60,90],tractor:[40,60,85],cannon:[45,65,90],miner:[40,60,85],rocket:[50,75,105],cargo:[35,55,80],armor:[100,150,220],engine:[40,60,85],shield:[35,55,80],builder:[45,65,90] };
 for(const durability of Object.values(MODULE_DURABILITY))durability.push(Math.round(durability[2]*1.4),Math.round(durability[2]*1.9));
+/**
+ * Player-versus-player (stage 4). Open outside station safe rings; lobby members are allies. A pilot destroyed
+ * by another pilot loses their carried cargo to the killer and rebuilds at their home station for
+ * `rebuildPerCore` minerals per core level (crystal from core 3), paid from stored minerals as far as they go.
+ * `damageCap` limits damage per second accepted from one attacker; `creditWindow` is how long a hit still
+ * counts as the kill.
+ */
+export const PVP = { damageCap: 600, creditWindow: 12, rebuildPerCore: { iron: 30, copper: 18 }, rebuildRare: { crystal: 4 } };
+/** Sector grid: `matchChance` is how often a never-visited cell asks the relay for a matched pilot's sector while online. Flying into a world edge for `hold` seconds moves the ship to the next sector, `entryInset` units inside its opposite edge. `bound` matches the ship clamp. */
+export const SECTOR = { bound: 20, edge: 40, hold: 1.5, entryInset: 320, clearance: 45, slide: 90, matchChance: 0.5 };
 export const REPAIR = { ironPerHull: 0.2, copperPerModule: 0.05, salvageFraction: 0.5, emergencyMining: 3 };
 export const PATROL = { groupSize: 3, spacing: 65, speed: 55, turnRate: 0.08, sharedDetectionMultiplier: 1.4 };
 export const ORE_COMBAT = { materialPerDamage: 0.1, recovery: 0.35, impulsePerDamage: 0.3, maxShotSpeed: 12 };

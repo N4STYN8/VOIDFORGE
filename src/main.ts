@@ -9,12 +9,17 @@ import { EffectPool } from './effects.ts';
 import { drawParticles, drawEnergyBeam, drawProjectile, drawEmp } from './effectsRender.ts';
 import { GameModel } from './model.ts';
 import { cellOf, cellCenter, bounds as outpostBounds, outpostStats, stationLayout, storedTotal, structureAt, maxHealth, turretOf, dronesOf, outputOf, type Outpost, type Structure } from './outposts.ts';
-import { WORLD, SHIP, RESOURCES, ENEMIES, ENEMY_AI, WAYPOINTS, OUTPOST, STRUCTURES, STRUCTURE_ABILITIES, type StructureKind, type Resource, EXPLORATION, MODULES, BUILD_GRID, equipment, upgradeCost, statsLabel, type EquipmentKind, type ModuleKind, FLEET } from './data.ts';
+import { SECTOR, WORLD, SHIP, RESOURCES, ENEMIES, ENEMY_AI, WAYPOINTS, OUTPOST, STRUCTURES, STRUCTURE_ABILITIES, type StructureKind, type Resource, EXPLORATION, MODULES, BUILD_GRID, equipment, upgradeCost, statsLabel, type EquipmentKind, type ModuleKind, FLEET } from './data.ts';
 import './style.css';
 import './cockpit.css';
 import './outfitter.css';
 import './map.css';
 import { hashSeed } from './world.ts';
+import { travel, enterWorld, returnHome, worldRef, rebuildAtHome, ownsSector, progressionScore, linkedHomes } from './sectors.ts';
+import { SECTOR_STEPS } from './sectorGrid.ts';
+import { NetClient, relayUrl, inviteLink, type PeerPose } from './net.ts';
+import { SharedLink } from './sharedLink.ts';
+import { NET } from './netProtocol.ts';
 import { loadSavedGame, saveGame, saveText, backupSavedGame } from './persistence.ts';
 /** The save found at start-up; storage is read before the game is created because the large store is asynchronous. */
 let startModel: GameModel | null = null;
@@ -31,6 +36,15 @@ class SpaceScene extends Phaser.Scene {
   private saveElapsed = 0;
   private sessionControls = document.createElement('section');
   private hudContent='';
+  /** Relay connection, lobby state and remote ships. Presentation and transport only; the model stays local. */
+  private net = new NetClient();
+  private travelPending = false;
+  /** Shared-sector state (rocks, enemies, shots, loot) while other pilots are in this sector. */
+  private link = new SharedLink(this.net, () => this.model);
+  private netPanel = document.createElement('div');
+  private netContent = '';
+  private peerSprites: Phaser.GameObjects.Image[] = [];
+  private peerLabels: Phaser.GameObjects.Text[] = [];
   private hudElapsed = 0;
   private mapElapsed = 0;
   private asteroidCache = new Map<number, { revision: number; key: string; used: number }>();
@@ -99,6 +113,7 @@ class SpaceScene extends Phaser.Scene {
     this.settings=new GameSettings(this.audio,this.effects,open=>{this.input.keyboard!.enabled=!open;if(open)this.input.keyboard!.disableGlobalCapture();else this.input.keyboard!.enableGlobalCapture();});
     this.cockpit=new Cockpit(this.sessionControls,action=>this.cockpitCommand(action));
     this.sessionControls.querySelector('[data-settings]')!.addEventListener('click',()=>this.settings.show());
+    this.setupNetPanel();
     this.sessionControls.addEventListener('focusin', event => { if ((event.target as HTMLElement).id === 'seed-input') { this.input.keyboard!.enabled = false; this.input.keyboard!.disableGlobalCapture(); this.paused = true; } });
     this.sessionControls.addEventListener('focusout', () => { this.input.keyboard!.enabled = true; this.input.keyboard!.enableGlobalCapture(); });
     this.sessionControls.addEventListener('click', event => {
@@ -300,6 +315,7 @@ class SpaceScene extends Phaser.Scene {
     this.input.mouse!.disableContextMenu();
     this.input.keyboard!.addCapture(['SPACE', 'W', 'A', 'S', 'D']);
     this.game.events.on('blur', () => { this.paused = true; });
+    this.startNet();
   }
   update(_time: number, delta: number) {
     if (Phaser.Input.Keyboard.JustDown(this.keys.M)) { this.setMapOpen(!this.mapOpen); this.building = false; }
@@ -314,7 +330,7 @@ class SpaceScene extends Phaser.Scene {
       else if (this.building) this.building = false;
       else this.paused = !this.paused;
     }
-    if (Phaser.Input.Keyboard.JustDown(this.keys.R)) { if (this.buildMode) this.buildRot = (this.buildRot + 1) % 4; else this.model.respawn(); }
+    if (Phaser.Input.Keyboard.JustDown(this.keys.R)) { if (this.buildMode) this.buildRot = (this.buildRot + 1) % 4; else if (this.model.rebuildDue && this.model.dead) { this.switchModel(rebuildAtHome(this.model)); saveGame(this.model, this.saveFailed); } else this.model.respawn(); }
     if (Phaser.Input.Keyboard.JustDown(this.keys[OUTPOST.key]) && !this.building && !this.mapOpen && !this.settings.open) this.toggleBuildMode();
     if (this.buildMode && (this.model.buildModeError && !this.model.builder || this.building || this.mapOpen)) this.buildMode = false;
     if (Phaser.Input.Keyboard.JustDown(this.keys.N)){this.audio.toggleMute();this.settings.sync();}
@@ -331,6 +347,18 @@ class SpaceScene extends Phaser.Scene {
       x: Number(this.keys.D.isDown) - Number(this.keys.A.isDown), y: Number(this.keys.S.isDown) - Number(this.keys.W.isDown),
       aim, fire: !this.buildMode && !(this.mapOpen&&this.mapPointer) && pointer.leftButtonDown(), overclock:Phaser.Input.Keyboard.JustDown(this.keys.C)||this.commandInput.has('overclock'), boost, mine: !this.buildMode && ((!(this.mapOpen&&this.mapPointer)&&pointer.rightButtonDown()) || this.keys.SPACE.isDown), dock, view: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
     });
+    // performance.now, not the Phaser loop clock: remote samples are stamped with it on arrival.
+    this.updateNet(performance.now() / 1000);
+    // Crossing a world edge swaps in the neighbouring sector's model; the pilot's ship and cargo travel with it.
+    if (this.model.sectorRequest && !this.travelPending) {
+      const direction = this.model.sectorRequest, step = SECTOR_STEPS[direction], g = this.model.galaxy, key = `${g.x + step.dx},${g.y + step.dy}`; this.model.sectorRequest = undefined;
+      const go = (neighbour?: Parameters<typeof travel>[2]) => { try { const next = travel(this.model, direction, neighbour); this.switchModel(next); saveGame(next, this.saveFailed); this.audio.play('collect'); } catch (error) { this.model.message = `Sector travel failed: ${(error as Error).message}`; } };
+      // Online, a never-visited cell may become the home sector of a pilot with similar progression.
+      if (this.net.connected && !g.away && !g.sectors[key] && !g.links?.[key] && Math.random() < SECTOR.matchChance) {
+        this.travelPending = true; this.model.message = 'Scanning for other pilots beyond the edge…';
+        void this.net.match(linkedHomes(this.model)).then(found => { if (found) this.model.message = `Crossing into ${found.name ?? 'another pilot'}'s sector.`; go(found); }).finally(() => { this.travelPending = false; });
+      } else { go(); return; }
+    }
     if (!this.paused && !this.building && !this.settings.open) {
       for(const event of this.model.effects){if(event.type==='cue'&&event.cue)this.audio.play(event.cue,event.pitch,event.volume);else if(event.type==='muzzle'&&event.weapon&&!event.silent)this.audio.playWeapon(event.weapon,event.level===5?.8:1);if(event.type==='arc')this.audio.play('pulse');if(event.type==='collection')this.audio.play('collect');if(event.type==='shield')this.audio.play('shield');}
       // Hull hits crunch, shield hits ring (the shield cue comes from its own event), and losing the ship has its own sound.
@@ -396,9 +424,121 @@ class SpaceScene extends Phaser.Scene {
     this.status.textContent = this.paused ? 'PAUSED — Press Esc to resume' : this.model.message;
     this.status.classList.toggle('urgent', this.model.dead || this.paused);
   }
+  /** Builds the multiplayer section of the Systems menu: pilot name, connect, create/join lobby, invite, leave. */
+  private setupNetPanel() {
+    const saved = (key: string) => { try { return localStorage.getItem(key); } catch { return null; } };
+    this.netPanel.className = 'net-panel'; this.netPanel.id = 'net-panel';
+    this.netPanel.innerHTML = `<div class="net-head"><b>MULTIPLAYER</b><span data-net-status></span></div>
+      <div class="net-row"><input id="net-name" maxlength="${NET.maxName}" aria-label="Pilot name" placeholder="Pilot name"><button data-net="connect"></button></div>
+      <div class="net-row"><button data-net="create">Create lobby</button><input id="net-code" maxlength="${NET.codeLength}" aria-label="Lobby code" placeholder="CODE" autocomplete="off"><button data-net="join">Join</button></div>
+      <div class="net-lobby" data-net-lobby hidden><div class="net-row"><b data-net-code></b><button data-net="invite">Copy invite</button><button data-net="leave">Leave</button></div><ul data-net-members></ul></div>
+      <small data-net-note></small>`;
+    this.sessionControls.append(this.netPanel);
+    const name = this.netPanel.querySelector<HTMLInputElement>('#net-name')!, code = this.netPanel.querySelector<HTMLInputElement>('#net-code')!;
+    name.value = saved('voidforge.pilot') ?? this.model.shipName;
+    const connect = () => { const pilot = name.value.trim() || 'Pilot'; try { localStorage.setItem('voidforge.pilot', pilot); } catch { /* storage blocked */ } this.net.connect(relayUrl(location.search), pilot); };
+    this.netPanel.addEventListener('focusin', event => { if ((event.target as HTMLElement).tagName === 'INPUT') { this.input.keyboard!.enabled = false; this.input.keyboard!.disableGlobalCapture(); } });
+    code.addEventListener('keydown', event => { if (event.key === 'Enter') { connect(); this.net.join(code.value); code.blur(); } });
+    this.netPanel.addEventListener('click', event => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-net]'); if (!button) return;
+      const action = button.dataset.net;
+      if (action === 'connect') { if (this.net.status === 'online' || this.net.status === 'connecting') this.net.disconnect(); else connect(); }
+      if (action === 'create') { connect(); this.net.create(); }
+      if (action === 'join') { if (!code.value.trim()) this.model.message = 'Type the lobby code your friend shared.'; else { connect(); this.net.join(code.value); } }
+      if (action === 'leave') this.net.leave();
+      if (action === 'invite' && this.net.lobby) {
+        const link = inviteLink(location.origin, location.pathname, this.net.lobby.code);
+        const copied = navigator.clipboard?.writeText(link);
+        if (copied) void copied.then(() => { this.model.message = 'Invite link copied. Send it to a friend.'; }, () => { this.model.message = `Invite link: ${link}`; });
+        else this.model.message = `Invite link: ${link}`;
+      }
+      button.blur(); this.renderNetPanel(true);
+    });
+    this.net.onNote = text => { this.model.message = text; this.renderNetPanel(true); };
+    // Lobby world changes: guests fly into the host's sector, and back to their own when the lobby ends.
+    this.net.onLobbyWorld = world => {
+      try {
+        if (!world) { if (this.model.galaxy.away) { this.switchModel(returnHome(this.model)); saveGame(this.model, this.saveFailed); } return; }
+        if (this.net.isHost || world.seed === this.model.seed) return;
+        const spot = world.spot ? { x: world.spot[0], y: world.spot[1] } : undefined;
+        this.switchModel(enterWorld(this.model, world, spot)); saveGame(this.model, this.saveFailed);
+      } catch (error) { this.model.message = `Could not join the lobby world: ${(error as Error).message}`; }
+    };
+    this.netConnect = connect;
+    this.renderNetPanel(true);
+  }
+  private netConnect = () => {};
+  /** Runs once the scene is fully built: return home after a reload, then follow an invite link. */
+  private startNet() {
+    // A reload is never still in a lobby, so a pilot saved in someone else's world starts back in their own.
+    if (this.model.galaxy.away) this.switchModel(returnHome(this.model));
+    // Invite links: ?join=CODE connects and joins once, then the code is removed from the address bar.
+    const invited = new URLSearchParams(location.search).get('join');
+    if (invited) {
+      const code = this.netPanel.querySelector<HTMLInputElement>('#net-code')!;
+      code.value = invited.toUpperCase().slice(0, NET.codeLength); this.netConnect(); this.net.join(code.value);
+      const url = new URL(location.href); url.searchParams.delete('join'); history.replaceState(null, '', url);
+      this.model.message = `Joining lobby ${code.value}…`;
+    }
+    this.renderNetPanel(true);
+  }
+  private renderNetPanel(force = false) {
+    const net = this.net, lobby = net.lobby;
+    const state = [net.status, net.note, lobby?.code, lobby?.host, lobby?.members.map(m => m.id + m.name).join(), net.id].join('|');
+    if (!force && state === this.netContent) return; this.netContent = state;
+    const q = <T extends HTMLElement = HTMLElement>(selector: string) => this.netPanel.querySelector<T>(selector)!;
+    q('[data-net-status]').textContent = net.status.toUpperCase(); q('[data-net-status]').dataset.state = net.status;
+    q<HTMLButtonElement>('[data-net="connect"]').textContent = net.status === 'online' || net.status === 'connecting' ? 'Disconnect' : 'Connect';
+    q('[data-net-lobby]').hidden = !lobby;
+    q('[data-net-note]').textContent = net.note;
+    if (lobby) {
+      q('[data-net-code]').textContent = `LOBBY ${lobby.code}`;
+      q('[data-net-members]').replaceChildren(...lobby.members.map(m => { const li = document.createElement('li'); li.textContent = `${m.name}${m.host ? ' · host' : ''}${m.id === net.id ? ' (you)' : ''}`; return li; }));
+    }
+  }
+  /** Each frame: tell the relay which sector we are in, send our ship and collect the other pilots here. */
+  private updateNet(now: number) {
+    const p = this.model.player, net = this.net;
+    if (net.status !== 'offline') {
+      net.setSector({ ...worldRef(this.model), spot: [Math.round(p.x), Math.round(p.y)] }, ownsSector(this.model));
+      net.profile(this.model.galaxy.home, progressionScore(this.model));
+      const thrusting = this.keys.W.isDown || this.keys.A.isDown || this.keys.S.isDown || this.keys.D.isDown;
+      net.sendState(now, { x: p.x, y: p.y, vx: p.vx, vy: p.vy, angle: p.angle, health: Math.max(0, p.health), maxHealth: this.model.maxHealth, paint: this.model.shipPaint, dead: this.model.dead || undefined, thrust: thrusting || undefined,
+        blocks: [['core', 0, 0, this.model.coreLevel], ...this.model.modules.filter(m => m.integrity > 0).map(m => [m.kind, m.x, m.y, m.level] as [string, number, number, number])] });
+    }
+    const wasShared = Boolean(this.model.shared?.targets.some(t => !this.model.shared!.allies.has(t.id)));
+    this.link.frame(this.model, now);
+    if (!wasShared && this.model.shared?.targets.some(t => !this.model.shared!.allies.has(t.id))) this.model.message = 'Another pilot is in this sector. Outside station rings they can attack you, and take your cargo.';
+    const poses = net.poses(now);
+    const allies = new Set(net.lobby?.members.map(m => m.id) ?? []);
+    this.model.pilots = poses.filter(pose => !pose.dead).map(pose => ({ x: pose.x, y: pose.y, name: pose.name, hostile: !allies.has(pose.id) }));
+    this.drawPeers(poses);
+    this.renderNetPanel();
+  }
+  /** Other pilots' ships from their block layouts, with paint, a name tag and hull percentage. Pooled sprites. */
+  private drawPeers(poses: PeerPose[]) {
+    const view = this.cameras.main.worldView, cell = BUILD_GRID.cellSize, allies = new Set(this.net.lobby?.members.map(m => m.id) ?? []); let index = 0, label = 0;
+    for (const pose of poses) {
+      if (pose.x < view.x - 300 || pose.y < view.y - 300 || pose.x > view.right + 300 || pose.y > view.bottom + 300) continue;
+      const cos = Math.cos(pose.angle), sin = Math.sin(pose.angle);
+      for (const [kind, bx, by, level] of pose.blocks) {
+        const key = this.shipTexture(kind as EquipmentKind, level, pose.paint); if (!this.textures.exists(key)) continue;
+        const x = pose.x + (bx * cos - by * sin) * cell, y = pose.y + (bx * sin + by * cos) * cell;
+        const sprite = this.peerSprites[index] ?? this.add.image(x, y, key).setDepth(1); this.peerSprites[index++] = sprite;
+        sprite.setVisible(true).setPosition(x, y).setTexture(key).setRotation(pose.angle + Math.PI / 2).setAlpha(pose.dead ? 0.35 : 1);
+      }
+      const text = this.peerLabels[label] ?? this.add.text(0, 0, '', { fontFamily: 'ui-monospace, Consolas, monospace', fontSize: '11px', color: '#9fe4ff', stroke: '#03060c', strokeThickness: 3 }).setOrigin(0.5, 1).setDepth(6);
+      this.peerLabels[label++] = text;
+      const hull = Math.round(100 * pose.health / Math.max(1, pose.maxHealth));
+      // Lobby allies in cyan; anyone else can attack (open PvP), so they are red.
+      text.setVisible(true).setPosition(pose.x, pose.y - 46).setColor(allies.has(pose.id) ? '#9fe4ff' : '#ff8a7a').setText(pose.dead ? `${pose.name} · destroyed` : `${pose.name} · ${hull}%${allies.has(pose.id) ? '' : ' · hostile'}`);
+    }
+    for (; index < this.peerSprites.length; index++) this.peerSprites[index].setVisible(false);
+    for (; label < this.peerLabels.length; label++) this.peerLabels[label].setVisible(false);
+  }
   private refreshSeedLabel() {
     const label = this.sessionControls.querySelector<HTMLElement>('#world-seed');
-    if (label) { label.textContent = `WORLD SEED: ${this.model.seed}`; label.title = this.model.seed; }
+    if (label) { label.textContent = `${this.model.sectorName.toUpperCase()} · SEED: ${this.model.galaxy.home}`; label.title = this.model.seed; }
   }
   private paintBackdropTextures() {
     const layers=paintBackdrop(hashSeed(this.model.seed + ':stars') || 47);
@@ -613,8 +753,8 @@ class SpaceScene extends Phaser.Scene {
     if(action==='build')this.toggleBuildMode();else this.commandInput.add(action);
   }
   /** Texture for one block of the flown ship in its paint. Painted variants are baked once, on first use. */
-  private shipTexture(kind: EquipmentKind, level: number) {
-    const base = `icon-${kind}-${level}`, paint = this.model.shipPaint; if (!paint) return base;
+  private shipTexture(kind: EquipmentKind, level: number, paint = this.model.shipPaint) {
+    const base = `icon-${kind}-${level}`; if (!paint || !FLEET.paints[paint] || !this.textures.exists(base)) return base;
     const key = `${base}-p${paint}`;
     if (!this.textures.exists(key)) {
       const source = this.textures.get(base).getSourceImage(); if (!(source instanceof HTMLCanvasElement)) return base;

@@ -4,7 +4,7 @@ import type { GameModel } from './model.ts';
 // Navigation displays drawn with the plain Canvas 2D API: the radar minimap and the compass strip.
 // Both are read-only views of the model.
 
-export type NavMarker = { x: number; y: number; kind: 'base' | 'locked' | 'outpost' | 'waypoint' | 'boss' | 'horde'; label: string; color: string };
+export type NavMarker = { x: number; y: number; kind: 'base' | 'locked' | 'outpost' | 'waypoint' | 'boss' | 'horde' | 'pilot'; label: string; color: string };
 const hex = (color: number) => '#' + color.toString(16).padStart(6, '0');
 export const waypointColor = (index: number) => hex(WAYPOINTS.colors[index % WAYPOINTS.colors.length]);
 
@@ -15,6 +15,7 @@ export function navMarkers(model: GameModel): NavMarker[] {
   for (const outpost of model.outposts) markers.push({ x: (outpost.cx + 0.5) * OUTPOST.cell, y: (outpost.cy + 0.5) * OUTPOST.cell, kind: 'outpost', label: outpost.name, color: '#d9a441' });
   model.waypoints.forEach((w, i) => markers.push({ x: w.x, y: w.y, kind: 'waypoint', label: `Marker ${i + 1}`, color: waypointColor(i) }));
   for (const site of model.bossSites) if (!site.defeated && model.isExplored(site)) markers.push({ x: site.x, y: site.y, kind: 'boss', label: ENEMIES[site.kind].label, color: '#ff5d7a' });
+  for (const pilot of model.pilots) markers.push({ x: pilot.x, y: pilot.y, kind: 'pilot', label: pilot.name, color: pilot.hostile ? '#ff8a7a' : '#9fe4ff' });
   if (model.horde.warning > 0) markers.push({ x: model.player.x + Math.cos(model.horde.angle) * 1200, y: model.player.y + Math.sin(model.horde.angle) * 1200, kind: 'horde', label: 'Horde', color: '#ff3355' });
   return markers;
 }
@@ -22,6 +23,7 @@ function glyph(ctx: CanvasRenderingContext2D, marker: NavMarker, x: number, y: n
   ctx.fillStyle = marker.color; ctx.strokeStyle = '#05070c'; ctx.lineWidth = 1;
   ctx.beginPath();
   if (marker.kind === 'waypoint') { ctx.moveTo(x, y - size); ctx.lineTo(x + size, y); ctx.lineTo(x, y + size); ctx.lineTo(x - size, y); }
+  else if (marker.kind === 'pilot') ctx.arc(x, y, size, 0, Math.PI * 2);
   else if (marker.kind === 'boss' || marker.kind === 'horde') { ctx.moveTo(x, y - size); ctx.lineTo(x + size, y + size); ctx.lineTo(x - size, y + size); }
   else ctx.rect(x - size, y - size, size * 2, size * 2);
   ctx.closePath(); ctx.fill(); ctx.stroke();
