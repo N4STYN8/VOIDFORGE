@@ -17,6 +17,8 @@
 - [x] Unit regression suite and browser checks at 1440/1366/1024/900 widths
 - [x] Heavy combat fixture tuned to ~60 FPS with cached Canvas rendering
 
+- [x] Pointer drag/drop previews, validated targets and direct install/move/swap controls
+
 ## Publishing
 - [x] Prepare public repository connection and test/build/Pages workflow
 - [x] Push tested source to N4STYN8/VOIDFORGE

@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { moduleDrag } from './moduleDrag.ts';
 import { flightHud } from './hud.ts';
 import { outfitterMarkup } from './outfitter.ts';
 import { EffectPool } from './effects.ts';
@@ -31,13 +32,12 @@ class SpaceScene extends Phaser.Scene {
   private mapOpen = false;
   private mapWindow = document.createElement('section');
   private mapCanvas!: HTMLCanvasElement;
-  private draggedModule: { x: number; y: number } | undefined;
+  private moduleDragActive=false;
   private catalogQuery='';
   private catalogCategory='All';
   private detailMode:'install'|'module'='module';
   private gridRadius=3;
   private actionFailed=false;
-  private draggedKind:ModuleKind|undefined;
   private buildCenter = { x:0, y:0 };
   private movingModule = false;
   private baseLabels: Phaser.GameObjects.Text[] = [];
@@ -112,20 +112,15 @@ class SpaceScene extends Phaser.Scene {
     this.builder.addEventListener('change',event=>{const select=event.target as HTMLSelectElement;if(select.id==='module-category'){this.catalogCategory=select.value;this.renderBuilder();}});
     this.builder.addEventListener('keydown',event=>{if(event.key==='Escape'){this.building=false;this.builder.hidden=true;restoreKeyboard();}});
     const action=(success:boolean)=>{this.actionFailed=!success;this.audio.play(success?'build':'fail');return success;};
-    this.builder.addEventListener('dragstart',event=>{
-      const button=(event.target as HTMLElement).closest<HTMLButtonElement>('button[draggable=true]');if(!button){event.preventDefault();return;}
-      if(button.dataset.kind)this.draggedKind=button.dataset.kind as ModuleKind;
-      else this.draggedModule={x:Number(button.dataset.x),y:Number(button.dataset.y)};
-      (event as DragEvent).dataTransfer?.setData('text/plain','ship-module');
+    moduleDrag(this.builder, {
+      active: value=>{this.moduleDragActive=value;},
+      error: (source,x,y)=>source.kind?this.model.buildError(source.kind,x,y):this.model.moveError(source.x!,source.y!,x,y),
+      drop: (source,x,y)=>{
+        const success=source.kind?this.model.installModule(source.kind,x,y):this.model.moveModule(source.x!,source.y!,x,y);
+        if(action(success)){this.selectedCell={x,y};this.detailMode='module';this.movingModule=false;}
+        this.renderBuilder();
+      }
     });
-    this.builder.addEventListener('dragover',event=>{if((this.draggedModule||this.draggedKind)&&(event.target as HTMLElement).closest('.module-cell'))event.preventDefault();});
-    this.builder.addEventListener('drop',event=>{
-      event.preventDefault();const button=(event.target as HTMLElement).closest<HTMLButtonElement>('.module-cell');
-      if(button){const x=Number(button.dataset.x),y=Number(button.dataset.y);const success=this.draggedKind?this.model.installModule(this.draggedKind,x,y):this.draggedModule?this.model.moveModule(this.draggedModule.x,this.draggedModule.y,x,y):false;
-        if(action(success)){this.selectedCell={x,y};this.detailMode='module';}this.renderBuilder();}
-      this.draggedKind=undefined;this.draggedModule=undefined;
-    });
-    this.builder.addEventListener('dragend',()=>{this.draggedModule=undefined;this.draggedKind=undefined;});
     this.builder.addEventListener('click',event=>{
       const button=(event.target as HTMLElement).closest<HTMLButtonElement>('button');if(!button)return;
       if(button.dataset.pan){const direction=button.dataset.pan;if(direction==='home')this.buildCenter={x:0,y:0};else{this.buildCenter.x+=direction==='right'?2:direction==='left'?-2:0;this.buildCenter.y+=direction==='down'?2:direction==='up'?-2:0;}}
@@ -296,7 +291,7 @@ class SpaceScene extends Phaser.Scene {
   }
   private renderBuilder() {
     this.builder.hidden = !this.building;
-    if (!this.building) return;
+    if (!this.building || this.moduleDragActive) return;
     const content=outfitterMarkup(this.model,{selectedModule:this.selectedModule,selectedCell:this.selectedCell,mode:this.detailMode,query:this.catalogQuery,category:this.catalogCategory,center:this.buildCenter,radius:this.gridRadius,moving:this.movingModule,failed:this.actionFailed},this.iconUrls);
     if (content !== this.builderContent) { this.builder.innerHTML = content; this.builderContent = content; }
   }

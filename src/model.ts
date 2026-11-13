@@ -209,11 +209,16 @@ export class GameModel {
     }
     return connected;
   }
-  moveModule(x: number, y: number, toX: number, toY: number): boolean {
+  moveError(x: number, y: number, toX: number, toY: number): string | undefined {
     const m = this.modules.find(m => m.x === x && m.y === y), other = this.modules.find(m => m.x === toX && m.y === toY);
-    if (!m || this.dead || !this.atStation || !Number.isSafeInteger(toX) || !Number.isSafeInteger(toY) || Math.abs(toX) * BUILD_GRID.cellSize > WORLD.width / 2 || Math.abs(toY) * BUILD_GRID.cellSize > WORLD.height / 2 || (toX === 0 && toY === 0)) { this.message = 'Choose a build cell at an active base. The core stays fixed.'; return false; }
+    if (!m || this.dead || !this.atStation || !Number.isSafeInteger(toX) || !Number.isSafeInteger(toY) || Math.abs(toX) * BUILD_GRID.cellSize > WORLD.width / 2 || Math.abs(toY) * BUILD_GRID.cellSize > WORLD.height / 2 || (toX === 0 && toY === 0)) return 'Choose a build cell at an active base. The core stays fixed.';
     const proposed = this.modules.map(block => block === m ? { ...block, x: toX, y: toY } : block === other ? { ...block, x, y } : block);
-    if (this.connectedKeys(proposed).size !== this.modules.length + 1) { this.message = 'Every block must stay connected to the core.'; return false; }
+    if (this.connectedKeys(proposed).size !== this.modules.length + 1) return 'Every block must stay connected to the core.';
+  }
+  moveModule(x: number, y: number, toX: number, toY: number): boolean {
+    const error = this.moveError(x,y,toX,toY);
+    if (error) { this.message=error; return false; }
+    const m=this.modules.find(m=>m.x===x&&m.y===y)!,other=this.modules.find(m=>m.x===toX&&m.y===toY);
     if (other) { other.x = x; other.y = y; }
     m.x = toX; m.y = toY; this.message = other ? 'Modules swapped.' : 'Module moved. Ship layout updated.'; return true;
   }

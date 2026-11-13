@@ -38,3 +38,5 @@
 ## Deployment
 - GitHub Pages publishes the Vite dist artifact from main after npm ci/test/build. PRs only validate. Relative Vite asset URLs support the /VOIDFORGE/ project path.
 - Browser saves belong to their site origin. Export/import moves a localhost save to the hosted page. The repository never contains player saves or credentials.
+
+Editor dragging lives in `src/moduleDrag.ts`, uses pointer events with a movement threshold, and delegates validation/actions to the model. `moveError` shares side-effect-free validation between preview and committed movement. Builder DOM refresh pauses during active dragging to preserve the source and destination.

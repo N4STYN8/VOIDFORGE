@@ -11,6 +11,11 @@
 - Added moderately louder normalized audio, unique weapon profiles, continuous mining/tractor hums, collection/shield/burst/failure cues and master/effects sliders. Tractor beams stay purple at every tier.
 - Preserved seeded chunk worlds, carved ore, resource conservation, current enemy patrols, outposts and v1 saves.
 
+## Drag-and-drop editor update
+- Replaced native HTML dragging with pointer-based dragging for catalog installs and installed module moves/swaps.
+- Added floating module previews, green/red target validation, release instructions, Escape/outside cancellation and post-drag click suppression. Core stays fixed; connectivity, affordability and upgrade state remain enforced.
+- Browser checked actual mouse dragging: catalog installation, invalid core drop without mutation and occupied-cell swap; no runtime errors. All 65 tests and build pass.
+
 ## Verification
 - 65 tests passing, including prior world/geometry/combat tests and new unlimited module combinations, exact tractor behavior, full cargo, no duplication, energy/heat/mass, weapon origins, EMP, Shift, pool cleanup and effect-disabled equivalence.
 - Production build passes; expected Phaser bundle warning only (~368 KB gzip).
