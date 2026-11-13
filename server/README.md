@@ -38,48 +38,27 @@ It prints the lobby code; join it from the game's Systems menu, or open
 
 `GET /` returns a one-line health text with counts (no player data).
 
-## Raspberry Pi (voidforge.2dq.us)
+## Raspberry Pi (voidforge.2dq.us) — deployed 2026-11-13
 
-Requires Node 22.18+ (or 24). The relay only needs the repository's `server/` and `src/netProtocol.ts`.
+The Pi runs Debian 11 with Node 16 (shared with other services, so it was not upgraded). Node 16 cannot
+strip TypeScript, so the relay is bundled into one JavaScript file:
 
-Option A, relay serves TLS with the existing Let's Encrypt certificate (the certificate files must be
-readable by the service user; use a deploy hook or group permission, not a copy committed anywhere):
-
-```ini
-# /etc/systemd/system/voidforge-relay.service
-[Unit]
-Description=VOIDFORGE relay
-After=network-online.target
-
-[Service]
-WorkingDirectory=/opt/voidforge
-ExecStart=/usr/bin/node --experimental-strip-types server/main.ts
-Environment=PORT=443
-Environment=TLS_CERT=/etc/letsencrypt/live/voidforge.2dq.us/fullchain.pem
-Environment=TLS_KEY=/etc/letsencrypt/live/voidforge.2dq.us/privkey.pem
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-Restart=always
-User=voidforge
-
-[Install]
-WantedBy=multi-user.target
+```bash
+npm run relay-bundle
 ```
 
-Option B, nginx or Caddy terminates TLS and proxies to the relay on `127.0.0.1:8787` (set
-`HOST=127.0.0.1`). nginx needs the WebSocket upgrade headers:
+That writes `dist-relay/relay.mjs`. On the Pi it lives at `/opt/voidforge/relay.mjs` (owned by root),
+run by the `voidforge-relay` systemd service as the unprivileged `voidforge` user with `HOST=127.0.0.1`
+and `PORT=8787`. nginx terminates TLS for `voidforge.2dq.us` (`/etc/nginx/sites-available/voidforge`,
+certificate from `certbot --nginx`, renewed by certbot's timer with no relay restart) and proxies to it
+with the WebSocket upgrade headers. Updating it, after agreeing with the other developer:
 
-```nginx
-location / {
-  proxy_pass http://127.0.0.1:8787;
-  proxy_http_version 1.1;
-  proxy_set_header Upgrade $http_upgrade;
-  proxy_set_header Connection "upgrade";
-  proxy_read_timeout 120s;
-}
+```bash
+scp dist-relay/relay.mjs pi:/tmp/voidforge-relay.mjs
+ssh pi 'sudo install -m 644 /tmp/voidforge-relay.mjs /opt/voidforge/relay.mjs && sudo systemctl restart voidforge-relay'
 ```
 
-Certificate renewals need a relay restart in option A (`systemctl restart voidforge-relay` from a
-certbot deploy hook).
+Restarting drops every connected pilot; clients show the disconnect and can reconnect.
 
 ## Limits and load
 
@@ -95,5 +74,8 @@ npm run load-test -- 1000 4 20
 
 Measured on the development PC with 1,000 pilots in 4-pilot sectors: 30% of one CPU core, 111 MB,
 latency p50 22 ms / p99 38 ms, 40.7 Mbit/s outbound. Outbound bandwidth grows with how many pilots are
-near each other, so the Pi's home upload speed is the likely ceiling; run the same test against
-`wss://voidforge.2dq.us` from another machine once the relay is deployed. `GET /stats` gives live counters.
+near each other.
+
+Measured against the Pi over the internet, 200 pilots: 64% of one core, 52 MB, p50 36 ms / p99 124 ms,
+8.5 Mbit/s outbound. The relay is one Node process, so the Pi holds roughly 300 pilots; 1,000 needs a
+faster host or rooms split across processes. `GET /stats` gives live counters.

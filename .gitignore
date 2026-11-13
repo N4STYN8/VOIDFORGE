@@ -5,3 +5,4 @@ dist/
 *-check*.png
 asteroid-full.png
 asteroid-carved.png
+dist-relay/

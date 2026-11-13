@@ -284,3 +284,6 @@ Release authorization: user requested live publication of the outfitter update. 
 - Next: user review of chart opacity and placement during combat at normal resolution.
 
 Map release: user explicitly requested “push live”. Re-fetched origin: HEAD/main still synchronized; another developer's new claude/station-visuals branch is left untouched. Revalidated 212 passing tests and production build; existing bundle warning only. Publishing the reviewed map changes to the existing main-triggered GitHub Pages target.
+
+Relay deployed on the Pi (2026-11-13, user go-ahead: "you can deploy to the pi ssh pi"). MMO work committed locally as f89cc7f on claude/mmo-sectors (not pushed). Pi: Debian 11, Node 16 kept as is; relay bundled with esbuild (`npm run relay-bundle`) to /opt/voidforge/relay.mjs, systemd `voidforge-relay` as user `voidforge` on 127.0.0.1:8787, nginx site `voidforge` with a new Let's Encrypt certificate. Verified: health page over HTTPS, foreign Origin refused (403), two clients created and joined a lobby over wss. Load test 200 pilots: 64% of one core, p99 124 ms — about 300 pilots is the Pi's ceiling. The live game page still lacks the multiplayer UI until the branch reaches main.
+- Next: play-test online with Nate (local build pointed at the default relay), then decide on a PR.
