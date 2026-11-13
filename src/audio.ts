@@ -1,5 +1,5 @@
 import type { WeaponKind } from './data.ts';
-export type SoundCue='fail'|'hit'|'fire'|'pulse'|'rail'|'plasma'|'rocket'|'flak'|'emp'|'mine'|'impact'|'shield'|'explosion'|'collect'|'boost'|'build'
+export type SoundCue='uiHover'|'uiClick'|'uiWarning'|'fail'|'hit'|'fire'|'pulse'|'rail'|'plasma'|'rocket'|'flak'|'emp'|'mine'|'impact'|'shield'|'explosion'|'collect'|'boost'|'build'
   |'railCharge'|'lock'|'drone'|'alert'|'bossWarning'|'bossPhase'|'bossDown'|'surge'|'empCharge'|'moduleLost'|'hull'|'death'|'hordeAlarm';
 /**
  * One synthesized voice per cue: an oscillator sweeping start -> (peak) -> end over `duration`.
@@ -9,6 +9,9 @@ export type SoundCue='fail'|'hit'|'fire'|'pulse'|'rail'|'plasma'|'rocket'|'flak'
  */
 export type SoundProfile={start:number;end:number;duration:number;wave:OscillatorType;gain:number;peak?:number;noise?:number;noiseTone?:number;repeat?:number;every?:number;gap?:number};
 export const SOUND_PROFILES:Record<SoundCue,SoundProfile>={
+  uiHover:{start:780,end:1080,duration:.045,wave:'sine',gain:.025,gap:.09},
+  uiClick:{start:1050,end:520,duration:.085,wave:'triangle',gain:.07,gap:.07},
+  uiWarning:{start:420,end:250,duration:.16,wave:'triangle',gain:.065,gap:.15},
   fail:{start:220,end:120,duration:.12,wave:'triangle',gain:.05},hit:{start:440,end:85,duration:.09,wave:'triangle',gain:.12},
   fire:{start:740,end:170,duration:.07,wave:'square',gain:.045},pulse:{start:1300,end:420,duration:.11,wave:'sine',gain:.08},
   rail:{start:240,peak:1600,end:55,duration:.25,wave:'sawtooth',gain:.085,noise:.04,noiseTone:3000},plasma:{start:160,end:42,duration:.3,wave:'triangle',gain:.12},

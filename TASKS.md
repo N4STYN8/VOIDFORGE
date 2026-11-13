@@ -214,3 +214,4 @@ Choices: own Node + WebSocket relay; sector grid; owners keep changes to their s
 - [x] Revise menu composition toward reference: scenic dockside foreground/portrait, violet planet/nebula, enlarged Forge and cyan industrial frames
 - [x] Replace rejected primitive art with detailed reference-derived menu illustration; preserve working HTML controls and independent animation
 - [x] Integrate latest multiplayer update safely; expose real lobby entry and verify menu disconnect/no-save behavior with a local relay
+- [x] Remove menu flyby ships; add bounded settings-aware button sounds and an explicit New Game warning with default Cancel focus

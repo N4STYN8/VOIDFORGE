@@ -1,10 +1,10 @@
 /** Illustrated reference plate + independently animated, bounded presentation layers. */
 const illustrationUrl=new URL('./assets/menu-forge-v2.webp',import.meta.url).href;
-import { paintEnemy, paintAsteroid } from './sprites.ts';
+import { paintAsteroid } from './sprites.ts';
 export class MenuBackdrop {
  private frame=0;private clock=0;private last=0;private running=false;
  private reduced=matchMedia('(prefers-reduced-motion: reduce)');
- private illustration=new Image();private ships=[paintEnemy('scout'),paintEnemy('raider'),paintEnemy('tank')];
+ private illustration=new Image();
  private rocks=Array.from({length:6},(_,i)=>{const c=document.createElement('canvas');c.width=c.height=112;paintAsteroid(c.getContext('2d')!,{id:i+1,x:0,y:0,radius:28+i%3*5,ore:i%3===0?'copper':'iron',amount:60,health:60,vx:0,vy:0,shapeSeed:700+i});return c;});
  private visibility=()=>{this.last=0;if(!document.hidden&&this.running&&!this.frame)this.frame=requestAnimationFrame(this.animate);};
  constructor(private canvas:HTMLCanvasElement){this.illustration.onload=this.visibility;this.illustration.src=illustrationUrl;document.addEventListener('visibilitychange',this.visibility);window.addEventListener('resize',this.visibility);this.reduced.addEventListener('change',this.visibility);}
@@ -29,9 +29,6 @@ export class MenuBackdrop {
   for(let i=0;i<80;i++){const x=(i*191.37+t*(1+i%3))%w,y=(i*97.73)%h;if(x<w*.48&&y>h*.23)continue;g.fillStyle=i%4?'#6584ad':'#9cdfeb';g.fillRect(x|0,y|0,1,1);}
   g.imageSmoothingEnabled=false;
   for(let i=0;i<(mobile?3:7);i++){const x=ox+((i*257+t*(2+i%3))%(1672+100)-50)*scale,y=oy+(160+i*101%540)*scale,s=(.2+i%3*.09)*scale;if(x<w*.48&&y>h*.25)continue;g.save();g.translate(x,y);g.rotate(t*.025*(i%2?1:-1)+i);g.drawImage(this.rocks[i%6],-56*s,-56*s,112*s,112*s);g.restore();}
-  for(let i=0;i<(mobile?3:6);i++){const cycle=(t*(.009+i*.001)+i*.173)%1,dock=i<2;let x:number,y:number,angle:number;
-   if(dock){const r=Math.abs(cycle-.5)*2;x=sx-r*iw*.55;y=sy+ih*.09+r*ih*.30;angle=cycle<.5?-.35:Math.PI-.35;}else{x=ox+cycle*(iw+160)-80;y=oy+ih*(.15+(i%4)*.12);angle=-.18;}
-   const s=(i<2?55:32)*scale;g.save();g.translate(x,y);g.rotate(angle);g.globalAlpha=.2;g.fillStyle='#1fe9ff';g.fillRect(-s*.5-65*scale,-3*scale,65*scale,5*scale);g.globalAlpha=1;g.fillStyle='#80ffff';g.fillRect(-s*.5-30*scale,-scale,30*scale,2*scale);g.fillStyle='#ffb24f';g.fillRect(-s*.5-6*scale,-2*scale,8*scale,4*scale);g.drawImage(this.ships[i%3],-s/2,-s/2,s,s);g.restore();
-  }
+
  }
 }

@@ -320,6 +320,7 @@ class SpaceScene extends Phaser.Scene {
       continue:async()=>{if(!this.sessionStarted){const saved=await loadSavedGame();if(!saved)throw new Error('No valid saved game could be loaded. Start a new voyage or import a backup.');this.switchModel(saved);}this.beginSession();},
       newGame:async seed=>{const next=seed?new GameModel(seed):new GameModel();if(this.sessionStarted){const error=await saveGameConfirmed(this.model);if(error)throw new Error(error);}if(!await backupSavedGame())throw new Error('Backup failed. Export your current save before starting a new world.');this.switchModel(next);this.beginSession();const error=await saveGameConfirmed(next);if(error)this.model.message=error;},
       settings:()=>this.settings.show(),
+      sound:kind=>{if(kind!=='hover')this.audio.unlock();this.audio.play(kind==='hover'?'uiHover':kind==='warning'?'uiWarning':'uiClick');},
       multiplayer:async()=>{if(!this.sessionStarted){const saved=await loadSavedGame();if(!saved)throw new Error('Start a new voyage first, then open Multiplayer to use its pilot.');this.switchModel(saved);}this.beginSession();const panel=document.querySelector<HTMLDetailsElement>('#cockpit-session');if(panel)panel.open=true;this.netPanel.querySelector<HTMLInputElement>('#net-name')?.focus();},
     },Boolean(startModel));
     this.settings.addMainMenu(()=>{if(this.menu.open)return;void this.returnToMenu();});
