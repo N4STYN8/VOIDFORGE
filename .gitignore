@@ -1,0 +1,7 @@
+node_modules/
+dist/
+*.log
+# Local visual QA captures (not game assets)
+*-check*.png
+asteroid-full.png
+asteroid-carved.png
