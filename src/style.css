@@ -65,3 +65,40 @@ kbd { display:inline-block; min-width:16px; text-align:center; background:#1d324
 .settings-saved { border-top:1px solid #31485c; padding-top:12px; } #session-controls>[data-settings] { width:100%; margin-top:8px; }
 
 .ability-details { margin-top:16px; padding:12px; border:1px solid #5c6682; background:#19233a; } .ability-details>small { color:#b6c5f6; font-size:10px; } .ability-details h4 { margin:5px 0; color:#dcdbff; font-size:14px; } .ability-details p { font-size:11px; color:#c0cee1; }
+/* Pixel-art pass: square corners, hard borders and hard offset shadows. Colours and edges only; no layout changes. */
+#hud, #help, #status, #session-controls, #builder, #map-window, #settings-menu, .outfitter-panel, .upgrade-card, .ship-overview, .outfitter-resources, .yard-storage, .repair-row, .module-drag-ghost, .module-drag-hint, .zone-chip, button, .file-button, kbd, input, select { border-radius:0 !important; }
+#hud, #help, #status, #session-controls { background:#0b1423f5; border:2px solid #2f4860; box-shadow:4px 4px 0 #02050acc, inset 2px 2px 0 #ffffff12, inset -2px -2px 0 #00000055; }
+#hud { border-top:2px solid #7fd6f2; } #status { border-left:2px solid #7fd6f2; }
+#hud strong, #builder h2, #map-window h2, #settings-menu h2, .section-label, .flight-header small, .zone-chip, kbd { font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; }
+#builder, #map-window, #settings-menu { border-width:2px; box-shadow:8px 8px 0 #02050acc, inset 2px 2px 0 #ffffff12, inset -2px -2px 0 #00000066; }
+.outfitter-panel, .upgrade-card, .ship-overview, .outfitter-resources { box-shadow:inset 2px 2px 0 #ffffff0d, inset -2px -2px 0 #00000055; }
+button, .file-button { background:#1c2b3d; border:2px solid #53667e; box-shadow:inset 2px 2px 0 #ffffff1f, inset -2px -2px 0 #00000070, 2px 2px 0 #02050a; }
+button:not(:disabled):hover { background:#2a4257; border-color:#92dfeb; }
+button:not(:disabled):active { transform:translate(2px,2px); box-shadow:inset 2px 2px 0 #00000080; }
+button[aria-pressed=true], .primary-action { background:#275647; border-color:#6aa78d; }
+.build-grid { background:#050b14; box-shadow:inset 3px 3px 0 #000a; }
+.build-grid button { background:#152332; box-shadow:inset 1px 1px 0 #ffffff10; }
+.module-cell.occupied { background:#223549; box-shadow:inset 2px 2px 0 #ffffff26, inset -2px -2px 0 #00000080; }
+.module-cell[data-selected=true] { background:#2d4960; }
+.catalog-item>img, .module-cell>img, .detail-title>img, .module-drag-ghost img { image-rendering:pixelated; }
+.vital-bar, .cargo-meter, .meter { height:6px; box-shadow:inset 0 2px 0 #000a; }
+.vital-bar>i, .cargo-meter>i, .meter i { box-shadow:inset 0 2px 0 #ffffff55, inset 0 -2px 0 #00000055; }
+.resource-table i, .ore-icon { transform:none; box-shadow:inset 2px 2px 0 #ffffff80, inset -2px -2px 0 #00000066; width:8px; height:8px; }
+#status.urgent { box-shadow:6px 6px 0 #02050acc; }
+.zone-chip.threat-1 { color:#9fe6bf; border-color:#37624e; } .zone-chip.threat-2 { color:#f0d27a; border-color:#6e5c26; background:#2c2612; } .zone-chip.threat-3 { color:#ffab78; border-color:#7a4526; background:#33200f; } .zone-chip.threat-4 { color:#ff86a4; border-color:#8a2f4c; background:#3a1224; }
+#boss-bar { position:fixed; top:12px; left:50%; transform:translateX(-50%); width:min(520px,44vw); padding:8px 12px; background:#160d14f2; border:2px solid #8a2f4c; box-shadow:4px 4px 0 #02050acc, inset 2px 2px 0 #ffffff12; pointer-events:none; z-index:5; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; }
+#boss-bar[hidden] { display:none; } #boss-bar header, #boss-bar footer { display:flex; justify-content:space-between; gap:12px; font-size:10px; letter-spacing:1px; color:#e7b9c6; } #boss-bar header strong { color:#ffd9e2; font-size:13px; letter-spacing:3px; } #boss-bar footer { margin-top:5px; color:#b996a2; }
+.boss-hull, .boss-shield { position:relative; background:#2a1420; box-shadow:inset 0 2px 0 #000a; } .boss-hull { height:10px; margin-top:6px; } .boss-shield { height:4px; margin-top:3px; }
+.boss-hull>i, .boss-shield>i { display:block; height:100%; } .boss-hull>i { background:#f0527a; box-shadow:inset 0 2px 0 #ffffff55, inset 0 -2px 0 #00000055; } .boss-shield>i { background:#7fd0ff; } .boss-hull>b { position:absolute; top:-2px; bottom:-2px; width:2px; background:#ffe3a8; }
+/* Horde alert: stepped (pixel-style) red flashing on every HUD panel plus a red screen edge. */
+@keyframes horde-flash { 0%,49% { border-color:#ff3355; box-shadow:4px 4px 0 #3a0611cc, inset 0 0 0 2px #ff335566, inset 0 0 26px #ff335533; } 50%,100% { border-color:#6e1626; box-shadow:4px 4px 0 #02050acc, inset 0 0 0 2px #ff335518; } }
+@keyframes horde-edge { 0%,49% { opacity:1; } 50%,100% { opacity:.35; } }
+body.horde-alert #hud, body.horde-alert #status, body.horde-alert #help, body.horde-alert #session-controls { animation:horde-flash .9s steps(1,end) infinite; }
+body.horde-warning #hud, body.horde-warning #status, body.horde-warning #help, body.horde-warning #session-controls { animation-duration:.45s; }
+body.horde-alert #hud strong, body.horde-alert .zone-chip { color:#ff8fa3; } body.horde-alert .zone-chip { border-color:#ff3355; background:#3a0d18; }
+body.horde-alert #game::after { background:radial-gradient(ellipse at center, transparent 48%, rgba(255,40,70,.34) 100%); animation:horde-edge .9s steps(1,end) infinite; }
+#horde-banner { position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:6; padding:8px 22px; text-align:center; pointer-events:none; background:#2a0610f2; border:2px solid #ff3355; box-shadow:4px 4px 0 #02050acc, inset 2px 2px 0 #ffffff1a; font-family:ui-monospace,'Cascadia Mono',Consolas,monospace; animation:horde-flash .9s steps(1,end) infinite; }
+#horde-banner[hidden] { display:none; } #horde-banner.boss-below { top:96px; }
+#horde-banner strong { display:block; color:#ffd9df; font-size:22px; letter-spacing:8px; } #horde-banner span { display:block; color:#ff9aac; font-size:12px; letter-spacing:2px; } #horde-banner small { display:block; margin-top:3px; color:#d7a3ad; font-size:10px; }
+body.horde-warning #horde-banner { animation-duration:.45s; }
+@media (prefers-reduced-motion: reduce) { body.horde-alert #hud, body.horde-alert #status, body.horde-alert #help, body.horde-alert #session-controls, body.horde-alert #game::after, #horde-banner { animation:none; border-color:#ff3355; } }

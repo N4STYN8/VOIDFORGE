@@ -47,7 +47,7 @@ export class EffectPool {
   consume(events:EffectEvent[],view:EffectView){
     if(!this.on)return;
     for(const e of events){
-      if(!this.visible(e.x,e.y,view))continue;
+      if(e.type==='cue'||!this.visible(e.x,e.y,view))continue;
       if(e.type==='arc'){this.spawn({kind:'arc',x:e.x,y:e.y,vx:(e.toX??e.x)-e.x,vy:(e.toY??e.y)-e.y,life:.2,color:e.color??0x9eefff,priority:2},view);continue;}
       const color=e.color??(e.weapon?WEAPON_TYPES[e.weapon].color:0xffbf80),angle=e.angle??0;
       if(e.type==='debris'){

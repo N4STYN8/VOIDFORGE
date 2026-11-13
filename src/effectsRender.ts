@@ -29,8 +29,10 @@ export function drawEnergyBeam(g:Phaser.GameObjects.Graphics,link:GameModel['min
     g.fillStyle(color,.2);g.fillRect(x-3,y-3,6,6);g.fillStyle(0xf6ffff,.9);g.fillRect(x-1,y-1,2,2);
   }
 }
+// Hostile fire stays in a warm red family so it is never mistaken for the player's shots.
+const ENEMY_SHOT:Partial<Record<string,number>>={cannon:0xff8a5c,pulse:0xff5d7a,rail:0xffd0dc,plasma:0xff6ad5,rocket:0xffb070};
 export function drawProjectile(g:Phaser.GameObjects.Graphics,b:Bullet,enabled:boolean,time:number){
-  const kind=b.weapon??(b.rocket?'rocket':'cannon'),type=WEAPON_TYPES[kind],color=b.enemy?0xff7770:type.color;
+  const kind=b.weapon??(b.rocket?'rocket':'cannon'),type=WEAPON_TYPES[kind],color=b.enemy?ENEMY_SHOT[kind]??0xff7770:type.color;
   const speed=Math.hypot(b.vx,b.vy)||1,ux=b.vx/speed,uy=b.vy/speed,trail=enabled?type.trail:5;
   if(b.enhanced&&enabled){g.lineStyle(4,0xffffff,.7);g.lineBetween(b.x,b.y,b.x-ux*190,b.y-uy*190);}
   if(kind==='rail'&&enabled)for(let i=3;i>=0;i--){g.lineStyle(i===0?2:1,color,.12+(3-i)*.13);g.lineBetween(b.x-ux*trail*i/4,b.y-uy*trail*i/4,b.x-ux*trail*(i+1)/4,b.y-uy*trail*(i+1)/4);}

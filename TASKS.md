@@ -56,6 +56,9 @@
 
 - [x] Weapon impulse on resistant asteroids and rock-versus-enemy damage/loot verification
 
+- [x] Pixel-art pass: baked low-res sprites, parallax backdrop, enemy silhouettes, hard-edged panels
+- [ ] Re-measure the heavy-combat fixture and check the outfitter at all four widths with the new sprites
+
 ## Publishing
 - [x] Prepare public repository connection and test/build/Pages workflow
 - [x] Push tested source to N4STYN8/VOIDFORGE
@@ -68,6 +71,17 @@
 - [ ] Boss framework and persistent seeded guarding territories
 - [ ] Iron Warden, Crystal Leviathan and Reactor Titan, each with telegraphs/phases/rewards
 - [ ] Remaining encounter-specific audio and combat balancing
+## Next coherent stage from the latest staged brief
+- [x] Enemy classes with distinct loadouts, silhouettes, shields and loot (raider, interceptor, gunship, sniper, frigate, carrier + drones, defender)
+- [x] Enemy and boss sound cues (rail charge, missile lock, drone launch, alert, boss warning/phase/defeat, surge, EMP charge, module lost, hull, death)
+- [x] Tactical state machine: patrol, investigate, chase, attack, strafe, retreat, reposition, defend, return
+- [x] Seeded danger regions linked to rich resource geography, HUD threat chip and map tint
+- [x] Boss framework: mounted destructible parts, phases, boss bar, seeded guarded territories, persistent defeat
+- [x] Iron Warden
+- [x] Crystal Leviathan and Reactor Titan, each with telegraphs/phases/rewards
+- [x] Bosses return on the population ledger cooldown
+- [x] Horde events with red-alert HUD, banner, siren and salvage bonus
+- [ ] Combat balancing (enemy classes, bosses, horde size/frequency) and sound mix from real play; remaining combat-effect polish
 
 ## Later systems
 - [ ] Refining, crafting, research, player-placed structures and automation

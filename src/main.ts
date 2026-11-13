@@ -6,14 +6,15 @@ import { outfitterMarkup } from './outfitter.ts';
 import { EffectPool } from './effects.ts';
 import { drawParticles, drawEnergyBeam, drawProjectile, drawEmp } from './effectsRender.ts';
 import { GameModel } from './model.ts';
-import { WORLD, SHIP, RESOURCES, ENEMIES, EXPLORATION, MODULES, BUILD_GRID, equipment, upgradeCost, statsLabel, type EquipmentKind, type ModuleKind } from './data.ts';
+import { WORLD, SHIP, RESOURCES, ENEMIES, ENEMY_AI, EXPLORATION, MODULES, BUILD_GRID, equipment, upgradeCost, statsLabel, type EquipmentKind, type ModuleKind } from './data.ts';
 import './style.css';
 import { hashSeed } from './world.ts';
 import { loadSavedGame, saveGame, backupSavedGame } from './persistence.ts';
 import { GameAudio } from './audio.ts';
 import { drawExplorationMap } from './map.ts';
 import { ensureAsteroidGeometry } from './mining.ts';
-import { drawModule, drawAsteroid, drawStation } from './visuals.ts';
+import { drawModule } from './visuals.ts';
+import { paintBackdrop, paintAsteroid, paintStation, paintEnemy, crispModule, mix, ASTEROID_SPRITE, ENEMY_SPRITE, STATION_SPRITE } from './sprites.ts';
 class SpaceScene extends Phaser.Scene {
   private effects = new EffectPool();
   private saveElapsed = 0;
@@ -22,9 +23,10 @@ class SpaceScene extends Phaser.Scene {
   private hudElapsed = 0;
   private mapElapsed = 0;
   private asteroidCache = new Map<number, { revision: number; key: string; used: number }>();
-  private asteroidBaker!: Phaser.GameObjects.Graphics;
   private iconUrls = new Map<string, string>();
-  private background!:Phaser.GameObjects.TileSprite;
+  private backdrop:{key:string;sprite:Phaser.GameObjects.TileSprite;factor:number;scale:number}[]=[];
+  private stationSprites:Phaser.GameObjects.Image[]=[];
+  private enemySprites:Phaser.GameObjects.Image[]=[];
   private shipSprites:Phaser.GameObjects.Image[]=[];
   private builderElapsed=0;
   private asteroidSprites: Phaser.GameObjects.Image[] = [];
@@ -59,8 +61,14 @@ class SpaceScene extends Phaser.Scene {
   private builder = document.createElement('section');
   private builderContent = '';
   private hud = document.getElementById('hud')!;
+  private bossBar = document.createElement('section');
+  private hordeBanner = document.createElement('section');
+  private hordeBannerContent = '';
+  private bossBarContent = '';
   private status = document.getElementById('status')!;
   create() {
+    // Local-development handle for browser checks; never set on the hosted site.
+    if (['localhost','127.0.0.1'].includes(location.hostname)) (window as unknown as { voidforge?: SpaceScene }).voidforge = this;
     this.sessionControls.id = 'session-controls';
     this.sessionControls.innerHTML = '<div><small id="world-seed"></small></div><div class="session-actions"><button data-session="save">Save</button><button data-session="load">Load</button><button data-session="export">Export</button><label class="file-button">Import<input id="import-save" type="file" accept="application/json,.json"></label></div><div class="new-world"><input id="seed-input" aria-label="Optional new world seed" maxlength="80" placeholder="Optional new-world seed"><button data-session="new">New world</button></div><button data-settings="true">Settings · audio / VFX</button>';
     document.body.append(this.sessionControls); this.refreshSeedLabel();
@@ -95,12 +103,14 @@ class SpaceScene extends Phaser.Scene {
     window.addEventListener('pointerdown', () => this.audio.unlock());
     window.addEventListener('keydown', () => this.audio.unlock());
     this.mapWindow.id = 'map-window'; this.mapWindow.hidden = true;
-    this.mapWindow.innerHTML = '<header><div><small>NAVIGATION / EXPLORED SPACE</small><h2>Sector map</h2></div><button id="close-map">Close · M / Esc</button></header><canvas width="640" height="640" aria-label="Explored space map"></canvas><p>Dark areas are unexplored · Green: active base · Amber: locked base<br>Explore to discover outposts. G activates nearby locked bases · Wheel zooms · Drag pans.</p>';
+    this.mapWindow.innerHTML = '<header><div><small>NAVIGATION / EXPLORED SPACE</small><h2>Sector map</h2></div><button id="close-map">Close · M / Esc</button></header><canvas width="640" height="640" aria-label="Explored space map"></canvas><p>Dark areas are unexplored · Green: active base · Amber: locked base<br>Explored space is tinted by threat: <span style="color:#7d9ab0">blue low</span> · <span style="color:#e8c45a">olive medium</span> · <span style="color:#f08a4b">rust high</span> · <span style="color:#f0527a">magenta extreme</span><br>Explore to discover outposts. G activates nearby locked bases · Wheel zooms · Drag pans.</p>';
     document.body.append(this.mapWindow); this.mapCanvas = this.mapWindow.querySelector('canvas')!;
     this.mapWindow.querySelector('button')!.addEventListener('click', () => { this.mapOpen = false; });
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
       if (pointer.x >= this.scale.width - 152 && pointer.y >= this.scale.height - 152) this.mapOpen = !this.mapOpen;
     });
+    this.bossBar.id = 'boss-bar'; this.bossBar.hidden = true; document.body.append(this.bossBar);
+    this.hordeBanner.id = 'horde-banner'; this.hordeBanner.hidden = true; this.hordeBanner.setAttribute('role', 'alert'); document.body.append(this.hordeBanner);
     this.builder.id = 'builder'; this.builder.hidden = true;
     document.body.append(this.builder);
     this.builder.addEventListener('pointerdown', event => event.stopPropagation());
@@ -143,27 +153,31 @@ class SpaceScene extends Phaser.Scene {
       button.blur();this.renderBuilder();
     });
     this.graphics = this.add.graphics();
-    this.effectsGraphics=this.add.graphics().setDepth(4);
+    this.effectsGraphics=this.add.graphics().setDepth(4).setBlendMode(Phaser.BlendModes.ADD);
     this.minimap = this.add.graphics().setScrollFactor(0).setDepth(20);
-    // Bake the background once; one repeated texture replaces thousands of paths/frame.
-    const tile = document.createElement('canvas'); tile.width = tile.height = 640;
-    const context = tile.getContext('2d')!;
-    context.fillStyle = '#080e1a'; context.fillRect(0, 0, 640, 640);
-    let seed = hashSeed(this.model.seed + ':stars') || 47;
-    const random = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
-    for (let i = 0; i < 45; i++) { context.fillStyle = i % 7 === 0 ? '#a9cfe5' : '#43576e'; context.fillRect(random() * 640, random() * 640, i % 7 === 0 ? 1.5 : 1, 1); }
-    context.strokeStyle = '#101e2c'; context.lineWidth = 1;
-    for (let i = 0; i < 640; i += 160) { context.beginPath(); context.moveTo(i, 0); context.lineTo(i, 640); context.moveTo(0, i); context.lineTo(640, i); context.stroke(); }
-    this.textures.addCanvas('starfield', tile);
-    this.background=this.add.tileSprite(0,0,this.scale.width+160,this.scale.height+160,'starfield').setOrigin(0).setDepth(-2);
-    this.asteroidBaker = this.add.graphics().setVisible(false);
+    // Three parallax layers (gas clouds, far stars, near stars) baked once per world seed.
+    this.paintBackdropTextures();
+    this.backdrop=[
+      {key:'backdrop-nebula',sprite:this.add.tileSprite(0,0,64,64,'backdrop-nebula').setOrigin(0).setScale(4).setDepth(-5),factor:.1,scale:4},
+      {key:'backdrop-far',sprite:this.add.tileSprite(0,0,64,64,'backdrop-far').setOrigin(0).setScale(2).setDepth(-4),factor:.28,scale:2},
+      {key:'backdrop-near',sprite:this.add.tileSprite(0,0,64,64,'backdrop-near').setOrigin(0).setScale(2).setDepth(-3),factor:.55,scale:2},
+    ];
+    // Pixel art: every baked sprite is enlarged with nearest-neighbour filtering.
+    for(const layer of this.backdrop)layer.sprite.texture.setFilter(Phaser.Textures.FilterMode.NEAREST);
+    this.textures.addCanvas('station-on',paintStation(true))!.setFilter(Phaser.Textures.FilterMode.NEAREST);this.textures.addCanvas('station-off',paintStation(false))!.setFilter(Phaser.Textures.FilterMode.NEAREST);
+    this.stationSprites=this.model.bases.map(base=>this.add.image(base.x,base.y,'station-off').setScale(1/STATION_SPRITE.scale).setDepth(-.5));
+    for(const kind of Object.keys(ENEMIES))this.textures.addCanvas(`enemy-${kind}`,paintEnemy(kind as keyof typeof ENEMIES))!.setFilter(Phaser.Textures.FilterMode.NEAREST);
     for (const kind of ['core', ...Object.keys(MODULES)] as EquipmentKind[]) for (let level = 1; level <= equipment(kind).levels.length; level++) {
       const key = `icon-${kind}-${level}`, cache = this.add.graphics();
       drawModule(cache, 24, 24, -Math.PI / 2, kind, equipment(kind).color, level);
       cache.generateTexture(key, 48, 48); cache.destroy();
-      const cropped=document.createElement('canvas');cropped.width=cropped.height=24;cropped.getContext('2d')!.drawImage(this.textures.get(key).getSourceImage() as HTMLCanvasElement,12,12,24,24,0,0,24,24);this.iconUrls.set(`${kind}-${level}`,cropped.toDataURL());
+      // One texel per world unit, hard edges and stepped colours: a true 16x16 pixel module.
+      const texture=this.textures.get(key) as Phaser.Textures.CanvasTexture,source=texture.getSourceImage() as HTMLCanvasElement;
+      if(source instanceof HTMLCanvasElement){crispModule(source);texture.refresh?.();}
+      texture.setFilter(Phaser.Textures.FilterMode.NEAREST);
+      const cropped=document.createElement('canvas');cropped.width=cropped.height=24;cropped.getContext('2d')!.drawImage(source,12,12,24,24,0,0,24,24);this.iconUrls.set(`${kind}-${level}`,cropped.toDataURL());
     }
-    this.baseLabels = this.model.bases.map(base => this.add.text(base.x, base.y - 77, '', { fontFamily: 'monospace', fontSize: '10px', color: '#a0d6cc', align: 'center', lineSpacing: 5 }).setOrigin(0.5));
+    this.baseLabels = this.model.bases.map(base => this.add.text(base.x, base.y - 172, '', { fontFamily: 'monospace', fontSize: '10px', color: '#a0d6cc', align: 'center', lineSpacing: 5 }).setOrigin(0.5));
     this.targetLabel = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '10px', color: '#b5ebdf', backgroundColor: '#0b1423', padding: { x: 6, y: 3 } }).setOrigin(0.5, 0).setDepth(5);
     this.mapLabel = this.add.text(0, 0, 'SECTOR MAP / M', { fontFamily: 'monospace', fontSize: '9px', color: '#91afc5', letterSpacing: 1 }).setScrollFactor(0).setDepth(21);
     this.follow = this.add.zone(this.model.player.x, this.model.player.y, 1, 1);
@@ -223,8 +237,9 @@ class SpaceScene extends Phaser.Scene {
       aim, fire: pointer.leftButtonDown(), overclock:Phaser.Input.Keyboard.JustDown(this.keys.C), boost, mine: pointer.rightButtonDown() || this.keys.SPACE.isDown, dock, view: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
     });
     if (!this.paused && !this.building && !this.mapOpen && !this.settings.open) {
-      for(const event of this.model.effects){if(event.type==='muzzle'&&event.weapon)this.audio.playWeapon(event.weapon);if(event.type==='arc')this.audio.play('pulse');if(event.type==='collection')this.audio.play('collect');if(event.type==='shield')this.audio.play('shield');}
-      if (this.model.player.health < beforeHull || this.model.shield < beforeShield) this.audio.play('impact');
+      for(const event of this.model.effects){if(event.type==='cue'&&event.cue)this.audio.play(event.cue,event.pitch,event.volume);else if(event.type==='muzzle'&&event.weapon&&!event.silent)this.audio.playWeapon(event.weapon);if(event.type==='arc')this.audio.play('pulse');if(event.type==='collection')this.audio.play('collect');if(event.type==='shield')this.audio.play('shield');}
+      // Hull hits crunch, shield hits ring (the shield cue comes from its own event), and losing the ship has its own sound.
+      if (this.model.dead && beforeHull > 0) this.audio.play('death'); else if (this.model.player.health < beforeHull) this.audio.play('hull');
       if (this.model.oreHits > beforeOreHits) this.audio.play('impact');
       if (this.model.enemyHits > beforeHits) this.audio.play('hit');
       if (this.model.kills > beforeKills) this.audio.play('explosion');
@@ -253,6 +268,25 @@ class SpaceScene extends Phaser.Scene {
     const destination = this.model.bases.filter(base => this.model.isExplored(base) || base.unlocked).reduce((best, base) => Math.hypot(p.x - base.x, p.y - base.y) < Math.hypot(p.x - best.x, p.y - best.y) ? base : best);
     const html=flightHud(this.model,{base:destination,direction:this.directionToStation(),zoom:this.cameras.main.zoom,muted:this.audio.muted,effects:this.effects.enabled,detailsOpen:this.hud.querySelector<HTMLDetailsElement>('details')?.open??false});
     if(html!==this.hudContent){this.hud.innerHTML=html;this.hudContent=html;}
+    // Boss bar: shown while a boss is close enough to matter.
+    const boss=this.model.enemies.find(e=>ENEMIES[e.kind??'raider'].boss&&Math.hypot(e.x-p.x,e.y-p.y)<1800);
+    let bossHtml='';
+    if(boss){
+      const def=ENEMIES[boss.kind!],parts=this.model.enemies.filter(e=>e.parent===boss.id&&e.mount),pct=(n:number,max:number)=>Math.max(0,Math.min(100,max?n/max*100:0)).toFixed(1);
+      const turrets=parts.filter(e=>ENEMIES[e.kind!].weapons.length).length,generators=parts.filter(e=>ENEMIES[e.kind!].shieldSource).length;
+      const vents=parts.filter(e=>ENEMIES[e.kind!].weakPoint).length,hasGenerators=def.boss!.parts.some(part=>ENEMIES[part.kind].shieldSource);
+      const phase=boss.phase3?'FINAL PHASE':boss.phase2?'PHASE 2 · ENRAGED':'PHASE 1',marks=[def.boss!.phaseAt,def.boss!.finalAt].filter(Boolean).map(at=>`<b style="left:${at!*100}%"></b>`).join('');
+      const status=(boss.surge??0)>0?'SHIELD SURGE · destroy the crystal nodes':(boss.empCharge??0)>0?'EMP CHARGING · leave the ring':vents?(boss.phase2?'Reactor vents EXPOSED · shoot them':'Reactor vents sealed'):hasGenerators?`Shield generators ${generators}${generators?'':' · shields will not recharge'}`:'';
+      bossHtml=`<header><strong>${def.label.toUpperCase()}</strong><span>${phase}</span></header><div class="boss-hull"><i style="width:${pct(boss.health,def.health)}%"></i>${marks}</div><div class="boss-shield"><i style="width:${pct(boss.shield??0,def.shield)}%"></i></div><footer><span>Weapon mounts ${turrets}</span><span>${status}</span></footer>`;
+    }
+    if(bossHtml!==this.bossBarContent){this.bossBar.innerHTML=bossHtml;this.bossBarContent=bossHtml;}
+    this.bossBar.hidden=!boss||this.building||this.mapOpen;
+    // Horde alert: the whole HUD flashes red from the first warning until the last hostile is gone.
+    const warning=this.model.horde.warning,hunting=this.model.hordeCount,alert=(warning>0||hunting>0)&&!this.model.dead;
+    const banner=warning>0?`<strong>ALERT</strong><span>HORDE INBOUND · ${Math.ceil(warning)}</span><small>Fight, or dock at a station to lose them</small>`:hunting?`<strong>HORDE</strong><span>${hunting} of ${Math.max(hunting,this.model.horde.total)} hostiles left</span>`:'';
+    if(banner!==this.hordeBannerContent){this.hordeBanner.innerHTML=banner;this.hordeBannerContent=banner;}
+    this.hordeBanner.hidden=!alert||this.building||this.mapOpen;this.hordeBanner.classList.toggle('boss-below',Boolean(boss));
+    document.body.classList.toggle('horde-alert',alert);document.body.classList.toggle('horde-warning',alert&&warning>0);
     }
     this.status.textContent = this.paused ? 'PAUSED — Press Esc to resume' : this.model.message;
     this.status.classList.toggle('urgent', this.model.dead || this.paused);
@@ -261,14 +295,26 @@ class SpaceScene extends Phaser.Scene {
     const label = this.sessionControls.querySelector<HTMLElement>('#world-seed');
     if (label) { label.textContent = `WORLD SEED: ${this.model.seed}`; label.title = this.model.seed; }
   }
+  private paintBackdropTextures() {
+    const layers=paintBackdrop(hashSeed(this.model.seed + ':stars') || 47);
+    for(const [name,canvas] of Object.entries(layers)){
+      const key=`backdrop-${name}`;
+      if(!this.textures.exists(key)){this.textures.addCanvas(key,canvas);continue;}
+      const texture=this.textures.get(key) as Phaser.Textures.CanvasTexture;
+      texture.context.clearRect(0,0,canvas.width,canvas.height);texture.context.drawImage(canvas,0,0);texture.refresh();
+    }
+    // Re-read the repainted source; a tile sprite's own texture is its internal canvas, not the tile.
+    for(const layer of this.backdrop){layer.sprite.setTexture(layer.key);layer.sprite.texture.setFilter(Phaser.Textures.FilterMode.NEAREST);}
+  }
   private switchModel(model: GameModel) {
     for (const sprite of this.asteroidSprites) sprite.destroy(); this.asteroidSprites = [];
     for (const cache of this.asteroidCache.values()) this.textures.remove(cache.key); this.asteroidCache.clear();
     this.effects.clear();this.audio.setLoop('mine',0);this.audio.setLoop('tractor',0);
     this.model = model; this.building = false; this.mapOpen = false; this.paused = false; this.movingModule = false; this.selectedCell = { x: 0, y: 0 };this.detailMode='module';this.buildCenter={x:0,y:0};
     this.lastBullet = -1; this.builderContent = ''; this.hudElapsed = 100; this.mapElapsed = 200; this.saveElapsed = 0;
-    this.baseLabels.forEach((label, i) => label.setPosition(model.bases[i].x, model.bases[i].y - 77));
+    this.baseLabels.forEach((label, i) => label.setPosition(model.bases[i].x, model.bases[i].y - 172));
     this.follow.setPosition(model.player.x, model.player.y); this.cameras.main.centerOn(model.player.x, model.player.y);
+    this.paintBackdropTextures();
     this.refreshSeedLabel(); this.input.keyboard!.enabled = true;
   }
   private drawMinimap() {
@@ -314,14 +360,23 @@ class SpaceScene extends Phaser.Scene {
   private draw() {
     const g = this.graphics; g.clear();this.effectsGraphics.clear();
     const view = this.cameras.main.worldView;
-    this.background.setPosition(view.x-80,view.y-80).setTilePosition(view.x-80,view.y-80);if(this.background.width!==Math.ceil(view.width)+160||this.background.height!==Math.ceil(view.height)+160)this.background.setSize(Math.ceil(view.width)+160,Math.ceil(view.height)+160);
+    const now=this.time.now/1000;
+    for(const {sprite,factor,scale} of this.backdrop){
+      // Viewport-sized layers; slower factors sit further away. Anchored on the view centre so zoom stays stable.
+      const width=Math.ceil((view.width+160)/scale),height=Math.ceil((view.height+160)/scale);
+      if(sprite.width!==width||sprite.height!==height)sprite.setSize(width,height);
+      sprite.setPosition(view.x-80,view.y-80).setTilePosition(Math.round((view.centerX*factor-view.width/2-80)/scale),Math.round((view.centerY*factor-view.height/2-80)/scale));
+    }
     const visible = (p: { x: number; y: number }) => p.x >= view.x - 80 && p.y >= view.y - 80 && p.x <= view.right + 80 && p.y <= view.bottom + 80;
     g.lineStyle(2, 0x34526a); g.strokeRect(0, 0, WORLD.width, WORLD.height);
     this.model.bases.forEach((base, i) => {
       const inView = base.x > view.x - 300 && base.x < view.right + 300 && base.y > view.y - 300 && base.y < view.bottom + 300;
       this.baseLabels[i].setVisible(inView);
+      this.stationSprites[i]?.setVisible(inView).setPosition(base.x,base.y).setTexture(base.unlocked?'station-on':'station-off');
       if (!inView) return;
-      drawStation(g, base);
+      // Landing beacon: one expanding ring over the baked pad.
+      const beat=(now*.45+i*.37)%1;
+      g.lineStyle(1.5,base.unlocked?0x8df0bf:0xf0c98a,(1-beat)*.55);g.strokeCircle(base.x,base.y,20+beat*22);
       this.baseLabels[i].setText(`${base.name.toUpperCase()} / ${base.unlocked ? 'ACTIVE' : 'LOCKED'}\n${base.unlocked ? 'E  REPAIR + UNLOAD   Q  SHOP' : 'G  ACTIVATE: ' + Object.entries(base.cost).filter(([, n]) => n).map(([ore, n]) => `${n} ${ore}`).join(' + ')}`);
     });
     let rockIndex = 0;
@@ -329,15 +384,16 @@ class SpaceScene extends Phaser.Scene {
       const shape = ensureAsteroidGeometry(a), cache = this.asteroidCache.get(a.id);
       const key = `asteroid-${a.id}`;
       if (!cache || cache.revision !== shape.revision) {
-        // Reuse one baker; re-rasterize only when a visible polygon changes.
-        this.asteroidBaker.clear(); drawAsteroid(this.asteroidBaker, a, { x: 48, y: 48 });
-        if(this.textures.exists(key)){const canvas=this.textures.get(key).getSourceImage() as HTMLCanvasElement;canvas.getContext('2d')!.clearRect(0,0,96,96);}
-        this.asteroidBaker.generateTexture(key, 96, 96);
+        // Re-rasterize only when a visible polygon changes.
+        const pixels=ASTEROID_SPRITE.size*ASTEROID_SPRITE.scale;
+        const fresh=!this.textures.exists(key),texture=(fresh?this.textures.createCanvas(key,pixels,pixels):this.textures.get(key)) as Phaser.Textures.CanvasTexture;
+        if(fresh)texture.setFilter(Phaser.Textures.FilterMode.NEAREST);
+        paintAsteroid(texture.context,a);texture.refresh();
         this.asteroidCache.set(a.id, { revision: shape.revision, key, used: this.time.now });
       } else cache.used = this.time.now;
       const sprite = this.asteroidSprites[rockIndex] ?? this.add.image(0, 0, key).setDepth(-1);
       this.asteroidSprites[rockIndex++] = sprite;
-      sprite.setVisible(true).setPosition(a.x, a.y).setTexture(key).setScale(1);
+      sprite.setVisible(true).setPosition(a.x, a.y).setTexture(key).setScale(1/ASTEROID_SPRITE.scale);
     }
     for (; rockIndex < this.asteroidSprites.length; rockIndex++) this.asteroidSprites[rockIndex].setVisible(false);
     if (this.asteroidCache.size > 128) {
@@ -349,16 +405,70 @@ class SpaceScene extends Phaser.Scene {
       drawModule(g, block.x, block.y, block.angle, block.kind, MODULES[block.kind].color, block.level);
     }
     for (const link of this.model.tractorLinks) drawEnergyBeam(g,link,this.effects.time,'tractor',this.effects.enabled);
-    for (const d of this.model.drops) { if (!visible(d)) continue; g.lineStyle(1, RESOURCES[d.ore].color, 0.4); g.strokeCircle(d.x, d.y, 10); g.fillStyle(RESOURCES[d.ore].color); g.fillTriangle(d.x, d.y - 5, d.x - 5, d.y + 4, d.x + 5, d.y + 4); }
+    this.model.drops.forEach((d,i)=>{
+      if (!visible(d)) return;
+      // Pixel gem: stepped diamond, lit upper-left half, shaded lower-right, gentle bob.
+      const color=RESOURCES[d.ore].color,x=Math.round(d.x),y=Math.round(d.y+Math.sin(now*3+i)*1.5),lightTone=mix(color,0xffffff,.6),darkTone=mix(color,0x000000,.5);
+      [1,3,5,3,1].forEach((width,row)=>{
+        const top=y-5+row*2,left=x-width;
+        g.fillStyle(0x05070c);g.fillRect(left-2,top,width*2+4,2);
+        g.fillStyle(row<2?color:darkTone);g.fillRect(left,top,width*2,2);
+        if(row<3){g.fillStyle(lightTone);g.fillRect(left,top,row===2?4:width+1,2);}
+      });
+      g.fillStyle(0x05070c);g.fillRect(x-1,y-7,2,2);g.fillRect(x-1,y+5,2,2);
+    });
     for (const bullet of this.model.bullets) if(visible(bullet)) drawProjectile(g,bullet,this.effects.enabled,this.effects.time);
     for (const pulse of this.model.empPulses) if(visible(pulse)) drawEmp(g,pulse,this.effects.enabled,this.effects.time);
+    let enemyIndex=0;
     for (const e of this.model.enemies) {
       if (!visible(e)) continue;
-      const def = ENEMIES[e.kind ?? 'raider'];
-      g.save(); g.translateCanvas(e.x, e.y); g.scaleCanvas(def.radius / 17, def.radius / 17); this.ship(0, 0, e.angle, def.color); g.restore();
-      if (e.squad !== undefined) { g.fillStyle(0xa6c6dd, 0.7); g.fillCircle(e.x - 4, e.y - 35, 1.5); g.fillCircle(e.x, e.y - 35, 1.5); g.fillCircle(e.x + 4, e.y - 35, 1.5); }
-      g.fillStyle(0x481d26); g.fillRect(e.x - 20, e.y - 29, 40, 4); g.fillStyle(0xee7f89); g.fillRect(e.x - 20, e.y - 29, 40 * e.health / ENEMIES[e.kind ?? 'raider'].health, 4);
+      const kind=e.kind ?? 'raider';
+      const hull=this.enemySprites[enemyIndex]??this.add.image(e.x,e.y,`enemy-${kind}`).setDepth(1);
+      this.enemySprites[enemyIndex++]=hull;
+      hull.setVisible(true).setPosition(e.x,e.y).setTexture(`enemy-${kind}`).setRotation(e.angle).setScale(1/ENEMY_SPRITE.scale);
+      const def=ENEMIES[kind],half=Math.max(16,def.radius+4),top=e.y-def.radius-14;
+      if (e.squad !== undefined) { g.fillStyle(0xa6c6dd, 0.7); g.fillRect(e.x - 5, top - 9, 2, 2); g.fillRect(e.x - 1, top - 9, 2, 2); g.fillRect(e.x + 3, top - 9, 2, 2); }
+      if (!def.weakPoint) {
+        g.fillStyle(0x05070c); g.fillRect(e.x - half - 1, top - 1, half * 2 + 2, 6);
+        g.fillStyle(0x481d26); g.fillRect(e.x - half, top, half * 2, 4); g.fillStyle(0xee7f89); g.fillRect(e.x - half, top, half * 2 * Math.min(1, Math.max(0, e.health) / def.health), 4);
+      }
+      // Awareness pip: amber while searching, red while fighting, white while breaking off.
+      const mood=e.state==='investigate'?0xffd166:e.state==='retreat'?0xe8f1f8:e.state&&e.state!=='patrol'&&e.state!=='return'?0xff4d6d:0;
+      if(mood){g.fillStyle(0x05070c);g.fillRect(e.x+half+2,top-1,6,6);g.fillStyle(mood);g.fillRect(e.x+half+3,top,4,4);}
+      if (def.shield > 0) {
+        // Shield strength: a blue bar over the hull bar and a ring that brightens with charge.
+        const charge=Math.max(0,e.shield??def.shield)/def.shield;
+        g.fillStyle(0x05070c); g.fillRect(e.x - half - 1, top - 5, half * 2 + 2, 4); g.fillStyle(0x7fd0ff); g.fillRect(e.x - half, top - 4, half * 2 * Math.min(1, charge), 2);
+        if (charge > 0) { g.lineStyle(1.5, 0x8fd4ff, 0.2 + charge * 0.45); g.strokeCircle(e.x, e.y, def.radius + 7); }
+      }
+      if ((e.surge ?? 0) > 0) {
+        // Shield surge: pulsing rings show the boss is recharging rather than firing.
+        const pulse = (now * 2) % 1;
+        g.lineStyle(2, 0xbdf3ff, 0.75 - pulse * 0.6); g.strokeCircle(e.x, e.y, def.radius + 10 + pulse * 26);
+        g.lineStyle(1.5, 0x7fd0ff, 0.7); g.strokeCircle(e.x, e.y, def.radius + 10);
+      }
+      if ((e.empCharge ?? 0) > 0 && def.boss?.emp) {
+        // EMP warning: the blast ring fills in as the charge completes. Get outside it.
+        const emp = def.boss.emp, progress = 1 - e.empCharge! / emp.charge;
+        g.fillStyle(0x9db8ff, 0.03 + progress * 0.08); g.fillCircle(e.x, e.y, emp.radius);
+        g.lineStyle(progress > 0.8 ? 3 : 1.5, progress > 0.8 ? 0xf2f6ff : 0x9db8ff, 0.35 + progress * 0.6); g.strokeCircle(e.x, e.y, emp.radius);
+        g.lineStyle(1.5, 0x9db8ff, 0.5); g.strokeCircle(e.x, e.y, emp.radius * progress);
+      }
+      if (def.weakPoint && this.model.enemies.some(other => other.id === e.parent && other.phase2)) {
+        // Exposed reactor vent: a flashing target marker.
+        const flash = 0.45 + Math.sin(now * 9) * 0.35;
+        g.lineStyle(2, 0xffe07a, flash); g.strokeCircle(e.x, e.y, def.radius + 5);
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) g.lineBetween(e.x + dx * (def.radius + 3), e.y + dy * (def.radius + 3), e.x + dx * (def.radius + 10), e.y + dy * (def.radius + 10));
+      }
+      if (e.charge) {
+        // Aiming warning: the line brightens while charging and turns solid once the shot is locked.
+        const weapon=def.weapons[e.charge.weapon],progress=1-e.charge.t/(weapon.charge??1),locked=e.charge.t<=ENEMY_AI.chargeLock;
+        g.lineStyle(locked?2:1, locked?0xffe0e6:0xff4d6d, locked?.9:.2+progress*.5);
+        g.lineBetween(e.x+Math.cos(e.charge.angle)*def.radius,e.y+Math.sin(e.charge.angle)*def.radius,e.x+Math.cos(e.charge.angle)*def.range,e.y+Math.sin(e.charge.angle)*def.range);
+        g.fillStyle(0xff4d6d,.35+progress*.5);g.fillCircle(e.x+Math.cos(e.charge.angle)*(def.radius+3),e.y+Math.sin(e.charge.angle)*(def.radius+3),2+progress*3);
+      }
     }
+    for(;enemyIndex<this.enemySprites.length;enemyIndex++)this.enemySprites[enemyIndex].setVisible(false);
     const p = this.model.player;
     this.targetLabel.setVisible(Boolean(this.model.minedTarget));
     if (this.model.minedTarget) {
@@ -366,13 +476,27 @@ class SpaceScene extends Phaser.Scene {
       this.targetLabel.setText(`${RESOURCES[a.ore].label.toUpperCase()} / ${a.amount} ORE`).setPosition(a.x, a.y + a.radius + 12);
     }
     if (!this.model.dead) {
+      if (this.model.horde.warning > 0) {
+        // Chevrons point at where the horde will arrive from.
+        const a=this.model.horde.angle,blink=Math.floor(now*4)%2?0.95:0.4;
+        g.fillStyle(0xff3355,blink);
+        for(let i=0;i<3;i++){const d=150+i*16,x=p.x+Math.cos(a)*d,y=p.y+Math.sin(a)*d;g.fillTriangle(x+Math.cos(a)*10,y+Math.sin(a)*10,x+Math.cos(a+2.4)*9,y+Math.sin(a+2.4)*9,x+Math.cos(a-2.4)*9,y+Math.sin(a-2.4)*9);}
+      }
       if (this.model.shield > 0) {
         const radius = Math.max(24, ...this.model.modules.map(m => Math.hypot(m.x, m.y) * BUILD_GRID.cellSize + 12));
-        g.fillStyle(0x71e1ff, 0.035); g.fillCircle(p.x, p.y, radius); g.lineStyle(1.5, 0x71e1ff, 0.25 + this.model.shield / this.model.maxShield * 0.4); g.strokeCircle(p.x, p.y, radius);
+        // Shield bubble: soft body, bright shell and a specular arc on the lit side.
+        const charge=this.model.shield / this.model.maxShield;
+        g.fillStyle(0x71e1ff, 0.035); g.fillCircle(p.x, p.y, radius);
+        g.lineStyle(4, 0x71e1ff, 0.06 + charge * 0.08); g.strokeCircle(p.x, p.y, radius + 1.5);
+        g.lineStyle(1.3, 0xa9ecff, 0.25 + charge * 0.4); g.strokeCircle(p.x, p.y, radius);
+        g.lineStyle(2, 0xffffff, 0.15 + charge * 0.3); g.beginPath(); g.arc(p.x, p.y, radius - 2.5, -2.75, -1.75); g.strokePath();
       }
       const heading=this.building?-Math.PI/2:p.angle;
       const blocks=[{x:0,y:0,kind:'core' as EquipmentKind,level:this.model.coreLevel},...this.model.modules];
       const occupied=new Set(blocks.map(m=>`${m.x},${m.y}`));let index=0;
+      // World-fixed cast shadow: the ship reads as flying above stations and debris.
+      g.fillStyle(0x000000,.3);
+      for(const m of blocks){const point=this.model.modulePoint(m,heading);if(!visible(point))continue;g.save();g.translateCanvas(point.x+5,point.y+8);g.rotateCanvas(heading);g.fillRect(-8,-8,16,16);g.restore();}
       g.lineStyle(6,0x172b3c);
       for(const m of blocks){
         const point=this.model.modulePoint(m,heading);
@@ -399,17 +523,6 @@ class SpaceScene extends Phaser.Scene {
       g.lineBetween(aim.x - 12, aim.y, aim.x - 5, aim.y); g.lineBetween(aim.x + 5, aim.y, aim.x + 12, aim.y);
       g.lineBetween(aim.x, aim.y - 12, aim.x, aim.y - 5); g.lineBetween(aim.x, aim.y + 5, aim.x, aim.y + 12);
     }
-  }
-  private ship(x: number, y: number, angle: number, color: number) {
-    const g = this.graphics;
-    g.save(); g.translateCanvas(x, y); g.rotateCanvas(angle);
-    g.fillStyle(0x151a29); g.fillTriangle(23, 0, -16, -15, -16, 15);
-    g.fillStyle(color); g.fillTriangle(20, 0, -12, -11, -5, 0); g.fillTriangle(20, 0, -12, 11, -5, 0);
-    g.fillStyle(0x733e52); g.fillRect(-13, -12, 8, 5); g.fillRect(-13, 7, 8, 5);
-    g.fillStyle(0xffa48e); g.fillRect(-17, -11, 4, 3); g.fillRect(-17, 8, 4, 3);
-    g.fillStyle(0xffd3c0); g.fillTriangle(9, 0, 0, -3, 0, 3);
-    g.lineStyle(1, color); g.strokeTriangle(23, 0, -16, -15, -16, 15);
-    g.restore();
   }
 }
 new Phaser.Game({ type: new URLSearchParams(location.search).get('renderer')==='webgl'?Phaser.WEBGL:Phaser.CANVAS, parent: 'game', backgroundColor: '#080e1a', scale: { mode: Phaser.Scale.RESIZE, width: window.innerWidth, height: window.innerHeight }, scene: SpaceScene, render: { antialias: true } });

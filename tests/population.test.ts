@@ -124,3 +124,26 @@ test('additional belts increase field populations without changing legacy rocks 
  const snapshot=JSON.parse(JSON.stringify(world.snapshot(active))),restored=new ChunkWorld(world.spec.seed,snapshot),loaded=restored.activate(home,[],true);
  assert.deepEqual(restored.snapshot(loaded),snapshot);assert.equal(new Set(loaded.map(a=>a.id)).size,loaded.length);
 });
+
+test('regional reinforcements use the enemy classes for the region danger and never manage encounter spawns',async()=>{
+ const {regionDanger,isElite}=await import('../src/enemyPopulation.ts');
+ const {ENEMIES,ENEMY_SPAWN}=await import('../src/data.ts');
+ const {createWorld,dangerAt}=await import('../src/world.ts');
+ const {GameModel}=await import('../src/model.ts');
+ for(const seed of ['alpha','beta','gamma']){
+  const spec=createWorld(seed),home=spec.bases[0],size=3600,levels=new Set<number>();
+  assert.equal(regionDanger(spec,`${Math.floor(home.x/size)},${Math.floor(home.y/size)}`),1);
+  for(let x=0;x<17;x++)for(let y=0;y<17;y++){const level=regionDanger(spec,`${x},${y}`);levels.add(level);assert.ok(level>=1&&level<=ENEMY_SPAWN.normal.length);assert.ok(level<=Math.max(...[[.2,.2],[.8,.2],[.5,.5],[.2,.8],[.8,.8]].map(([dx,dy])=>dangerAt(spec,(x+dx)*size,(y+dy)*size))));}
+  assert.ok(levels.size>=2);
+ }
+ assert.equal(isElite('tank'),true);assert.equal(isElite('defender'),true);assert.equal(isElite('raider'),false);assert.equal(isElite(undefined),false);
+ // A new game's opening patrols are all threat-1 pirates, and stay that way as the population ticks.
+ const m=new GameModel('alpha');
+ for(let i=0;i<120;i++)m.update(.25,{x:0,y:0,aim:{x:0,y:0},fire:false,mine:false,dock:false});
+ assert.ok(m.enemies.length>0);for(const e of m.enemies)assert.equal(ENEMIES[e.kind??'raider'].threat,1);
+ // Encounter spawns (boss, parts, escorts) are exempt: they are never put to sleep or counted against regional targets.
+ const site=m.bossSites[0];m.player.x=site.x-700;m.player.y=site.y;m.update(.01,{x:0,y:0,aim:{x:0,y:0},fire:false,mine:false,dock:false});
+ const family=m.enemies.filter(e=>e.populationExempt);assert.ok(family.some(e=>e.kind===site.kind));assert.ok(family.length>=1+ENEMIES[site.kind].boss!.parts.length);
+ m.player.x=site.x-9000;for(let i=0;i<40;i++)m.update(.25,{x:0,y:0,aim:{x:0,y:0},fire:false,mine:false,dock:false});
+ assert.ok(m.enemies.some(e=>e.kind===site.kind));assert.equal(m.population.snapshot().regions.some(r=>r.sleeping.some(e=>e.populationExempt)),false);
+});

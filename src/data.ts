@@ -3,13 +3,135 @@ export const RESOURCES = { iron: { label: 'Iron', color: 0xb9bdc7 }, copper: { l
 export type Resource = keyof typeof RESOURCES;
 export const SHIP = { speed: 280, acceleration: 650, drag: 1.6, radius: 18, health: 100, miningRange: 240, miningRate: 9, pickupRange: 65 };
 export const WEAPONS = { player: { damage: 12, speed: 700, cooldown: 0.18, lifetime: 1.1 }, enemy: { damage: 9, speed: 340, cooldown: 1.4, lifetime: 2.2 } };
-export const ENEMIES = {
-  raider: { label: 'Raider', health: 60, speed: 115, radius: 17, detection: 780, range: 420, stop: 260, color: 0xe15e68, weapon: { damage: 9, speed: 340, cooldown: 1.4, lifetime: 2.2 } },
-  scout: { label: 'Scout', health: 35, speed: 190, radius: 13, detection: 850, range: 320, stop: 190, color: 0xffbd6e, weapon: { damage: 5, speed: 420, cooldown: 0.8, lifetime: 1.6 } },
-  tank: { label: 'Heavy', health: 180, speed: 65, radius: 25, detection: 850, range: 440, stop: 300, color: 0xbf88de, weapon: { damage: 18, speed: 280, cooldown: 2, lifetime: 2.4 } },
-  sniper: { label: 'Sniper', health: 70, speed: 95, radius: 18, detection: 1100, range: 760, stop: 610, color: 0x74bedc, weapon: { damage: 22, speed: 570, cooldown: 2.6, lifetime: 1.8 } },
+export type EnemyKind = 'raider' | 'scout' | 'tank' | 'sniper' | 'frigate' | 'carrier' | 'defender' | 'drone' | 'warden' | 'wardenTurret' | 'wardenShield' | 'leviathan' | 'leviathanNode' | 'leviathanPod' | 'titan' | 'titanCannon' | 'titanPod' | 'titanReactor';
+export type EnemyBehavior = 'hold' | 'flank' | 'kite' | 'reload' | 'carrier' | 'guard';
+/** count/spread/offset fire several shots at once; homing is a turn rate (rad/s); charge is a telegraphed wind-up (s); lead aims ahead of a moving target. */
+export type EnemyWeapon = { type: WeaponKind; damage: number; speed: number; cooldown: number; lifetime: number; count?: number; spread?: number; offset?: number; homing?: number; charge?: number; lead?: boolean };
+export type EnemyDefinition = {
+  label: string; threat: number; health: number; shield: number; shieldRegen: number; shieldDelay: number;
+  speed: number; accel: number; radius: number; mass: number; detection: number; range: number; stop: number;
+  behavior: EnemyBehavior; color: number; weapons: EnemyWeapon[]; loot: Partial<Record<Resource, number>>;
+  drones?: { max: number; interval: number }; leash?: number;
+  /** Hull fraction below which the ship breaks off once (0 = fights to the end). */
+  retreatAt: number;
+  /** Hull turns toward its target at this rate (rad/s) instead of snapping; used by large ships. */
+  turnRate?: number;
+  /** A destructible component mounted on a boss: it has no movement of its own. */
+  part?: boolean;
+  /** While any part with this flag survives, its boss keeps regenerating shields. */
+  shieldSource?: boolean;
+  /** Armoured reactor vent: takes no damage itself, but once its boss reaches phase two each hit passes this multiple straight to the boss hull, past its shield. */
+  weakPoint?: number;
+  boss?: BossDefinition;
 };
-export type EnemyKind = keyof typeof ENEMIES;
+/** Boss extras: a second weapon set below `phaseAt` hull, one reinforcement call, escorts and mounted parts (offsets in ship space, nose along +x). */
+export type BossDefinition = {
+  phaseAt: number; phaseWeapons: EnemyWeapon[]; reinforcements: EnemyKind[]; escorts: EnemyKind[]; parts: { kind: EnemyKind; x: number; y: number }[];
+  /** Optional third phase below this hull fraction. */
+  finalAt?: number; finalWeapons?: EnemyWeapon[];
+  /** Movement speed multiplier from phase two onward. */
+  phaseSpeed?: number;
+  /** Shield surge: every `interval` s the boss holds fire for `duration` s and recharges shields at `rate`/s (needs a living shield source). */
+  surge?: { interval: number; duration: number; rate: number };
+  /** Area pulse: after a `charge` s warning ring, everything within `radius` takes `damage` and loses `drain` energy. */
+  emp?: { interval: number; charge: number; radius: number; damage: number; drain: number };
+};
+// Internal keys raider/scout/tank/sniper are kept so existing saves keep their enemies.
+export const ENEMIES: Record<EnemyKind, EnemyDefinition> = {
+  raider: { label: 'Pirate Raider', threat: 1, retreatAt: 0.25, health: 60, shield: 0, shieldRegen: 0, shieldDelay: 0, speed: 115, accel: 260, radius: 17, mass: 1, detection: 780, range: 420, stop: 260, behavior: 'hold', color: 0xe15e68,
+    weapons: [{ type: 'cannon', damage: 9, speed: 340, cooldown: 1.4, lifetime: 2.2 }], loot: { iron: 6 } },
+  scout: { label: 'Pirate Interceptor', threat: 1, retreatAt: 0.4, health: 35, shield: 0, shieldRegen: 0, shieldDelay: 0, speed: 190, accel: 520, radius: 13, mass: 0.7, detection: 850, range: 340, stop: 210, behavior: 'flank', color: 0xffbd6e,
+    weapons: [{ type: 'pulse', damage: 3, speed: 460, cooldown: 0.8, lifetime: 1.4, count: 2, offset: 5 }], loot: { copper: 4 } },
+  tank: { label: 'Heavy Gunship', threat: 2, retreatAt: 0, health: 200, shield: 0, shieldRegen: 0, shieldDelay: 0, speed: 65, accel: 110, radius: 25, mass: 3, detection: 850, range: 460, stop: 300, behavior: 'hold', color: 0xbf88de,
+    weapons: [{ type: 'cannon', damage: 6, speed: 380, cooldown: 0.34, lifetime: 1.8, lead: true }, { type: 'rocket', damage: 22, speed: 250, cooldown: 3.4, lifetime: 3.2 }], loot: { iron: 14, copper: 6 } },
+  sniper: { label: 'Railgun Sniper', threat: 3, retreatAt: 0.45, health: 70, shield: 0, shieldRegen: 0, shieldDelay: 0, speed: 95, accel: 200, radius: 18, mass: 1, detection: 1100, range: 780, stop: 620, behavior: 'kite', color: 0x74bedc,
+    weapons: [{ type: 'rail', damage: 30, speed: 900, cooldown: 3.2, lifetime: 1.4, charge: 1.1 }], loot: { crystal: 6, copper: 4 } },
+  frigate: { label: 'Missile Frigate', threat: 2, retreatAt: 0.35, health: 120, shield: 20, shieldRegen: 4, shieldDelay: 4, speed: 105, accel: 180, radius: 21, mass: 2, detection: 900, range: 560, stop: 430, behavior: 'reload', color: 0xd9c05a,
+    weapons: [{ type: 'rocket', damage: 11, speed: 230, cooldown: 5.5, lifetime: 4.2, count: 4, spread: 0.7, homing: 1.5 }], loot: { copper: 10, ice: 5 } },
+  carrier: { label: 'Drone Carrier', threat: 3, retreatAt: 0.3, health: 240, shield: 40, shieldRegen: 5, shieldDelay: 5, speed: 60, accel: 90, radius: 30, mass: 4, detection: 1000, range: 700, stop: 600, behavior: 'carrier', color: 0x8fd08a,
+    weapons: [], drones: { max: 3, interval: 4 }, loot: { iron: 16, crystal: 10, radioactive: 3 } },
+  defender: { label: 'Shielded Defender', threat: 3, retreatAt: 0, health: 110, shield: 140, shieldRegen: 14, shieldDelay: 3.5, speed: 90, accel: 200, radius: 22, mass: 2.5, detection: 800, range: 440, stop: 300, behavior: 'guard', leash: 1300, color: 0x7f8cff,
+    weapons: [{ type: 'plasma', damage: 16, speed: 300, cooldown: 1.5, lifetime: 2.2, lead: true }], loot: { crystal: 8, radioactive: 5 } },
+  drone: { label: 'Attack Drone', threat: 0, retreatAt: 0, health: 14, shield: 0, shieldRegen: 0, shieldDelay: 0, speed: 230, accel: 700, radius: 8, mass: 0.3, detection: 900, range: 260, stop: 150, behavior: 'flank', color: 0x9be0a0,
+    weapons: [{ type: 'pulse', damage: 2, speed: 420, cooldown: 0.7, lifetime: 1 }], loot: {} },
+  // Boss 1. Guards a rich industrial field; its shield only recharges while a shield generator survives.
+  warden: { label: 'Iron Warden', threat: 5, retreatAt: 0, health: 1600, shield: 400, shieldRegen: 45, shieldDelay: 2.5, speed: 42, accel: 40, radius: 64, mass: 40, detection: 1300, range: 900, stop: 420, behavior: 'guard', leash: 1700, turnRate: 0.55, color: 0xd9a441,
+    weapons: [{ type: 'cannon', damage: 14, speed: 420, cooldown: 1.6, lifetime: 2.4, count: 3, spread: 0.16, lead: true }, { type: 'rocket', damage: 16, speed: 240, cooldown: 6, lifetime: 4, count: 5, spread: 0.9, charge: 1.3 }],
+    boss: { phaseAt: 0.5, reinforcements: ['tank', 'scout', 'scout'], escorts: ['defender', 'defender'],
+      phaseWeapons: [{ type: 'cannon', damage: 14, speed: 440, cooldown: 1, lifetime: 2.4, count: 5, spread: 0.32, lead: true }, { type: 'rocket', damage: 14, speed: 250, cooldown: 4.5, lifetime: 4.2, count: 8, spread: 1.4, homing: 1.1, charge: 1.1 }],
+      parts: [{ kind: 'wardenTurret', x: 38, y: -52 }, { kind: 'wardenTurret', x: 38, y: 52 }, { kind: 'wardenTurret', x: -38, y: -56 }, { kind: 'wardenTurret', x: -38, y: 56 }, { kind: 'wardenShield', x: -2, y: -68 }, { kind: 'wardenShield', x: -2, y: 68 }] },
+    loot: { iron: 160, copper: 110, crystal: 25 } },
+  wardenTurret: { label: 'Warden Turret', threat: 0, retreatAt: 0, part: true, health: 90, shield: 0, shieldRegen: 0, shieldDelay: 0, speed: 0, accel: 0, radius: 11, mass: 1, detection: 1100, range: 620, stop: 0, behavior: 'hold', color: 0xd9a441,
+    weapons: [{ type: 'pulse', damage: 4, speed: 480, cooldown: 0.55, lifetime: 1.5 }], loot: {} },
+  wardenShield: { label: 'Shield Generator', threat: 0, retreatAt: 0, part: true, shieldSource: true, health: 140, shield: 0, shieldRegen: 0, shieldDelay: 0, speed: 0, accel: 0, radius: 12, mass: 1, detection: 1100, range: 1, stop: 0, behavior: 'hold', color: 0x7fd0ff,
+    weapons: [], loot: { crystal: 6 } },
+  // Boss 2. Guards a crystal field: charged beam, plasma fans, drones and periodic shield surges fed by its crystal nodes.
+  leviathan: { label: 'Crystal Leviathan', threat: 5, retreatAt: 0, health: 1900, shield: 600, shieldRegen: 30, shieldDelay: 3, speed: 70, accel: 60, radius: 60, mass: 35, detection: 1400, range: 950, stop: 520, behavior: 'guard', leash: 1800, turnRate: 0.7, color: 0x8ad6ed,
+    weapons: [{ type: 'rail', damage: 34, speed: 1000, cooldown: 5, lifetime: 1.4, charge: 1.4 }, { type: 'plasma', damage: 12, speed: 300, cooldown: 2.2, lifetime: 2.6, count: 3, spread: 0.5, lead: true }],
+    drones: { max: 3, interval: 6 },
+    boss: { phaseAt: 0.4, phaseSpeed: 1.5, reinforcements: [], escorts: ['sniper', 'defender'], surge: { interval: 16, duration: 4, rate: 90 },
+      phaseWeapons: [{ type: 'rail', damage: 34, speed: 1000, cooldown: 3.2, lifetime: 1.4, charge: 1.1 }, { type: 'plasma', damage: 12, speed: 320, cooldown: 1.5, lifetime: 2.6, count: 5, spread: 0.9, lead: true }],
+      parts: [{ kind: 'leviathanNode', x: -10, y: -62 }, { kind: 'leviathanNode', x: -10, y: 62 }, { kind: 'leviathanPod', x: 34, y: -50 }, { kind: 'leviathanPod', x: 34, y: 50 }] },
+    loot: { crystal: 140, ice: 60, radioactive: 10 } },
+  leviathanNode: { label: 'Crystal Node', threat: 0, retreatAt: 0, part: true, shieldSource: true, health: 160, shield: 0, shieldRegen: 0, shieldDelay: 0, speed: 0, accel: 0, radius: 12, mass: 1, detection: 1100, range: 1, stop: 0, behavior: 'hold', color: 0x8ad6ed,
+    weapons: [], loot: { crystal: 8 } },
+  leviathanPod: { label: 'Plasma Pod', threat: 0, retreatAt: 0, part: true, health: 100, shield: 0, shieldRegen: 0, shieldDelay: 0, speed: 0, accel: 0, radius: 11, mass: 1, detection: 1100, range: 560, stop: 0, behavior: 'hold', color: 0x8ad6ed,
+    weapons: [{ type: 'plasma', damage: 8, speed: 320, cooldown: 1.8, lifetime: 2 }], loot: {} },
+  // Boss 3. Guards a radioactive field: plasma cannons, missile barrages, an EMP pulse, three phases and reactor vents that open in phase two.
+  titan: { label: 'Reactor Titan', threat: 5, retreatAt: 0, health: 2400, shield: 300, shieldRegen: 0, shieldDelay: 4, speed: 34, accel: 30, radius: 72, mass: 60, detection: 1400, range: 950, stop: 440, behavior: 'guard', leash: 1800, turnRate: 0.45, color: 0x9fe63f,
+    weapons: [{ type: 'plasma', damage: 20, speed: 320, cooldown: 2, lifetime: 2.8, count: 2, offset: 14, lead: true }, { type: 'rocket', damage: 13, speed: 240, cooldown: 7, lifetime: 4.2, count: 6, spread: 1.1, homing: 1, charge: 1.4 }],
+    boss: { phaseAt: 0.6, finalAt: 0.25, reinforcements: ['tank', 'frigate'], escorts: ['defender', 'tank'], emp: { interval: 11, charge: 1.8, radius: 430, damage: 12, drain: 80 },
+      phaseWeapons: [{ type: 'plasma', damage: 20, speed: 330, cooldown: 1.5, lifetime: 2.8, count: 2, offset: 14, lead: true }, { type: 'rocket', damage: 13, speed: 245, cooldown: 5.5, lifetime: 4.2, count: 8, spread: 1.3, homing: 1.1, charge: 1.2 }],
+      finalWeapons: [{ type: 'plasma', damage: 22, speed: 340, cooldown: 0.9, lifetime: 2.8, count: 3, spread: 0.35, lead: true }, { type: 'rocket', damage: 13, speed: 250, cooldown: 4, lifetime: 4.4, count: 10, spread: 1.6, homing: 1.2, charge: 1 }],
+      parts: [{ kind: 'titanCannon', x: 40, y: -60 }, { kind: 'titanCannon', x: 40, y: 60 }, { kind: 'titanPod', x: -28, y: -70 }, { kind: 'titanPod', x: -28, y: 70 }, { kind: 'titanReactor', x: -70, y: -28 }, { kind: 'titanReactor', x: -70, y: 28 }] },
+    loot: { radioactive: 120, crystal: 60, iron: 120 } },
+  titanCannon: { label: 'Plasma Cannon', threat: 0, retreatAt: 0, part: true, health: 130, shield: 0, shieldRegen: 0, shieldDelay: 0, speed: 0, accel: 0, radius: 12, mass: 1, detection: 1100, range: 650, stop: 0, behavior: 'hold', color: 0x9fe63f,
+    weapons: [{ type: 'plasma', damage: 9, speed: 340, cooldown: 1.4, lifetime: 2.2 }], loot: {} },
+  titanPod: { label: 'Missile Pod', threat: 0, retreatAt: 0, part: true, health: 110, shield: 0, shieldRegen: 0, shieldDelay: 0, speed: 0, accel: 0, radius: 12, mass: 1, detection: 1100, range: 700, stop: 0, behavior: 'hold', color: 0x9fe63f,
+    weapons: [{ type: 'rocket', damage: 8, speed: 240, cooldown: 4.5, lifetime: 3.6, count: 2, spread: 0.4, homing: 0.9 }], loot: {} },
+  titanReactor: { label: 'Reactor Vent', threat: 0, retreatAt: 0, part: true, weakPoint: 1.5, health: 1, shield: 0, shieldRegen: 0, shieldDelay: 0, speed: 0, accel: 0, radius: 13, mass: 1, detection: 1100, range: 1, stop: 0, behavior: 'hold', color: 0xffe07a,
+    weapons: [], loot: {} },
+};
+/**
+ * Boss placement. Each site is chosen from the seeded ore clusters (preferring `ores`, then richness),
+ * at least `minHomeDistance` from the start. The boss wakes when the player comes within `wake`;
+ * `territory` is its extreme-danger zone, which drops to medium once it is defeated.
+ */
+export const BOSS: { wake: number; territory: number; minHomeDistance: number; sites: { kind: EnemyKind; ores: Resource[] }[] } = {
+  wake: 2600, territory: 1000, minHomeDistance: 7000, sites: [{ kind: 'warden', ores: ['iron', 'copper'] }, { kind: 'leviathan', ores: ['crystal'] }, { kind: 'titan', ores: ['radioactive'] }],
+};
+/**
+ * Danger levels 1-4 come from the seeded resource geography, not from distance: richer ore fields
+ * are more dangerous. `ore` is the base level per resource, `safeRadius` keeps the start at level 1
+ * and `calmRadius` caps the surrounding area at level 2 so every seed has a survivable opening.
+ */
+export const DANGER = {
+  ore: { iron: 1, copper: 1, ice: 2, crystal: 3, radioactive: 4 } as Record<Resource, number>,
+  labels: ['Low', 'Medium', 'High', 'Extreme'], colors: ['#7fd6a8', '#e8c45a', '#f08a4b', '#f0527a'], mapTint: ['', '#2b2a17', '#3d2214', '#42142e'],
+  safeRadius: 2200, calmRadius: 3800, richDensity: 0.8, core: 0.85, fringe: 1.25,
+};
+/**
+ * Enemy classes by danger level - 1, split the way EnemyPopulation counts them: `normal` ships
+ * arrive as patrol groups, `elite` ships arrive singly on the slower elite timers.
+ */
+export const ENEMY_SPAWN: { normal: EnemyKind[][]; elite: EnemyKind[][] } = {
+  normal: [['raider', 'scout'], ['raider', 'scout', 'frigate'], ['scout', 'frigate', 'raider'], ['frigate', 'scout', 'frigate']],
+  elite: [['tank'], ['tank', 'sniper'], ['tank', 'sniper', 'carrier', 'defender'], ['sniper', 'carrier', 'defender', 'defender']],
+};
+/**
+ * Horde events. Away from the start, a timer (seconds, by danger level) counts down; when it ends
+ * the HUD goes to red alert for `warning` seconds and then `size` enemies arrive together from one
+ * direction and hunt the player. Docking during the warning calls it off. Clearing a horde pays
+ * `reward` times the danger level. Hordes that are outrun by `despawn` units give up.
+ */
+export const HORDE = {
+  interval: [[420, 600], [330, 480], [270, 400], [210, 330]], firstDelay: 180, warning: 10, retry: 90, alarmEvery: 1.4,
+  size: [6, 9, 12, 15], eliteShare: [0, 0.2, 0.3, 0.4], distance: [1000, 1250], arc: 0.9, memory: 30, despawn: 3600,
+  reward: { iron: 25, copper: 15, crystal: 6 } as Partial<Record<Resource, number>>, repeatBossLoot: 0.5,
+};
+export const ENEMY_AI = { strafe: { hold: 0.3, flank: 1, kite: 0.3, reload: 0.5, carrier: 0.2, guard: 0.45 } as Record<EnemyBehavior, number>, spacing: 70, avoid: 45, chargeLock: 0.3, shotMargin: 700,
+  // State machine timing: seconds unless noted.
+  memory: 6, arrive: 70, retreatTime: 5, strafeFlip: 3, investigatePace: 0.75, stuckTime: 0.7, repositionTime: 1.1, postRadius: 220 };
 export const BASES = [
   { id: 'forge', name: 'Forge / 01', x: 3200, y: 3200, cost: { iron: 0, copper: 0, crystal: 0, ice: 0, radioactive: 0 } },
   { id: 'relay', name: 'Relay / 02', x: 7000, y: 3200, cost: { iron: 80, copper: 40, crystal: 0, ice: 0, radioactive: 0 } },
@@ -73,6 +195,8 @@ export const WEAPON_TYPES: Record<WeaponKind, {speed:number;pellets:number;sprea
   emp:{speed:340,pellets:1,spread:0,color:0x729cff,trail:0},
 };
 export const SHIP_SYSTEMS = { referenceMass:20, collectionRadius:10, cargoCapacity:120 };
+/** Sound cues from the simulation are heard within `range` of the player and fade with distance. */
+export const HEARING = { range: 1700 };
 export const VFX = { particleBudget:320, visibleMargin:100, maxEvents:256, beamColors:{tractor:[0xf095ff,0xd783ff,0xb98aff,0xd2b0ff,0xf0c0ff],mining:[0x75ebc3,0x83edff,0xf0f8b1,0xb3ffe2,0xf7fff1]} };
 export function equipment(kind: EquipmentKind) { return kind === 'core' ? CORE : MODULES[kind]; }
 export function upgradeCost(kind: EquipmentKind, currentLevel: number): Record<Resource, number> {

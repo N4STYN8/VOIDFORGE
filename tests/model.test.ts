@@ -48,7 +48,7 @@ test('configured unlimited cargo still collects and stores everything', () => {
 });
 test('projectiles destroy enemies and drop collectible resources', () => {
   const m = fixtureModel(); m.player.x = 4000; m.player.y = 4000;
-  m.enemies = [{ id: 900, x: 4150, y: 4000, health: 60, cooldown: 100, angle: 0 }];
+  m.enemies = [{ id: 900, x: 4150, y: 4000, health: 60, cooldown: 100, angle: 0, disabledFor: 10 }];
   for (let i = 0; i < 35; i++) m.update(0.05, idle({ fire: true, aim: { x: 4150, y: 4000 } }));
   assert.equal(m.kills, 1); assert.equal(m.drops.length, 1); assert.equal(m.enemyHits, 5);
   m.player.x = m.drops[0].x; m.player.y = m.drops[0].y; m.update(0.01, idle()); assert.equal(m.cargo.iron, 6);
@@ -174,7 +174,7 @@ test('rockets explode on contact and damage multiple enemies once with limited f
   assert.equal(m.installModule('rocket', -1, 0), true);
   m.modules = m.modules.filter(m => m.kind === 'rocket');
   m.player.x = 4000; m.player.y = 4000;
-  m.enemies = [{ id: 998, x: 4150, y: 4000, health: 30, cooldown: 100, angle: 0 }, { id: 999, x: 4190, y: 4020, health: 30, cooldown: 100, angle: 0 }];
+  m.enemies = [{ id: 998, x: 4150, y: 4000, health: 30, cooldown: 100, angle: 0, disabledFor: 10 }, { id: 999, x: 4190, y: 4020, health: 30, cooldown: 100, angle: 0, disabledFor: 10 }];
   m.update(0.01, idle({ fire: true, aim: { x: 4150, y: 4000 } }));
   assert.equal(m.bullets.length, 1); assert.equal(m.bullets[0].rocket, true);
   m.update(0.01, idle({ fire: true })); assert.equal(m.bullets.length, 1);
@@ -229,9 +229,13 @@ test('enemy variants fire their defined damage and keep distinct engagement dist
   const m = fixtureModel(); m.asteroids = [];
   m.player.x = 5000; m.player.y = 5000;
   m.enemies = [{ id: 998, kind: 'scout', x: 5300, y: 5000, health: 35, cooldown: 0, angle: 0 }, { id: 999, kind: 'sniper', x: 5600, y: 5000, health: 70, cooldown: 0, angle: 0 }];
+  // The interceptor fires its dual pulse lasers at once; the sniper starts a telegraphed charge instead.
   m.update(0.01, idle()); assert.equal(m.bullets.length, 2);
-  assert.ok(m.bullets.some(b => b.damage === ENEMIES.scout.weapon.damage)); assert.ok(m.bullets.some(b => b.damage === ENEMIES.sniper.weapon.damage));
-  assert.ok(m.enemies[0].x < 5300); assert.equal(m.enemies[1].x, 5600);
+  assert.ok(m.bullets.every(b => b.weapon === 'pulse' && b.damage === ENEMIES.scout.weapons[0].damage));
+  assert.ok(m.enemies[1].charge); assert.ok(m.enemies[0].x < 5300);
+  for (let i = 0; i < 24; i++) m.update(0.05, idle());
+  assert.ok(m.bullets.some(b => b.weapon === 'rail' && b.damage === ENEMIES.sniper.weapons[0].damage));
+  assert.ok(Math.hypot(m.enemies[1].x - m.player.x, m.enemies[1].y - m.player.y) > 520);
 });
 
 
