@@ -66,7 +66,7 @@ test('blocks snap to the world grid, need a core first, must connect, and never 
   assert.match(m.placeError('wall', at.cx - 1, at.cy) ?? '', /ship is in the way/i); m.enemies = [];
   assert.match(m.placeError('wall', cellOf(m.player.x), cellOf(m.player.y)) ?? '', /touch|ship/i);
   assert.match(m.placeError('wall', at.cx, at.cy + 40) ?? '', /range/);
-  m.cargo = { iron: 0, copper: 0, crystal: 0, ice: 0, radioactive: 0 }; assert.match(m.placeError('wall', at.cx - 1, at.cy) ?? '', /Not enough carried iron/);
+  m.cargo = { iron: 0, copper: 0, crystal: 0, ice: 0, radioactive: 0 }; m.stored = { ...m.cargo }; outpost.stored = { ...m.cargo }; assert.match(m.placeError('wall', at.cx - 1, at.cy) ?? '', /Not enough iron/);
   const station = fixtureModel(); station.coreLevel = 5; station.modules = [{ x: 1, y: 0, kind: 'builder', level: 1, cooldown: 0, integrity: 99 }]; station.cargoOverride = 1e9; station.cargo = { ...rich };
   assert.match(station.placeError('outpostCore', cellOf(station.player.x), cellOf(station.player.y) + 3) ?? '', /station/);
 });
@@ -544,4 +544,29 @@ test('shield, heat, raid and away state survive a save', () => {
   const restored = GameModel.fromSave(JSON.parse(JSON.stringify(m.toSave()))), copy = restored.outposts[0];
   assert.equal(copy.shield, 77); assert.equal(copy.heat, 12.5); assert.equal(copy.raidTimer, 123); assert.equal(copy.structures.find(s => s.kind === 'droneHangar')!.level, 3);
   assert.equal(copy.drones!.length, 6); assert.deepEqual(outpostStats(copy), outpostStats(outpost));
+});
+
+test('build mode pays from ship cargo first, then the outpost storage, then station deposits, and never creates minerals', () => {
+  const m = builderShip(), at = cell(m), empty = { iron: 0, copper: 0, crystal: 0, ice: 0, radioactive: 0 };
+  const total = () => (Object.keys(empty) as Resource[]).reduce((sum, ore) => sum + m.cargo[ore] + m.stored[ore] + m.outposts.reduce((s, o) => s + (o.stored?.[ore] ?? 0), 0), 0);
+  // An Outpost Core with nothing carried: paid entirely from station deposits.
+  const core = STRUCTURES.outpostCore.cost;
+  m.cargo = { ...empty }; m.stored = { ...rich };
+  let before = total();
+  assert.equal(m.placeError('outpostCore', at.cx, at.cy), undefined);
+  assert.ok(m.placeStructure('outpostCore', at.cx, at.cy));
+  for (const ore of Object.keys(empty) as Resource[]) assert.equal(rich[ore] - m.stored[ore], core[ore]);
+  assert.equal(before - total(), Object.values(core).reduce((a, b) => a + b, 0), 'exactly the price left the stores');
+  // A wall: some iron carried, some in the outpost, the rest from the station, spent in that order.
+  const outpost = m.outposts[0], price = m.structureCost('wall').iron;
+  assert.ok(price >= 3, 'the wall needs at least 3 iron for this test');
+  m.cargo = { ...empty, iron: 1 }; outpost.stored = { ...empty, iron: 1 }; m.stored = { ...empty, iron: price };
+  before = total();
+  assert.ok(m.placeStructure('wall', at.cx + 1, at.cy));
+  assert.equal(m.cargo.iron, 0, 'cargo spent first'); assert.equal(outpost.stored.iron, 0, 'then outpost storage'); assert.equal(m.stored.iron, 2, 'then station deposits');
+  assert.equal(before - total(), price);
+  // Not enough anywhere: refused, nothing taken.
+  m.cargo = { ...empty }; outpost.stored = { ...empty }; m.stored = { ...empty, iron: price - 1 };
+  assert.match(m.placeError('wall', at.cx + 1, at.cy + 1) ?? '', /Not enough iron/);
+  assert.equal(m.placeStructure('wall', at.cx + 1, at.cy + 1), false); assert.equal(m.stored.iron, price - 1);
 });

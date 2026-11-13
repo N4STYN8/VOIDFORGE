@@ -163,3 +163,14 @@ test('over the relay: a guest far outside ship-state range still receives the se
     hostNet.disconnect(); guestNet.disconnect();
   } finally { await relay.close(); }
 });
+
+test("a pilot's shield and beams travel as offsets from the ship, and bad rows are dropped", async () => {
+  const { encodeLook, decodeLook } = await import('../src/shared.ts');
+  const ship = { x: 1000, y: 2000 };
+  const look = encodeLook(ship, 30, 60, [{ from: { x: 1010, y: 1995 }, to: { x: 1200, y: 2100 }, level: 3, targetId: 77 }], [{ from: { x: 990, y: 2004 }, to: { x: 1050, y: 2050 }, level: 2, targetId: 5 }]);
+  assert.deepEqual(look, { s: [30, 60], m: [[10, -5, 1200, 2100, 3, 77]], t: [[-10, 4, 1050, 2050, 2, 5]] });
+  assert.deepEqual(decodeLook(JSON.parse(JSON.stringify(look))), look);
+  assert.equal(encodeLook(ship, 0, 60, [], []), undefined, 'nothing to show, nothing sent');
+  const bad = decodeLook({ s: [999, 60], m: [[5000, 0, 0, 0, 3, 1], [1, 1, 1, 1, 9, 1], 'x'] });
+  assert.deepEqual(bad, { s: [60, 60] }, 'shield clamped, impossible beams dropped');
+});

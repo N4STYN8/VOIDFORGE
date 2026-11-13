@@ -9,7 +9,7 @@ import { outfitterMarkup } from './outfitter.ts';
 import { EffectPool } from './effects.ts';
 import { drawParticles, drawEnergyBeam, drawProjectile, drawEmp } from './effectsRender.ts';
 import { GameModel } from './model.ts';
-import { cellOf, cellCenter, bounds as outpostBounds, outpostStats, stationLayout, storedTotal, structureAt, maxHealth, turretOf, dronesOf, outputOf, type Outpost, type Structure } from './outposts.ts';
+import { cellOf, cellCenter, outpostFor, bounds as outpostBounds, outpostStats, stationLayout, storedTotal, structureAt, maxHealth, turretOf, dronesOf, outputOf, type Outpost, type Structure } from './outposts.ts';
 import { SECTOR, WORLD, SHIP, RESOURCES, ENEMIES, ENEMY_AI, WAYPOINTS, OUTPOST, STRUCTURES, STRUCTURE_ABILITIES, type StructureKind, type Resource, EXPLORATION, MODULES, BUILD_GRID, equipment, upgradeCost, statsLabel, type EquipmentKind, type ModuleKind, FLEET } from './data.ts';
 import './style.css';
 import './cockpit.css';
@@ -21,6 +21,7 @@ import { travel, enterWorld, returnHome, worldRef, rebuildAtHome, ownsSector, pr
 import { SECTOR_STEPS } from './sectorGrid.ts';
 import { NetClient, relayUrl, inviteLink, type PeerPose } from './net.ts';
 import { SharedLink } from './sharedLink.ts';
+import { LobbyShare } from './lobbyShare.ts';
 import { NET, MATCH } from './netProtocol.ts';
 import { loadSavedGame, saveGame, saveText, saveGameConfirmed, backupSavedGame } from './persistence.ts';
 /** The save found at start-up; storage is read before the game is created because the large store is asynchronous. */
@@ -47,6 +48,8 @@ class SpaceScene extends Phaser.Scene {
   private travelPending = false;
   /** Shared-sector state (rocks, enemies, shots, loot) while other pilots are in this sector. */
   private link = new SharedLink(this.net, () => this.model);
+  /** Opt-in sharing of station deposits with lobby members. */
+  private share = new LobbyShare(this.net, () => this.model);
   private netPanel = document.createElement('div');
   private netContent = '';
   private peerSprites: Phaser.GameObjects.Image[] = [];
@@ -120,7 +123,7 @@ class SpaceScene extends Phaser.Scene {
     this.cockpit=new Cockpit(this.sessionControls,action=>this.cockpitCommand(action));
     this.sessionControls.querySelector('[data-settings]')!.addEventListener('click',()=>this.settings.show());
     this.setupNetPanel();
-    this.sessionControls.addEventListener('focusin', event => { if ((event.target as HTMLElement).id === 'seed-input') { this.input.keyboard!.enabled = false; this.input.keyboard!.disableGlobalCapture(); this.paused = true; } });
+    this.sessionControls.addEventListener('focusin', event => { if ((event.target as HTMLElement).id === 'seed-input') { this.input.keyboard!.enabled = false; this.input.keyboard!.disableGlobalCapture(); if (!this.multiplayer) this.paused = true; } });
     this.sessionControls.addEventListener('focusout', () => { this.input.keyboard!.enabled = true; this.input.keyboard!.enableGlobalCapture(); });
     this.sessionControls.addEventListener('click', event => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button'); if (!button) return;
@@ -218,7 +221,7 @@ class SpaceScene extends Phaser.Scene {
     const action=(success:boolean)=>{this.actionFailed=!success;this.audio.play(success?'build':'fail');return success;};
     moduleDrag(this.builder, {
       active: value=>{this.moduleDragActive=value;},
-      error: (source,x,y)=>source.kind?this.model.buildError(source.kind,x,y):this.model.moveError(source.x!,source.y!,x,y),
+      error: (source,x,y)=>{if(!source.kind)return this.model.moveError(source.x!,source.y!,x,y);const error=this.model.buildError(source.kind,x,y);return this.model.lobbyCanCover(error,MODULES[source.kind].cost)?undefined:error;},
       drop: (source,x,y)=>{
         const success=source.kind?this.model.installModule(source.kind,x,y):this.model.moveModule(source.x!,source.y!,x,y);
         if(action(success)){this.selectedCell={x,y};this.detailMode='module';this.movingModule=false;}
@@ -316,7 +319,19 @@ class SpaceScene extends Phaser.Scene {
     this.mapCanvas.addEventListener('pointercancel', () => { drag = undefined; });
     this.input.mouse!.disableContextMenu();
     this.input.keyboard!.addCapture(['SPACE', 'W', 'A', 'S', 'D']);
-    this.game.events.on('blur', () => { this.paused = true; });
+    // Losing focus pauses single-player only: in multiplayer the sector keeps running for everyone.
+    this.game.events.on('blur', () => { if (!this.multiplayer) this.paused = true; });
+    // A hidden or backgrounded tab gets few or no animation frames. In multiplayer the game then keeps
+    // simulating from a timer (hands off the controls) and keeps sending the ship, so the pilot neither
+    // vanishes for others nor freezes enemies they run.
+    setInterval(() => {
+      const now = performance.now(), elapsed = Math.min(2, (now - this.lastFrameAt) / 1000);
+      if (now - this.lastFrameAt < 500 || !this.sessionStarted || this.menu?.open || !this.multiplayer) return;
+      this.lastFrameAt = now;
+      const bounds = this.cameras.main.worldView, idle = this.idleInput(bounds);
+      for (let t = 0; t < elapsed; t += 0.05) this.model.update(Math.min(0.05, elapsed - t), idle);
+      this.updateNet(now / 1000);
+    }, 250);
     this.menu=new MainMenu({
       continue:async()=>{if(!this.sessionStarted){const saved=await loadSavedGame();if(!saved)throw new Error('No valid saved game could be loaded. Start a new voyage or import a backup.');this.switchModel(saved);}this.beginSession();},
       newGame:async seed=>{const next=seed?new GameModel(seed):new GameModel();if(this.sessionStarted){const error=await saveGameConfirmed(this.model);if(error)throw new Error(error);}if(!await backupSavedGame())throw new Error('Backup failed. Export your current save before starting a new world.');this.switchModel(next);this.beginSession();const error=await saveGameConfirmed(next);if(error)this.model.message=error;},
@@ -328,8 +343,12 @@ class SpaceScene extends Phaser.Scene {
     this.scene.setVisible(false);this.input.keyboard!.enabled=false;this.input.keyboard!.disableGlobalCapture();
 
   }
+  private lastFrameAt = performance.now();
   update(_time: number, delta: number) {
+    this.lastFrameAt = performance.now();
     if(this.menu?.open)return;
+    // No pausing in multiplayer: a pilot who was paused alone resumes when someone else shares the sector.
+    if (this.paused && this.multiplayer && !this.confirmingMenu) { this.paused = false; this.model.message = 'Another pilot is here: multiplayer cannot be paused.'; }
     if (Phaser.Input.Keyboard.JustDown(this.keys.M)) { this.setMapOpen(!this.mapOpen); this.building = false; }
     if (Phaser.Input.Keyboard.JustDown(this.keys.P)) this.setNetOpen(!this.netOpen);
     // The open lobby list stays fresh while the panel is up.
@@ -344,6 +363,7 @@ class SpaceScene extends Phaser.Scene {
       else if (this.mapOpen) this.mapOpen = false;
       else if (this.buildMode) this.buildMode = false;
       else if (this.building) this.building = false;
+      else if (this.multiplayer) this.model.message = 'Multiplayer cannot be paused. Fly into a station ring to be safe.';
       else this.paused = !this.paused;
     }
     if (Phaser.Input.Keyboard.JustDown(this.keys.R)) { if (this.buildMode) this.buildRot = (this.buildRot + 1) % 4; else if (this.model.rebuildDue && this.model.dead) { this.switchModel(rebuildAtHome(this.model)); saveGame(this.model, this.saveFailed); } else this.model.respawn(); }
@@ -358,11 +378,15 @@ class SpaceScene extends Phaser.Scene {
     const pointer = this.input.activePointer;
     const aim = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
     const bounds = this.cameras.main.worldView;
+    // Guns and the mining beam answer only to clicks that started on the game view, never on a panel or menu.
+    const onGame = !this.netOpen && pointer.downElement === this.game.canvas;
     if (this.buildMode && !this.paused && !this.settings.open) this.updateBuildMode(aim, pointer);
     if (!this.paused && !this.building && !this.settings.open) this.model.update(delta / 1000, {
       x: Number(this.keys.D.isDown) - Number(this.keys.A.isDown), y: Number(this.keys.S.isDown) - Number(this.keys.W.isDown),
-      aim, fire: !this.buildMode && !(this.mapOpen&&this.mapPointer) && pointer.leftButtonDown(), overclock:Phaser.Input.Keyboard.JustDown(this.keys.C)||this.commandInput.has('overclock'), boost, mine: !this.buildMode && ((!(this.mapOpen&&this.mapPointer)&&pointer.rightButtonDown()) || this.keys.SPACE.isDown), dock, view: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+      aim, fire: onGame && !this.buildMode && !(this.mapOpen&&this.mapPointer) && pointer.leftButtonDown(), overclock:Phaser.Input.Keyboard.JustDown(this.keys.C)||this.commandInput.has('overclock'), boost, mine: !this.buildMode && !this.netOpen && ((onGame&&!(this.mapOpen&&this.mapPointer)&&pointer.rightButtonDown()) || this.keys.SPACE.isDown), dock, view: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
     });
+    // In multiplayer the Outfitter and Settings do not stop time: the ship keeps flying with hands off the controls.
+    else if (this.multiplayer && !this.paused) this.model.update(delta / 1000, this.idleInput(bounds));
     // performance.now, not the Phaser loop clock: remote samples are stamped with it on arrival.
     this.updateNet(performance.now() / 1000);
     // Crossing a world edge swaps in the neighbouring sector's model; the pilot's ship and cargo travel with it.
@@ -458,6 +482,7 @@ class SpaceScene extends Phaser.Scene {
           <h3>Pilot</h3>
           <div class="mp-row"><input id="net-name" maxlength="${NET.maxName}" aria-label="Pilot name" placeholder="Pilot name"><button data-net="rename">Save name</button></div>
           <label class="mp-check"><input type="checkbox" data-net-offline> Play offline</label>
+          <label class="mp-check"><input type="checkbox" data-net-share> Share my station deposits with my lobby</label>
           <h3>Your lobby</h3>
           <div data-net-lobby></div>
           <div class="mp-row" data-net-create><button data-net="create-open">Create open lobby</button><button data-net="create-private">Create private lobby</button></div>
@@ -476,6 +501,13 @@ class SpaceScene extends Phaser.Scene {
     const name = this.netPanel.querySelector<HTMLInputElement>('#net-name')!, code = this.netPanel.querySelector<HTMLInputElement>('#net-code')!, offline = this.netPanel.querySelector<HTMLInputElement>('[data-net-offline]')!;
     name.value = saved('voidforge.pilot') ?? this.model.shipName;
     offline.checked = saved('voidforge.offline') === 'true';
+    const shareBox = this.netPanel.querySelector<HTMLInputElement>('[data-net-share]')!;
+    shareBox.checked = this.share.enabled = saved('voidforge.shareDeposits') === 'true';
+    shareBox.addEventListener('change', () => {
+      this.share.enabled = shareBox.checked; store('voidforge.shareDeposits', shareBox.checked ? 'true' : null);
+      this.model.message = shareBox.checked ? 'Lobby members can now spend your station deposits when they run short.' : 'Your station deposits are no longer shared.';
+      shareBox.blur(); this.renderNetPanel(true);
+    });
     const pilotName = () => name.value.trim() || 'Pilot';
     // Online is the normal state: every action that needs the relay makes sure the client is connecting.
     const connect = () => {
@@ -565,6 +597,13 @@ class SpaceScene extends Phaser.Scene {
     }
     this.renderNetPanel(true);
   }
+  /** In a lobby, or sharing this sector with another pilot: the game cannot be paused. */
+  private get multiplayer() { return this.net.connected && (Boolean(this.net.lobby) || this.net.sharing); }
+  /** Controls left alone: used while a menu covers the game in multiplayer, or the tab is hidden. */
+  private idleInput(bounds: { x: number; y: number; width: number; height: number }): Parameters<GameModel['update']>[1] {
+    const p = this.model.player;
+    return { x: 0, y: 0, aim: { x: p.x + Math.cos(p.angle) * 100, y: p.y + Math.sin(p.angle) * 100 }, fire: false, mine: false, dock: false, view: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height } };
+  }
   /** The command bar's one-line multiplayer status. */
   private get netSummary() {
     const net = this.net;
@@ -575,7 +614,7 @@ class SpaceScene extends Phaser.Scene {
   private renderNetPanel(force = false) {
     const net = this.net, lobby = net.lobby, here = [...net.peers.values()];
     const listing = net.lobbyList.map(l => `${l.code}${l.host}${l.members}${l.power}`).join();
-    const state = [this.netOpen, net.status, net.staysOnline, net.note, net.online, lobby?.code, lobby?.host, lobby?.open, lobby?.members.map(m => m.id + m.name).join(), net.id, listing, here.map(p => p.id + p.name).join()].join('|');
+    const state = [this.netOpen, this.share.enabled, this.share.sharers.join(), JSON.stringify(this.share.pool), net.status, net.staysOnline, net.note, net.online, lobby?.code, lobby?.host, lobby?.open, lobby?.members.map(m => m.id + m.name).join(), net.id, listing, here.map(p => p.id + p.name).join()].join('|');
     if (!force && state === this.netContent) return; this.netContent = state;
     if (!this.netOpen) return;
     const esc = (text: string) => text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
@@ -588,6 +627,7 @@ class SpaceScene extends Phaser.Scene {
     q('[data-net-lobby]').innerHTML = lobby
       ? `<div class="mp-lobby"><div class="mp-code"><b>${esc(lobby.code)}</b><span>${lobby.open ? 'Open · listed' : 'Private · code only'} · ${lobby.members.length}/${NET.maxLobby}</span></div>
          <ul class="mp-list">${lobby.members.map(m => `<li><span>${esc(m.name)}${m.id === net.id ? ' (you)' : ''}</span><small>${m.host ? 'HOST' : 'MEMBER'}</small></li>`).join('')}</ul>
+         <p class="mp-empty">${this.share.sharers.length ? `Shared by ${esc(this.share.sharers.join(', '))}: ${esc(Object.entries(this.share.pool).map(([ore, n]) => `${n} ${ore}`).join(' · ') || 'nothing yet')}` : 'Nobody else is sharing deposits.'}${this.share.enabled ? ' You are sharing yours.' : ''}</p>
          <div class="mp-row"><button data-net="invite">Copy invite link</button>${net.isHost ? `<button data-net="${lobby.open ? 'private' : 'open'}">Make ${lobby.open ? 'private' : 'open'}</button>` : ''}<button data-net="leave">Leave</button></div></div>`
       : `<p class="mp-empty">Not in a lobby. Create one, or join an open lobby to fly together.</p>`;
     q('[data-net-create]').hidden = Boolean(lobby);
@@ -614,12 +654,32 @@ class SpaceScene extends Phaser.Scene {
     }
     const wasShared = Boolean(this.model.shared?.targets.some(t => !this.model.shared!.allies.has(t.id)));
     this.link.frame(this.model, now);
+    this.share.frame(this.model, now);
     if (!wasShared && this.model.shared?.targets.some(t => !this.model.shared!.allies.has(t.id))) this.model.message = 'Another pilot is in this sector. Outside station rings they can attack you, and take your cargo.';
     const poses = net.poses(now);
     const allies = new Set(net.lobby?.members.map(m => m.id) ?? []);
     this.model.pilots = poses.filter(pose => !pose.dead).map(pose => ({ x: pose.x, y: pose.y, name: pose.name, hostile: !allies.has(pose.id) }));
+    this.peerPoses = poses;
     this.drawPeers(poses);
     this.renderNetPanel();
+  }
+  private peerPoses: PeerPose[] = [];
+  /** Other pilots' shields and mining/tractor beams, from their latest fx messages, drawn like this pilot's own. */
+  private drawPeerLooks(g: Phaser.GameObjects.Graphics) {
+    const view = this.cameras.main.worldView, cell = BUILD_GRID.cellSize;
+    for (const pose of this.peerPoses) {
+      if (pose.dead || pose.x < view.x - 500 || pose.y < view.y - 500 || pose.x > view.right + 500 || pose.y > view.bottom + 500) continue;
+      const look = this.link.look(pose.id); if (!look) continue;
+      if (look.s) {
+        const radius = Math.max(24, ...pose.blocks.map(b => Math.hypot(b[1], b[2]) * cell + 12)), charge = look.s[0] / look.s[1];
+        g.fillStyle(0x71e1ff, 0.035); g.fillCircle(pose.x, pose.y, radius);
+        g.lineStyle(4, 0x71e1ff, 0.06 + charge * 0.08); g.strokeCircle(pose.x, pose.y, radius + 1.5);
+        g.lineStyle(1.3, 0xa9ecff, 0.25 + charge * 0.4); g.strokeCircle(pose.x, pose.y, radius);
+        g.lineStyle(2, 0xffffff, 0.15 + charge * 0.3); g.beginPath(); g.arc(pose.x, pose.y, radius - 2.5, -2.75, -1.75); g.strokePath();
+      }
+      for (const [kind, rows] of [['mining', look.m], ['tractor', look.t]] as const) for (const [dx, dy, tx, ty, level, targetId] of rows ?? [])
+        drawEnergyBeam(g, { from: { x: pose.x + dx, y: pose.y + dy }, to: { x: tx, y: ty }, level, targetId, moduleX: 0, moduleY: 0 }, this.effects.time, kind, this.effects.enabled);
+    }
   }
   /** Other pilots' ships from their block layouts, with paint, a name tag and hull percentage. Pooled sprites. */
   private drawPeers(poses: PeerPose[]) {
@@ -669,7 +729,8 @@ class SpaceScene extends Phaser.Scene {
   private updateBuildMode(aim: { x: number; y: number }, pointer: Phaser.Input.Pointer) {
     const cx = cellOf(aim.x), cy = cellOf(aim.y), down = pointer.leftButtonDown();
     const existing = structureAt(this.model.outposts, cx, cy);
-    this.buildHover = existing ? '' : this.model.placeError(this.buildKind, cx, cy) ?? '';
+    const placeError = existing ? undefined : this.model.placeError(this.buildKind, cx, cy), funds = this.buildKind === 'outpostCore' ? undefined : outpostFor(this.model.outposts, cx, cy);
+    this.buildHover = !placeError || this.model.lobbyCanCover(placeError, this.model.structureCost(this.buildKind), ore => this.model.buildAvailable(ore, funds)) ? '' : placeError;
     if (pointer.rightButtonDown()) { this.buildMode = false; return; }
     // Clicking a built block selects it for upgrade or repair instead of placing.
     if (existing) { if (down && !this.buildWasDown) { this.buildSelected = { outpost: existing.outpost.id, block: existing.structure.id }; this.audio.play('collect'); } this.buildWasDown = down; if (!down) this.buildHeld = ''; return; }
@@ -696,7 +757,9 @@ class SpaceScene extends Phaser.Scene {
       arrow('Power /s', outputOf(s, def.generation), can ? outputOf(next, def.generation) : undefined), arrow('Battery', outputOf(s, def.energyCapacity), can ? outputOf(next, def.energyCapacity) : undefined), arrow('Storage', outputOf(s, def.storage), can ? outputOf(next, def.storage) : undefined),
       arrow('Shield', outputOf(s, def.shield), can ? outputOf(next, def.shield) : undefined), arrow('Cooling /s', outputOf(s, def.cooling), can ? outputOf(next, def.cooling) : undefined), arrow('Repair /s', outputOf(s, def.repair), can ? outputOf(next, def.repair) : undefined),
       arrow('Drones', dronesOf(s), can ? dronesOf(next) : undefined)].join('');
-    const upgradeError = this.model.upgradeStructureError(outpost, s), repairError = this.model.repairStructureError(outpost, s);
+    // Shortfalls the lobby's shared deposits cover stay clickable: the action borrows them.
+    const covered = (error: string | undefined, cost: Partial<Record<Resource, number>>) => this.model.lobbyCanCover(error, cost, ore => this.model.buildAvailable(ore, outpost)) ? undefined : error;
+    const upgradeError = s.level < OUTPOST.maxLevel ? covered(this.model.upgradeStructureError(outpost, s), this.model.structureUpgradeCost(outpost, s)) : this.model.upgradeStructureError(outpost, s), repairError = covered(this.model.repairStructureError(outpost, s), this.model.structureRepairCost(s));
     return `<section class="block-details"><header><div><small>SELECTED · ${outpost.name.toUpperCase()}</small><h3>${def.label}</h3></div><button data-block="deselect">Back</button></header>
 <p>Level ${s.level} / ${OUTPOST.maxLevel} · Hull ${Math.ceil(s.health)} / ${maxHealth(s)}${s.progress < 1 ? ` · building ${Math.round(s.progress * 100)}%` : ''}</p><table>${rows}</table>
 <p class="block-ability ${s.level >= OUTPOST.maxLevel ? 'unlocked' : ''}"><b>Level 5 · ${ability.name}</b> ${s.level >= OUTPOST.maxLevel ? '(active)' : '(locked)'}<br>${ability.description}</p>
@@ -709,18 +772,22 @@ class SpaceScene extends Phaser.Scene {
     this.buildPanel.hidden = !this.buildMode; document.body.classList.toggle('build-mode', this.buildMode);
     if (!this.buildMode || !builder) return;
     const ores = Object.keys(this.model.cargo) as Resource[];
+    // Blocks are paid from ship cargo, then the outpost being built on, then station deposits.
+    const near = this.model.outpostNear(builder.range), available = (ore: Resource) => this.model.buildAvailable(ore, near) + (this.model.lobbyPool[ore] ?? 0);
     const items = (Object.keys(STRUCTURES) as StructureKind[]).map(kind => {
-      const def = STRUCTURES[kind], price = this.model.structureCost(kind), can = ores.every(ore => this.model.cargo[ore] >= price[ore]);
-      const cost = ores.filter(ore => price[ore] > 0).map(ore => `<i class="${this.model.cargo[ore] >= price[ore] ? 'have' : 'lack'}">${price[ore]} ${ore}</i>`).join(' + ');
+      const def = STRUCTURES[kind], price = this.model.structureCost(kind), can = ores.every(ore => available(ore) >= price[ore]);
+      const cost = ores.filter(ore => price[ore] > 0).map(ore => `<i class="${available(ore) >= price[ore] ? 'have' : 'lack'}">${price[ore]} ${ore}</i>`).join(' + ');
       return `<button data-structure="${kind}" aria-pressed="${kind === this.buildKind}" class="${can ? 'affordable' : 'unaffordable'}" title="${def.description}"><img alt="" src="${this.structureIcons.get(kind)}"><span><b>${def.label}</b><small>${cost}</small></span></button>`;
     }).join('');
-    const carried = ores.filter(ore => this.model.cargo[ore] > 0).map(ore => `${this.model.cargo[ore]} ${ore}`).join(' · ') || 'empty';
+    const list = (store: Partial<Record<Resource, number>>) => ores.filter(ore => (store[ore] ?? 0) > 0).map(ore => `${store[ore]} ${ore}`).join(' · ') || 'empty';
+    const pooled = Object.values(this.model.lobbyPool).some(n => (n ?? 0) > 0) ? `</p><p class="build-cargo">Lobby shared: ${list(this.model.lobbyPool)}` : '';
+    const carried = `${list(this.model.cargo)}</p><p class="build-cargo">Station deposits: ${list(this.model.stored)}${pooled}${near ? `</p><p class="build-cargo">${near.name} storage: ${list(near.stored ?? {})}` : ''}`;
     const chosen = STRUCTURES[this.buildKind], turret = chosen.turret;
     const facts = [`${chosen.health} hull`, `${chosen.buildTime}s build`, chosen.generation ? `+${chosen.generation} power/s` : '', chosen.energyCapacity ? `+${chosen.energyCapacity} battery` : '', chosen.storage ? `+${chosen.storage} storage` : '', chosen.drones ? `${chosen.drones} mining drones` : '', chosen.dock ? `dock range ${chosen.dock}` : '', turret ? `${turret.damage} dmg every ${turret.cooldown}s · range ${turret.range} · ${turret.energy} energy/shot` : ''].filter(Boolean).join(' · ');
     const status = `<p class="build-facts"><b>${chosen.label}</b> — ${chosen.description}<br>${facts}</p>` + (this.buildHover ? `<p class="build-status blocked">${this.buildHover}</p>` : `<p class="build-status ready">Left click to build ${chosen.label}.</p>`);
     const picked = this.selectedBlock(); if (!picked) this.buildSelected = undefined;
     const body = picked ? this.blockDetails(picked.outpost, picked.structure) : `<div class="build-catalog">${items}</div>${status}`;
-    const html = `<header><div><small>BUILD MODULE · LEVEL ${builder.level}</small><h2>Build Mode</h2></div><button data-build-close="true">Close · ${OUTPOST.key}</button></header><p class="build-cargo">Carried cargo: ${carried}</p>${body}<p class="build-stats">Range ${builder.range} · Speed x${builder.speed}${builder.discount ? ` · Cost -${builder.discount}%` : ''} · ${this.model.outposts.length} outpost${this.model.outposts.length === 1 ? '' : 's'}</p><p class="build-hints"><kbd>Left click</kbd> build (hold to drag walls), or click a built block to upgrade/repair · <kbd>${OUTPOST.rotateKey}</kbd> rotate · <kbd>Right click</kbd> / <kbd>Esc</kbd> exit</p>`;
+    const html = `<header><div><small>BUILD MODULE · LEVEL ${builder.level}</small><h2>Build Mode</h2></div><button data-build-close="true">Close · ${OUTPOST.key}</button></header><p class="build-cargo">Ship cargo: ${carried}</p>${body}<p class="build-stats">Range ${builder.range} · Speed x${builder.speed}${builder.discount ? ` · Cost -${builder.discount}%` : ''} · ${this.model.outposts.length} outpost${this.model.outposts.length === 1 ? '' : 's'}</p><p class="build-hints"><kbd>Left click</kbd> build (hold to drag walls), or click a built block to upgrade/repair · <kbd>${OUTPOST.rotateKey}</kbd> rotate · <kbd>Right click</kbd> / <kbd>Esc</kbd> exit</p>`;
     if (html !== this.buildPanelContent) { this.buildPanel.innerHTML = html; this.buildPanelContent = html; }
   }
   /** Readout for the nearest outpost: power, battery, storage and cargo transfer. */
@@ -851,13 +918,14 @@ class SpaceScene extends Phaser.Scene {
   private disconnectForMenu(){if(this.net.status!=='offline'||this.net.staysOnline){this.menuNetworkTransition=true;try{this.net.goOffline();this.link.frame(this.model,performance.now()/1000);}finally{this.menuNetworkTransition=false;}}this.netStarted=false;}
   private beginSession(){this.scene.setVisible(true);this.sessionStarted=true;if(!this.netStarted){this.netStarted=true;this.startNet();}this.paused=false;this.input.keyboard!.resetKeys();this.input.keyboard!.enabled=true;this.input.keyboard!.enableGlobalCapture();this.commandInput.clear();this.saveElapsed=0;}
   private openMenu(){this.setNetOpen(false);this.disconnectForMenu();this.scene.setVisible(false);this.building=false;this.mapOpen=false;this.buildMode=false;this.builder.hidden=true;this.mapWindow.hidden=true;document.body.classList.remove('chart-open');this.audio.setLoop('mine',0);this.audio.setLoop('tractor',0);this.input.keyboard!.resetKeys();this.input.keyboard!.enabled=false;this.input.keyboard!.disableGlobalCapture();this.menu.show(this.sessionStarted||Boolean(startModel));}
+  private confirmingMenu=false;
   private async returnToMenu(){
-    const paused=this.paused;this.paused=true;this.input.keyboard!.enabled=false;this.input.keyboard!.disableGlobalCapture();
+    const paused=this.paused;this.paused=true;this.confirmingMenu=true;this.input.keyboard!.enabled=false;this.input.keyboard!.disableGlobalCapture();
     try{const choice=await this.menu.confirmReturn();if(choice==='cancel'){this.paused=paused;return;}
       this.disconnectForMenu();this.paused=true;
       if(choice==='save'){const error=await saveGameConfirmed(this.model);if(error){this.model.message=error;this.paused=true;return;}}
       this.openMenu();
-    }finally{if(!this.menu.open&&!this.settings.open){this.input.keyboard!.resetKeys();this.input.keyboard!.enabled=true;this.input.keyboard!.enableGlobalCapture();}}
+    }finally{this.confirmingMenu=false;if(!this.menu.open&&!this.settings.open){this.input.keyboard!.resetKeys();this.input.keyboard!.enabled=true;this.input.keyboard!.enableGlobalCapture();}}
   }
 
   private clampMap(){const margin=.5/this.mapView.zoom;this.mapView.centerX=Phaser.Math.Clamp(this.mapView.centerX,margin,1-margin);this.mapView.centerY=Phaser.Math.Clamp(this.mapView.centerY,margin,1-margin);}
@@ -1075,6 +1143,7 @@ class SpaceScene extends Phaser.Scene {
       g.lineStyle(1,0x94ddff,.6);g.strokeCircle(p.x-p.vx*.07,p.y-p.vy*.07,18);g.strokeCircle(p.x-p.vx*.14,p.y-p.vy*.14,14);
     }
     for (const link of this.model.miningLinks) drawEnergyBeam(g,link,this.effects.time,'mining',this.effects.enabled);
+    this.drawPeerLooks(g);
     drawParticles(this.effectsGraphics,this.effects);
     this.drawBuildPreview(now);
     if (!this.building && !this.paused) {
