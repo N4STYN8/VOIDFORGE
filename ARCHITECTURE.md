@@ -40,3 +40,5 @@
 - Browser saves belong to their site origin. Export/import moves a localhost save to the hosted page. The repository never contains player saves or credentials.
 
 Editor dragging lives in `src/moduleDrag.ts`, uses pointer events with a movement threshold, and delegates validation/actions to the model. `moveError` shares side-effect-free validation between preview and committed movement. Builder DOM refresh pauses during active dragging to preserve the source and destination.
+
+World expansion keeps the original 16-column asteroid ID namespace inside the former 19,200-square region; outer chunks use an offset namespace with fixed stride 4096. Optional generationSize/expansion fields migrate old v1 specs without moving original geography. Additional outer-field influence fades in over 2,000 units past the old boundary. The active 5×5 chunk window is independent of world area.

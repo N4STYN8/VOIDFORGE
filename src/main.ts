@@ -173,7 +173,7 @@ class SpaceScene extends Phaser.Scene {
       event.preventDefault();
       const rect = this.mapCanvas.getBoundingClientRect();
       const u = (event.clientX - rect.left) / rect.width, v = (event.clientY - rect.top) / rect.height;
-      const previous = this.mapView.zoom, next = Phaser.Math.Clamp(previous * Math.exp(-event.deltaY * 0.0015), 1, 8);
+      const previous = this.mapView.zoom, next = Phaser.Math.Clamp(previous * Math.exp(-event.deltaY * 0.0015), 1, 24);
       this.mapView.centerX = Phaser.Math.Clamp(this.mapView.centerX + (u - 0.5) * (1 / previous - 1 / next), 0.5 / next, 1 - 0.5 / next);
       this.mapView.centerY = Phaser.Math.Clamp(this.mapView.centerY + (v - 0.5) * (1 / previous - 1 / next), 0.5 / next, 1 - 0.5 / next);
       this.mapView.zoom = next; this.mapElapsed = 200;

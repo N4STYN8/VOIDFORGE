@@ -218,7 +218,7 @@ test('locked outposts charge minerals once and enable docking, upgrades and near
 });
 test('the larger world reveals explored tiles only and retains discoveries after death', () => {
   const m = fixtureModel(); m.asteroids = []; m.enemies = [];
-  assert.equal(WORLD.width, 19200); assert.equal(WORLD.height, 19200);
+  assert.ok(Math.abs(WORLD.width * WORLD.height / (19200 * 19200) - 10) < 1e-10);
   const home = { x: m.player.x, y: m.player.y }, far = { x: 15000, y: 15000 };
   assert.equal(m.isExplored(home), true); assert.equal(m.isExplored(far), false);
   m.player.x = far.x; m.player.y = far.y; m.update(0.01, idle());

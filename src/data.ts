@@ -1,4 +1,4 @@
-export const WORLD = { width: 19200, height: 19200, asteroidCount: 1440, stationX: 3200, stationY: 3200 };
+export const WORLD = { width: 19200 * Math.sqrt(10), height: 19200 * Math.sqrt(10), asteroidCount: 1440, stationX: 3200, stationY: 3200 };
 export const RESOURCES = { iron: { label: 'Iron', color: 0xb9bdc7 }, copper: { label: 'Copper', color: 0xd59460 }, crystal: { label: 'Crystal', color: 0x8ad6ed }, ice: { label: 'Ice', color: 0xc5ecff }, radioactive: { label: 'Radioactive', color: 0x9fe63f } };
 export type Resource = keyof typeof RESOURCES;
 export const SHIP = { speed: 280, acceleration: 650, drag: 1.6, radius: 18, health: 100, miningRange: 240, miningRate: 9, pickupRange: 65 };

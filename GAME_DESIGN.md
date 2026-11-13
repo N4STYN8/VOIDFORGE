@@ -1,7 +1,7 @@
 # Game design
 
 ## World and exploration
-- World: 19200 × 19200 (three times the original width and height). A fresh UUID seed or manually entered seed determines starting base, outposts, curved belts, clusters, density and resource regions.
+- World: approximately 60,716 × 60,716 (10 times the previous 19,200-square world area). A fresh UUID seed or manually entered seed determines starting base, outposts, curved belts, clusters, density and resource regions.
 - Validated starts have clear structures/ship space, reachable iron/copper, and a wide escape corridor. Richer regions and rare resources vary by seed and require exploration.
 - Iron, Copper, Crystal, Ice and Radioactive ore each have finite asteroid quantities. Base inventory capacity is 120; cargo holds increase it.
 - Discovery reveals 480-unit tiles around the ship. Minimap and expanded map hide unexplored terrain/outposts; enemy markers represent nearby detection. M or minimap click opens the map; wheel zooms and dragging pans the expanded map.

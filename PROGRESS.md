@@ -16,6 +16,12 @@
 - Added floating module previews, green/red target validation, release instructions, Escape/outside cancellation and post-drag click suppression. Core stays fixed; connectivity, affordability and upgrade state remain enforced.
 - Browser checked actual mouse dragging: catalog installation, invalid core drop without mutation and occupied-cell swap; no runtime errors. All 65 tests and build pass.
 
+## Tenfold world expansion
+- World area increased exactly 10× to approximately 60,716 × 60,716; each axis grows by √10. New worlds scale belt/cluster geography to fill the larger map.
+- Old saves preserve their original region, bases, asteroid IDs and depletion. Deterministic outer geography fades in beyond the former boundary and is saved once. Outer IDs use a separate fixed-stride namespace.
+- Chunk size and 5×5 active window remain unchanged; partial boundary chunks reject out-of-world candidates. Map wheel zoom now reaches 24×.
+- 67 tests pass, including legacy ID/depletion migration, deterministic outer chunks, edge clipping and save restoration. Browser checked an old save at 59,000/59,000, movement, map zoom and save/reload without runtime errors. Production build passes.
+
 ## Verification
 - 65 tests passing, including prior world/geometry/combat tests and new unlimited module combinations, exact tractor behavior, full cargo, no duplication, energy/heat/mass, weapon origins, EMP, Shift, pool cleanup and effect-disabled equivalence.
 - Production build passes; expected Phaser bundle warning only (~368 KB gzip).

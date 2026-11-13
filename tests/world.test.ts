@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createWorld, generateChunk, validateStart, fieldAt, ChunkWorld, CHUNK_SIZE, randomWorldSeed } from '../src/world.ts';
+import { WORLD } from '../src/data.ts';
 import { GameModel } from '../src/model.ts';
 import { mineMaterial, miningImpact } from '../src/mining.ts';
 const idle={x:0,y:0,aim:{x:0,y:0},fire:false,mine:false,dock:false};
@@ -43,4 +44,38 @@ test('streaming keeps distant chunks unloaded and restores a stable field on ret
   m.player.x=home.x<10000?17500:1500;m.player.y=home.y<10000?17500:1500;m.update(.01,idle);
   assert.ok(m.asteroids.length<800);assert.notDeepEqual(m.asteroids.map(a=>a.id).sort((a,b)=>a-b),initial);
   m.player.x=home.x;m.player.y=home.y;m.update(.01,idle);assert.deepEqual(m.asteroids.map(a=>a.id).sort((a,b)=>a-b),initial);
+});
+
+
+test('expanded world streams deterministic outer regions, clips edges, and avoids legacy ID collisions',()=>{
+  const world=new ChunkWorld('outer-tenfold'),spec=world.spec;
+  assert.ok(WORLD.width>60000&&WORLD.height>60000);
+  const seen=new Set<number>();let count=0;
+  for(const [cx,cy] of [[15,15],[16,0],[0,16],[35,35],[49,49],[50,50]]){
+    const rocks=generateChunk(spec,cx,cy);assert.deepEqual(generateChunk(spec,cx,cy),rocks);
+    for(const rock of rocks){assert.ok(rock.x<WORLD.width&&rock.y<WORLD.height);assert.ok(!seen.has(rock.id));seen.add(rock.id);count++;}
+  }
+  assert.ok(count>0);assert.deepEqual(generateChunk(spec,51,51),[]);
+  const far={x:WORLD.width-3000,y:WORLD.height-3000};
+  const rocks=world.activate(far,[]);assert.ok(rocks.length<1600);
+  const snapshot=world.snapshot(rocks),restored=new ChunkWorld(spec.seed,snapshot);
+  assert.deepEqual(restored.activate(far,[],true),rocks);
+});
+
+test('legacy expansion keeps old chunk IDs and depleted rocks while adding persistent outer geography',()=>{
+  const original=new ChunkWorld('legacy-expansion'),spec=structuredClone(original.spec);
+  delete spec.generationSize;delete spec.expansion;
+  // Restrict a legacy-style specimen to its former bounds.
+  spec.bases.forEach((b,i)=>{b.x=3200+i*2000;b.y=3200;});spec.starter=[];
+  spec.belts=[{x:9000,y:9000,angle:0,length:15000,width:3000,curve:0,phase:0,density:.9,ore:'crystal'}];spec.clusters=[];
+  const before=generateChunk(spec,7,7);assert.ok(before.length>0);
+  for(const rock of before)assert.ok(rock.id>=10000+(7*16+7)*128&&rock.id<10000+(7*16+7)*128+64);
+  const destroyed=before[0].id,snapshot={spec,changes:[[destroyed,null]] as [number,null][],surveyed:[]};
+  const migrated=new ChunkWorld(spec.seed,snapshot);
+  assert.deepEqual(generateChunk(migrated.spec,7,7),before);
+  assert.ok(migrated.spec.expansion?.belts.length);
+  assert.ok(!migrated.activate({x:9000,y:9000},[]).some(a=>a.id===destroyed));
+  const saved=migrated.snapshot([]),again=new ChunkWorld(spec.seed,saved);
+  assert.deepEqual(again.spec,migrated.spec);assert.equal(again.changes.get(destroyed),null);
+  assert.ok(Math.abs(fieldAt(migrated.spec,19200-.01,9000).density-fieldAt(migrated.spec,19200+.01,9000).density)<.001);
 });
