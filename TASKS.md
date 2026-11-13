@@ -1,5 +1,12 @@
 # Tasks
 
+## Space-station outposts — built, needs play
+- [x] Distinct module art for all sixteen block types, continuous hull walls, corridor tubes
+- [x] Same-kind squares up to 3x3 drawn as one large module
+- [x] Outpost radius 14 -> 24 cells
+- [ ] Play-test a large station; check frame time with several big stations on screen
+- [ ] Optional: larger, multi-cell-only block types (e.g. a habitat ring) if the user wants stations bigger than the grid of single blocks
+
 ## Save storage — fixed, needs a real large world
 - [x] Save to IndexedDB with localStorage as the synchronous fallback; newest valid copy loads
 - [x] Trim float digits in save text (about 35% smaller)

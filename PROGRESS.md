@@ -1,5 +1,13 @@
 # Progress
 
+## Space-station look for outposts (local branch claude/station-visuals, uncommitted)
+- Outposts are now drawn as space stations instead of rows of identical brass squares. Every block type has its own module art: octagonal command hub with lit windows, gun bastions, fusion-torus reactors, radiator arrays, shield emitters with corner pylons, cargo frames stacked with coloured containers, launch-bay hangars, docking collars, a radar dish on a lattice mast, a white repair module, a crystal fabricator and a green service pad.
+- Walls become continuous hull plating with seams, rivets and cabin windows; reinforced walls get armour ribs and hazard corners. Corridor tubes join every pair of neighbouring blocks, so a station reads as modules joined by passages.
+- Squares (2x2 or 3x3) of the same block kind are drawn as one large module, e.g. a 3x3 reactor becomes one big torus. Appearance only: every cell is still its own block with its own health and level. The merged module shows the lowest level among its blocks.
+- Outposts may now reach 24 cells from their core (was 14), a 49 x 49 cell station. Neighbouring outposts still cannot overlap (2 x 24 cells < core spacing).
+- Blinking red/green beacons mark the outermost blocks; reactor glow, cooling fan and radar sweep scale up on merged modules.
+- 216 tests pass (4 new in tests/station.test.ts); build passes. Browser: a 93-block test station with every block type, merged 2x2/3x3 modules, scaffolding, damage and live turrets rendered with no console errors; local save backed up and restored. Not checked: how it feels in normal play, and performance with several very large stations on screen (each is still one baked texture).
+
 ## Outpost construction, phases 1-3 (local branch claude/outpost-construction, uncommitted)
 - Phase 1: Build module, a new five-level ship module that cannot be installed before Core level 4. Levels raise construction range and speed, level 3 adds a cost discount, level 5 unlocks the Industrial Fabricator (auto-repairs nearby outpost blocks from carried iron and energy).
 - Phase 2: a large world grid is always visible again and a fine construction grid, aligned to world coordinates at the ship tile size, fades in when zoomed in. Build Mode (F or the on-screen button) forces the grid on, opens a brass build panel with the block catalog and costs, shows a snapped preview that is green when valid and red with the reason when not, places on left click (hold to drag walls), rotates with R and exits on right click, Esc or F. Weapons and mining are suspended while building.
