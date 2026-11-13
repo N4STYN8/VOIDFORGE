@@ -203,3 +203,20 @@ Choices: own Node + WebSocket relay; sector grid; owners keep changes to their s
 - [ ] Stage 5 follow-ups: show linked pilots' cells on the sector map; let a pilot opt out of being matched; matching by danger region as well as progression
 - [x] Stage 6 — scale toward 1,000: interest management (ship state only to pilots within `NET.interest` 7,000 units; authorities send only enemies near another pilot), frames encoded once per broadcast, replaceable state skipped for backed-up sockets, packed array ship state and rounded enemy rows, `/stats` endpoint, `scripts/loadTest.ts`. Measured on this PC with 1,000 pilots in 4-pilot sectors (relay as its own process, load generator on the same machine): 30% of one core, 111 MB, 0 skipped, latency p50 22 ms / p99 38 ms, 40.7 Mbit/s outbound
 - [ ] Stage 6 follow-ups: the Pi measured 64% of one core at 200 pilots (p99 124 ms, 8.5 Mbit/s out), so it holds roughly 300 pilots, not 1,000 — for 1,000, move the relay to a VPS or split rooms across processes by room-key hash behind a small router; binary encoding if bandwidth is still the limit
+
+## Animated main menu
+- [x] Integrate startup menu and single-scene lifecycle without menu autosaving
+- [x] Continue/new seed/confirmation/backups and same-session return flow
+- [x] Animate existing station/ships/asteroids with hidden-tab/reduced-motion handling
+- [x] Tutorial, lore, truthful multiplayer status and shared settings
+- [x] Responsive keyboard/touch layout, desktop/mobile screenshots and save-failure verification
+- [ ] User visual review of menu composition and motion before publication
+- [x] Revise menu composition toward reference: scenic dockside foreground/portrait, violet planet/nebula, enlarged Forge and cyan industrial frames
+- [x] Replace rejected primitive art with detailed reference-derived menu illustration; preserve working HTML controls and independent animation
+- [x] Integrate latest multiplayer update safely; expose real lobby entry and verify menu disconnect/no-save behavior with a local relay
+- [x] Remove menu flyby ships; add bounded settings-aware button sounds and an explicit New Game warning with default Cancel focus
+
+## Compact HUD
+- [x] Replace full-height compact frame with floating instruments and centered short console
+- [x] Verify toggle/full restoration, persisted preference, command identity/actions and five responsive sizes
+- [ ] User review of compact combat readability

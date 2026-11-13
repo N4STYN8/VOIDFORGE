@@ -1,3 +1,4 @@
+import { MainMenu } from './mainMenu.ts';
 import {FACTIONS} from './fleetConfig.ts';
 import Phaser from 'phaser';
 import { GameSettings } from './settings.ts';
@@ -12,6 +13,7 @@ import { cellOf, cellCenter, bounds as outpostBounds, outpostStats, stationLayou
 import { SECTOR, WORLD, SHIP, RESOURCES, ENEMIES, ENEMY_AI, WAYPOINTS, OUTPOST, STRUCTURES, STRUCTURE_ABILITIES, type StructureKind, type Resource, EXPLORATION, MODULES, BUILD_GRID, equipment, upgradeCost, statsLabel, type EquipmentKind, type ModuleKind, FLEET } from './data.ts';
 import './style.css';
 import './cockpit.css';
+import './compactHud.css';
 import './outfitter.css';
 import './map.css';
 import { hashSeed } from './world.ts';
@@ -20,7 +22,7 @@ import { SECTOR_STEPS } from './sectorGrid.ts';
 import { NetClient, relayUrl, inviteLink, type PeerPose } from './net.ts';
 import { SharedLink } from './sharedLink.ts';
 import { NET, MATCH } from './netProtocol.ts';
-import { loadSavedGame, saveGame, saveText, backupSavedGame } from './persistence.ts';
+import { loadSavedGame, saveGame, saveText, saveGameConfirmed, backupSavedGame } from './persistence.ts';
 /** The save found at start-up; storage is read before the game is created because the large store is asynchronous. */
 let startModel: GameModel | null = null;
 import { GameAudio } from './audio.ts';
@@ -30,6 +32,8 @@ import { ensureAsteroidGeometry } from './mining.ts';
 import { drawModule } from './visuals.ts';
 import { paintBackdrop, paintAsteroid, paintStation, paintEnemy, paintOutpost, paintStructureIcon, paintTurretHead, paintDrone, crispModule, paintHull, mix, ASTEROID_SPRITE, ENEMY_SPRITE, STATION_SPRITE } from './sprites.ts';
 class SpaceScene extends Phaser.Scene {
+  private menu!:MainMenu;
+  private sessionStarted=false;
   private cockpit!:Cockpit;
   private commandInput=new Set<CockpitAction>();
   private effects = new EffectPool();
@@ -38,6 +42,8 @@ class SpaceScene extends Phaser.Scene {
   private hudContent='';
   /** Relay connection, lobby state and remote ships. Presentation and transport only; the model stays local. */
   private net = new NetClient();
+  private netStarted=false;
+  private menuNetworkTransition=false;
   private travelPending = false;
   /** Shared-sector state (rocks, enemies, shots, loot) while other pilots are in this sector. */
   private link = new SharedLink(this.net, () => this.model);
@@ -110,7 +116,7 @@ class SpaceScene extends Phaser.Scene {
     this.sessionControls.id = 'session-controls';
     this.sessionControls.innerHTML = '<div><small id="world-seed"></small></div><div class="session-actions"><button data-session="save">Save</button><button data-session="load">Load</button><button data-session="export">Export</button><label class="file-button">Import<input id="import-save" type="file" accept="application/json,.json"></label></div><div class="new-world"><input id="seed-input" aria-label="Optional new world seed" maxlength="80" placeholder="Optional new-world seed"><button data-session="new">New world</button></div><button data-settings="true">Settings · audio / VFX</button>';
     document.body.append(this.sessionControls); this.refreshSeedLabel();
-    this.settings=new GameSettings(this.audio,this.effects,open=>{this.input.keyboard!.enabled=!open;if(open)this.input.keyboard!.disableGlobalCapture();else this.input.keyboard!.enableGlobalCapture();});
+    this.settings=new GameSettings(this.audio,this.effects,open=>{this.input.keyboard!.enabled=!open&&!this.menu?.open;if(open)this.input.keyboard!.disableGlobalCapture();else if(!this.menu?.open)this.input.keyboard!.enableGlobalCapture();});
     this.cockpit=new Cockpit(this.sessionControls,action=>this.cockpitCommand(action));
     this.sessionControls.querySelector('[data-settings]')!.addEventListener('click',()=>this.settings.show());
     this.setupNetPanel();
@@ -121,11 +127,7 @@ class SpaceScene extends Phaser.Scene {
       const action = button.dataset.session;
       if (action === 'save') this.model.message = saveGame(this.model, this.saveFailed) ?? 'World saved locally.';
       if (action === 'load') void loadSavedGame().then(saved => { if (saved) this.switchModel(saved); else this.model.message = 'No valid local save found.'; });
-      if (action === 'new') {
-        const input = this.sessionControls.querySelector<HTMLInputElement>('#seed-input')!;
-        try { const next = input.value.trim() ? new GameModel(input.value.trim()) : new GameModel(); const backup = backupSavedGame(); this.switchModel(next); void backup.finally(() => saveGame(this.model, this.saveFailed)); input.value = ''; }
-        catch { this.model.message = 'Could not generate that seed. Choose another seed.'; }
-      }
+      if (action === 'new') {this.openMenu();this.menu.newWorld(this.sessionControls.querySelector<HTMLInputElement>('#seed-input')!.value.trim());}
       if (action === 'export') {
         const blob = new Blob([saveText(this.model)], { type: 'application/json' }), url = URL.createObjectURL(blob), link = document.createElement('a');
         link.href = url; link.download = `voidforge-${this.model.seed.replace(/[^a-z0-9-]/gi, '').slice(0, 40)}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
@@ -138,8 +140,8 @@ class SpaceScene extends Phaser.Scene {
       catch { this.model.message = 'That file is not a supported VOIDFORGE save.'; }
       input.value = '';
     });
-    window.addEventListener('beforeunload', () => { saveGame(this.model); });
-    document.addEventListener('visibilitychange', () => { if (document.hidden) saveGame(this.model); });
+    window.addEventListener('beforeunload', () => { if(this.sessionStarted&&!this.menu.open)saveGame(this.model); });
+    document.addEventListener('visibilitychange', () => { if (document.hidden&&this.sessionStarted&&!this.menu.open) saveGame(this.model); });
     window.addEventListener('pointerdown', () => this.audio.unlock());
     window.addEventListener('keydown', () => this.audio.unlock());
     this.mapWindow.id = 'map-window'; this.mapWindow.hidden = true;
@@ -315,9 +317,19 @@ class SpaceScene extends Phaser.Scene {
     this.input.mouse!.disableContextMenu();
     this.input.keyboard!.addCapture(['SPACE', 'W', 'A', 'S', 'D']);
     this.game.events.on('blur', () => { this.paused = true; });
-    this.startNet();
+    this.menu=new MainMenu({
+      continue:async()=>{if(!this.sessionStarted){const saved=await loadSavedGame();if(!saved)throw new Error('No valid saved game could be loaded. Start a new voyage or import a backup.');this.switchModel(saved);}this.beginSession();},
+      newGame:async seed=>{const next=seed?new GameModel(seed):new GameModel();if(this.sessionStarted){const error=await saveGameConfirmed(this.model);if(error)throw new Error(error);}if(!await backupSavedGame())throw new Error('Backup failed. Export your current save before starting a new world.');this.switchModel(next);this.beginSession();const error=await saveGameConfirmed(next);if(error)this.model.message=error;},
+      settings:()=>this.settings.show(),
+      sound:kind=>{if(kind!=='hover')this.audio.unlock();this.audio.play(kind==='hover'?'uiHover':kind==='warning'?'uiWarning':'uiClick');},
+      multiplayer:async()=>{if(!this.sessionStarted){const saved=await loadSavedGame();if(!saved)throw new Error('Start a new voyage first, then open Multiplayer to use its pilot.');this.switchModel(saved);}this.beginSession();this.setNetOpen(true);},
+    },Boolean(startModel));
+    this.settings.addMainMenu(()=>{if(this.menu.open)return;void this.returnToMenu();});
+    this.scene.setVisible(false);this.input.keyboard!.enabled=false;this.input.keyboard!.disableGlobalCapture();
+
   }
   update(_time: number, delta: number) {
+    if(this.menu?.open)return;
     if (Phaser.Input.Keyboard.JustDown(this.keys.M)) { this.setMapOpen(!this.mapOpen); this.building = false; }
     if (Phaser.Input.Keyboard.JustDown(this.keys.P)) this.setNetOpen(!this.netOpen);
     // The open lobby list stays fresh while the panel is up.
@@ -471,7 +483,7 @@ class SpaceScene extends Phaser.Scene {
       store('voidforge.pilot', pilotName());
       if (!this.net.staysOnline || this.net.status === 'offline' || this.net.status === 'error') this.net.stayOnline(relayUrl(location.search), pilotName());
     };
-    const typing = (on: boolean) => { this.input.keyboard!.enabled = !on; if (on) this.input.keyboard!.disableGlobalCapture(); else this.input.keyboard!.enableGlobalCapture(); };
+    const typing = (on: boolean) => { if (!on && (this.menu?.open || this.settings.open)) return; this.input.keyboard!.enabled = !on; if (on) this.input.keyboard!.disableGlobalCapture(); else this.input.keyboard!.enableGlobalCapture(); };
     this.netPanel.addEventListener('focusin', event => { const target = event.target as HTMLInputElement; if (target.tagName === 'INPUT' && target.type !== 'checkbox') typing(true); });
     this.netPanel.addEventListener('focusout', () => typing(false));
     this.netPanel.addEventListener('pointerdown', event => event.stopPropagation());
@@ -517,10 +529,10 @@ class SpaceScene extends Phaser.Scene {
     // Lobby world changes: guests fly into the host's sector, and back to their own when the lobby ends.
     this.net.onLobbyWorld = world => {
       try {
-        if (!world) { if (this.model.galaxy.away) { this.switchModel(returnHome(this.model)); saveGame(this.model, this.saveFailed); } return; }
+        if (!world) { if (this.model.galaxy.away) { this.switchModel(returnHome(this.model)); if(!this.menuNetworkTransition)saveGame(this.model, this.saveFailed); } return; }
         if (this.net.isHost || world.seed === this.model.seed) return;
         const spot = world.spot ? { x: world.spot[0], y: world.spot[1] } : undefined;
-        this.switchModel(enterWorld(this.model, world, spot)); saveGame(this.model, this.saveFailed);
+        this.switchModel(enterWorld(this.model, world, spot)); if(!this.menuNetworkTransition)saveGame(this.model, this.saveFailed);
       } catch (error) { this.model.message = `Could not join the lobby world: ${(error as Error).message}`; }
     };
     this.netConnect = connect;
@@ -836,6 +848,18 @@ class SpaceScene extends Phaser.Scene {
     const label = this.radar.querySelector<HTMLElement>('[data-radar-label]');
     if (label) label.textContent = `RADAR ${(range / 1000).toFixed(1)} km`;
   }
+  private disconnectForMenu(){if(this.net.status!=='offline'||this.net.staysOnline){this.menuNetworkTransition=true;try{this.net.goOffline();this.link.frame(this.model,performance.now()/1000);}finally{this.menuNetworkTransition=false;}}this.netStarted=false;}
+  private beginSession(){this.scene.setVisible(true);this.sessionStarted=true;if(!this.netStarted){this.netStarted=true;this.startNet();}this.paused=false;this.input.keyboard!.resetKeys();this.input.keyboard!.enabled=true;this.input.keyboard!.enableGlobalCapture();this.commandInput.clear();this.saveElapsed=0;}
+  private openMenu(){this.setNetOpen(false);this.disconnectForMenu();this.scene.setVisible(false);this.building=false;this.mapOpen=false;this.buildMode=false;this.builder.hidden=true;this.mapWindow.hidden=true;document.body.classList.remove('chart-open');this.audio.setLoop('mine',0);this.audio.setLoop('tractor',0);this.input.keyboard!.resetKeys();this.input.keyboard!.enabled=false;this.input.keyboard!.disableGlobalCapture();this.menu.show(this.sessionStarted||Boolean(startModel));}
+  private async returnToMenu(){
+    const paused=this.paused;this.paused=true;this.input.keyboard!.enabled=false;this.input.keyboard!.disableGlobalCapture();
+    try{const choice=await this.menu.confirmReturn();if(choice==='cancel'){this.paused=paused;return;}
+      this.disconnectForMenu();this.paused=true;
+      if(choice==='save'){const error=await saveGameConfirmed(this.model);if(error){this.model.message=error;this.paused=true;return;}}
+      this.openMenu();
+    }finally{if(!this.menu.open&&!this.settings.open){this.input.keyboard!.resetKeys();this.input.keyboard!.enabled=true;this.input.keyboard!.enableGlobalCapture();}}
+  }
+
   private clampMap(){const margin=.5/this.mapView.zoom;this.mapView.centerX=Phaser.Math.Clamp(this.mapView.centerX,margin,1-margin);this.mapView.centerY=Phaser.Math.Clamp(this.mapView.centerY,margin,1-margin);}
   private setMapOpen(open:boolean){this.mapOpen=open;this.mapPointer=false;if(open){this.building=false;this.buildMode=false;this.mapFollow=true;this.mapView.zoom=8;this.mapElapsed=200;}}
   private cockpitCommand(action:CockpitAction){

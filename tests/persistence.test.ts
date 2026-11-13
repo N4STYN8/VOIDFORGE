@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fixtureModel } from './fixtures.ts';
 import { GameModel } from '../src/model.ts';
-import { saveGame, loadSavedGame, backupSavedGame, saveText, SAVE_KEY, SAVE_FAILED, type SaveRecord, type SaveStores } from '../src/persistence.ts';
+import { saveGame, saveGameConfirmed, loadSavedGame, backupSavedGame, saveText, SAVE_KEY, SAVE_FAILED, type SaveRecord, type SaveStores } from '../src/persistence.ts';
 
 /** A localStorage stand-in with a total character quota, like the browser's. */
 function smallStore(quota = Infinity) {
@@ -82,4 +82,22 @@ test('save text trims float digits without touching integers and stays a valid s
   loaded.asteroids.forEach((rock, i) => { const other = exact.asteroids[i]; assert.equal(rock.id, other.id); assert.equal(rock.ore, other.ore); assert.ok(Math.abs(rock.x - other.x) < 1e-3 && Math.abs(rock.y - other.y) < 1e-3 && Math.abs(rock.amount - other.amount) < 1e-3); });
   // Saving the loaded world again is stable: rounding does not drift.
   assert.equal(saveText(GameModel.fromSave(JSON.parse(saveText(loaded)))), saveText(loaded));
+});
+
+
+test('confirmed saves await durable storage and report failure only when both copies fail',async()=>{
+ const m=fixtureModel(),large=largeStore();assert.equal(await saveGameConfirmed(m,{large}),undefined);assert.ok(large.data.has('current'));
+ assert.equal(await saveGameConfirmed(m,{small:smallStore(),large:largeStore(true)}),undefined);
+ assert.equal(await saveGameConfirmed(m,{small:smallStore(1),large:largeStore(true)}),SAVE_FAILED);
+});
+test('backup reports failure without clearing the active save',async()=>{
+ const m=fixtureModel(),text=saveText(m),small={get:(key:string)=>key===SAVE_KEY?text:null,set:()=>{throw new Error('full');},remove:()=>{throw new Error('must not clear');}};
+ assert.equal(await backupSavedGame({small}),false);assert.equal(small.get(SAVE_KEY),text);
+ assert.equal(await backupSavedGame({small:smallStore()}),true);
+});
+
+test('backup preserves the valid older world when the newest save copy is corrupt',async()=>{
+ const small=smallStore(),large=largeStore(),model=fixtureModel(),text=saveText(model);
+ small.set(SAVE_KEY,'broken');small.set('voidforge.save.at','200');large.data.set('current',{at:100,text});
+ assert.equal(await backupSavedGame({small,large}),true);assert.equal(large.data.get('backup')!.text,text);
 });
