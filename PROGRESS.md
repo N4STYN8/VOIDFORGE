@@ -157,3 +157,19 @@
 - Fixed integration regression: retreating outpost raid parties remain active long enough to leave without awarding kills or loot, beyond ordinary distant-AI suspension.
 - Verified Zach-only outpost implementation, map/styles/visuals, Build-module ability, HTML and outpost/ability tests match origin/main exactly. Full combined suite: 182 passed; production build passed (existing bundle-size warning). Browser: all enemy textures present, no runtime errors, ~60 FPS in the twelve-archetype scene.
 - User authorized the local commits, integration and feature-branch push. Main and deployment workflows remain untouched; no production deployment authorized.
+
+## Cockpit HUD — 2026-11-13
+- Extended the existing navy/cyan pixel interface with slim structural rails, navigation strip, explored radar, aimed-contact readout, weapon readiness and six command modules. Retained flightHud inventory/vitals and existing session/settings/outfitter/map/build systems.
+- Commands: Shift burst, C overclock, Q outfitter, F Build Mode, M explored map, E dock/paid repair. Existing shortcuts remain; buttons use the same restrictions and actual model state. Radar clicks expand the map. Compact/full HUD preference persists locally.
+- Art audit and presentation boundaries recorded in ARCHITECTURE.md; no gameplay, sprites, station or asteroid artwork changed.
+- Validation: 184 tests and production build passed; browser commands/settings/save-menu access, compact persistence and keyboard/WASD verified. Layouts inspected at 1440×1000, 1366×768, 1024×768, 900×650, 650×600 and 390×667; center remained clear and no horizontal overflow. Synthetic Canvas stress scene: 400 asteroids/50 actors at ~60 FPS, no browser errors.
+- Files: src/cockpit.ts, src/cockpit.css, src/main.ts, index.html, tests/cockpit.test.ts, ARCHITECTURE.md, GAME_DESIGN.md, TASKS.md, PROGRESS.md.
+- Git: clean start, fetched and fast-forward pull confirmed already synchronized; local branch codex/cockpit-hud. All work remains uncommitted; no push, merge or deployment. Existing Phaser bundle-size warning remains. No known blocking defects from checks.
+- Next task: human combat/mining session at the player's usual resolution to assess HUD density and aimed-contact readability.
+
+## Cockpit reference refinement — 2026-11-13
+- Continued the authorized local HUD task using the supplied image: angular steel shoulders/joints and corner lights, tall recessed side bays, stacked icon gauges, circular local radar, readiness strips and icon command modules including Settings. Retained existing navy/cyan colors and all world artwork.
+- Radar uses real explored cells/local ore/contacts/forges/player outposts; full-map access is preserved. Target view shows nearby friendly station identity/distance and the existing station thumbnail when no hostile contact is acquired. No fabricated health or contacts.
+- Preserved both the previous local HUD edits and remote main (fetch found no new commits); no pull over local work. Branch remains codex/cockpit-hud, uncommitted. Added src/cockpitArt.ts and refined src/hud.ts alongside the previously listed UI/docs/tests files.
+- Validation: 185 tests pass; build passes with existing bundle warning. Browser checks cover all command buttons (including Settings), original shortcuts, compact persistence and six viewport sizes; no errors/overflow, clear center. Stress check remains ~60 FPS with 400 asteroids and 50 actors. Fixed Systems/radar stacking and removed center-crossing frame posts on narrow layouts.
+- No commits, pushes, merges or deployments. Next task: human combat/mining readability check against the reference at the user's usual resolution.

@@ -125,3 +125,11 @@
 - [ ] Outpost balancing from real play (costs, turret strength, raid size and frequency, drone rates)
 - [ ] Decide whether ships and asteroids should collide with outpost blocks
 - [x] Integrate Zach's outpost construction merge; preserve outpost behaviors and pass all 182 combined tests
+
+## Cockpit HUD
+- [x] Audit existing palette, technical fonts, pixel scale and border conventions
+- [x] Reuse ship status and map rendering; add frame/navigation/tactical/command layout
+- [x] Connect real state, keyboard-equivalent commands and compact preference
+- [x] Verify responsive center visibility, command behavior, regression tests/build and frame rate
+- [ ] Human cockpit readability pass during combat/mining at the target player's resolution
+- [x] Refine cockpit toward supplied reference: angular armor, stacked icon gauges, circular radar, friendly station thumbnail and icon console; verify 185 tests and responsive controls

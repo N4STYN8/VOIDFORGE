@@ -3,13 +3,15 @@ import Phaser from 'phaser';
 import { GameSettings } from './settings.ts';
 import { moduleDrag } from './moduleDrag.ts';
 import { flightHud } from './hud.ts';
+import { Cockpit, type CockpitAction } from './cockpit.ts';
 import { outfitterMarkup } from './outfitter.ts';
 import { EffectPool } from './effects.ts';
 import { drawParticles, drawEnergyBeam, drawProjectile, drawEmp } from './effectsRender.ts';
 import { GameModel } from './model.ts';
 import { cellOf, cellCenter, bounds as outpostBounds, outpostStats, storedTotal, structureAt, maxHealth, turretOf, dronesOf, outputOf, type Outpost, type Structure } from './outposts.ts';
-import { WORLD, SHIP, RESOURCES, ENEMIES, ENEMY_AI, OUTPOST, STRUCTURES, STRUCTURE_ABILITIES, type StructureKind, type Resource, EXPLORATION, MODULES, BUILD_GRID, equipment, upgradeCost, statsLabel, type EquipmentKind, type ModuleKind } from './data.ts';
+import { WORLD, SHIP, RESOURCES, ENEMIES, ENEMY_AI, OUTPOST, STRUCTURES, STRUCTURE_ABILITIES, type StructureKind, type Resource, MODULES, BUILD_GRID, equipment, upgradeCost, statsLabel, type EquipmentKind, type ModuleKind } from './data.ts';
 import './style.css';
+import './cockpit.css';
 import { hashSeed } from './world.ts';
 import { loadSavedGame, saveGame, backupSavedGame } from './persistence.ts';
 import { GameAudio } from './audio.ts';
@@ -18,6 +20,8 @@ import { ensureAsteroidGeometry } from './mining.ts';
 import { drawModule } from './visuals.ts';
 import { paintBackdrop, paintAsteroid, paintStation, paintEnemy, paintOutpost, paintStructureIcon, paintTurretHead, paintDrone, crispModule, mix, ASTEROID_SPRITE, ENEMY_SPRITE, STATION_SPRITE } from './sprites.ts';
 class SpaceScene extends Phaser.Scene {
+  private cockpit!:Cockpit;
+  private commandInput=new Set<CockpitAction>();
   private effects = new EffectPool();
   private saveElapsed = 0;
   private sessionControls = document.createElement('section');
@@ -50,8 +54,6 @@ class SpaceScene extends Phaser.Scene {
   private lastBullet = -1;
   private model = loadSavedGame() ?? new GameModel();
   private targetLabel!: Phaser.GameObjects.Text;
-  private mapLabel!: Phaser.GameObjects.Text;
-  private minimap!: Phaser.GameObjects.Graphics;
   private effectsGraphics!: Phaser.GameObjects.Graphics;
   private graphics!: Phaser.GameObjects.Graphics;
   private follow!: Phaser.GameObjects.Zone;
@@ -85,6 +87,7 @@ class SpaceScene extends Phaser.Scene {
     this.sessionControls.innerHTML = '<div><small id="world-seed"></small></div><div class="session-actions"><button data-session="save">Save</button><button data-session="load">Load</button><button data-session="export">Export</button><label class="file-button">Import<input id="import-save" type="file" accept="application/json,.json"></label></div><div class="new-world"><input id="seed-input" aria-label="Optional new world seed" maxlength="80" placeholder="Optional new-world seed"><button data-session="new">New world</button></div><button data-settings="true">Settings · audio / VFX</button>';
     document.body.append(this.sessionControls); this.refreshSeedLabel();
     this.settings=new GameSettings(this.audio,this.effects,open=>{this.input.keyboard!.enabled=!open;if(open)this.input.keyboard!.disableGlobalCapture();else this.input.keyboard!.enableGlobalCapture();});
+    this.cockpit=new Cockpit(this.sessionControls,action=>this.cockpitCommand(action));
     this.sessionControls.querySelector('[data-settings]')!.addEventListener('click',()=>this.settings.show());
     this.sessionControls.addEventListener('focusin', event => { if ((event.target as HTMLElement).id === 'seed-input') { this.input.keyboard!.enabled = false; this.input.keyboard!.disableGlobalCapture(); this.paused = true; } });
     this.sessionControls.addEventListener('focusout', () => { this.input.keyboard!.enabled = true; this.input.keyboard!.enableGlobalCapture(); });
@@ -118,9 +121,7 @@ class SpaceScene extends Phaser.Scene {
     this.mapWindow.innerHTML = '<header><div><small>NAVIGATION / EXPLORED SPACE</small><h2>Sector map</h2></div><button id="close-map">Close · M / Esc</button></header><canvas width="640" height="640" aria-label="Explored space map"></canvas><p>Dark areas are unexplored · Green: active base · Amber: locked base<br>Explored space is tinted by threat: <span style="color:#7d9ab0">blue low</span> · <span style="color:#e8c45a">olive medium</span> · <span style="color:#f08a4b">rust high</span> · <span style="color:#f0527a">magenta extreme</span><br>Explore to discover outposts. G activates nearby locked bases · Wheel zooms · Drag pans.</p>';
     document.body.append(this.mapWindow); this.mapCanvas = this.mapWindow.querySelector('canvas')!;
     this.mapWindow.querySelector('button')!.addEventListener('click', () => { this.mapOpen = false; });
-    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      if (pointer.x >= this.scale.width - 152 && pointer.y >= this.scale.height - 152) this.mapOpen = !this.mapOpen;
-    });
+
     this.bossBar.id = 'boss-bar'; this.bossBar.hidden = true; document.body.append(this.bossBar);
     this.buildPanel.id = 'build-panel'; this.buildPanel.hidden = true; document.body.append(this.buildPanel);
     this.buildPanel.addEventListener('pointerdown', event => event.stopPropagation());
@@ -192,7 +193,6 @@ class SpaceScene extends Phaser.Scene {
     this.buildGhost = this.add.image(0, 0, 'structure-wall').setDepth(2).setAlpha(0.6).setVisible(false);
     this.graphics = this.add.graphics();
     this.effectsGraphics=this.add.graphics().setDepth(4).setBlendMode(Phaser.BlendModes.ADD);
-    this.minimap = this.add.graphics().setScrollFactor(0).setDepth(20);
     // Three parallax layers (gas clouds, far stars, near stars) baked once per world seed.
     this.paintBackdropTextures();
     this.backdrop=[
@@ -203,6 +203,7 @@ class SpaceScene extends Phaser.Scene {
     // Pixel art: every baked sprite is enlarged with nearest-neighbour filtering.
     for(const layer of this.backdrop)layer.sprite.texture.setFilter(Phaser.Textures.FilterMode.NEAREST);
     this.textures.addCanvas('station-on',paintStation(true))!.setFilter(Phaser.Textures.FilterMode.NEAREST);this.textures.addCanvas('station-off',paintStation(false))!.setFilter(Phaser.Textures.FilterMode.NEAREST);
+    this.cockpit.setStationIcon((this.textures.get('station-on').getSourceImage() as HTMLCanvasElement).toDataURL());
     this.stationSprites=this.model.bases.map(base=>this.add.image(base.x,base.y,'station-off').setScale(1/STATION_SPRITE.scale).setDepth(-.5));
     for(const kind of Object.keys(ENEMIES))this.textures.addCanvas(`enemy-${kind}`,paintEnemy(kind as keyof typeof ENEMIES))!.setFilter(Phaser.Textures.FilterMode.NEAREST);
     for (const kind of ['core', ...Object.keys(MODULES)] as EquipmentKind[]) for (let level = 1; level <= equipment(kind).levels.length; level++) {
@@ -217,7 +218,6 @@ class SpaceScene extends Phaser.Scene {
     }
     this.baseLabels = this.model.bases.map(base => this.add.text(base.x, base.y - 172, '', { fontFamily: 'monospace', fontSize: '10px', color: '#a0d6cc', align: 'center', lineSpacing: 5 }).setOrigin(0.5));
     this.targetLabel = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '10px', color: '#b5ebdf', backgroundColor: '#0b1423', padding: { x: 6, y: 3 } }).setOrigin(0.5, 0).setDepth(5);
-    this.mapLabel = this.add.text(0, 0, 'SECTOR MAP / M', { fontFamily: 'monospace', fontSize: '9px', color: '#91afc5', letterSpacing: 1 }).setScrollFactor(0).setDepth(21);
     this.follow = this.add.zone(this.model.player.x, this.model.player.y, 1, 1);
     this.cameras.main.setBounds(0, 0, WORLD.width, WORLD.height).setZoom(1.35).startFollow(this.follow, true, 0.15, 0.15);
     this.keys = this.input.keyboard!.addKeys(`W,A,S,D,SPACE,E,R,ESC,B,Q,M,N,G,V,SHIFT,C,${OUTPOST.key}`) as Record<string, Phaser.Input.Keyboard.Key>;
@@ -268,15 +268,15 @@ class SpaceScene extends Phaser.Scene {
     if(Phaser.Input.Keyboard.JustDown(this.keys.V)){this.effects.enabled=!this.effects.enabled;this.settings.persist();}
     const beforeHull = this.model.player.health, beforeShield = this.model.shield, beforeKills = this.model.kills, beforeHits = this.model.enemyHits, beforeOreHits = this.model.oreHits;
     if (Phaser.Input.Keyboard.JustDown(this.keys.G) && !this.paused && !this.building && !this.mapOpen && !this.settings.open) { if (this.model.unlockBase()) this.audio.play('build'); }
-    const boost=Phaser.Input.Keyboard.JustDown(this.keys.SHIFT);
-    const dock = Phaser.Input.Keyboard.JustDown(this.keys.E);
+    const boost=Phaser.Input.Keyboard.JustDown(this.keys.SHIFT)||this.commandInput.has('boost');
+    const dock = Phaser.Input.Keyboard.JustDown(this.keys.E)||this.commandInput.has('dock');
     const pointer = this.input.activePointer;
     const aim = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
     const bounds = this.cameras.main.worldView;
     if (this.buildMode && !this.paused && !this.settings.open) this.updateBuildMode(aim, pointer);
     if (!this.paused && !this.building && !this.mapOpen && !this.settings.open) this.model.update(delta / 1000, {
       x: Number(this.keys.D.isDown) - Number(this.keys.A.isDown), y: Number(this.keys.S.isDown) - Number(this.keys.W.isDown),
-      aim, fire: !this.buildMode && pointer.leftButtonDown(), overclock:Phaser.Input.Keyboard.JustDown(this.keys.C), boost, mine: !this.buildMode && (pointer.rightButtonDown() || this.keys.SPACE.isDown), dock, view: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+      aim, fire: !this.buildMode && pointer.leftButtonDown(), overclock:Phaser.Input.Keyboard.JustDown(this.keys.C)||this.commandInput.has('overclock'), boost, mine: !this.buildMode && (pointer.rightButtonDown() || this.keys.SPACE.isDown), dock, view: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
     });
     if (!this.paused && !this.building && !this.mapOpen && !this.settings.open) {
       for(const event of this.model.effects){if(event.type==='cue'&&event.cue)this.audio.play(event.cue,event.pitch,event.volume);else if(event.type==='muzzle'&&event.weapon&&!event.silent)this.audio.playWeapon(event.weapon);if(event.type==='arc')this.audio.play('pulse');if(event.type==='collection')this.audio.play('collect');if(event.type==='shield')this.audio.play('shield');}
@@ -286,6 +286,7 @@ class SpaceScene extends Phaser.Scene {
       if (this.model.enemyHits > beforeHits) this.audio.play('hit');
       if (this.model.kills > beforeKills) this.audio.play('explosion');
     }
+    this.commandInput.clear();
     const audible=!this.paused&&!this.building&&!this.mapOpen&&!this.settings.open&&!this.model.dead;
     this.audio.setLoop('mine',audible?this.model.miningLinks.length:0);this.audio.setLoop('tractor',audible?this.model.tractorLinks.length:0);
     for (const b of this.model.bullets) this.lastBullet = Math.max(this.lastBullet, b.id);
@@ -308,6 +309,8 @@ class SpaceScene extends Phaser.Scene {
     if (this.hudElapsed >= 100) {
     this.hudElapsed = 0;
     const destination = this.model.bases.filter(base => this.model.isExplored(base) || base.unlocked).reduce((best, base) => Math.hypot(p.x - base.x, p.y - base.y) < Math.hypot(p.x - best.x, p.y - best.y) ? base : best);
+    this.cockpit.update(this.model,aim,this.paused||this.building||this.mapOpen||this.settings.open,this.buildMode);
+    document.body.classList.toggle('cockpit-modal',this.building||this.mapOpen||this.settings.open);
     const html=flightHud(this.model,{base:destination,direction:this.directionToStation(),zoom:this.cameras.main.zoom,muted:this.audio.muted,effects:this.effects.enabled,detailsOpen:this.hud.querySelector<HTMLDetailsElement>('details')?.open??false});
     if(html!==this.hudContent){this.hud.innerHTML=html;this.hudContent=html;}
     // Boss bar: shown while a boss is close enough to matter.
@@ -523,25 +526,17 @@ class SpaceScene extends Phaser.Scene {
     this.refreshSeedLabel(); this.input.keyboard!.enabled = true;
   }
   private drawMinimap() {
-    const g = this.minimap; g.clear();
-    const zoom = this.cameras.main.zoom;
-    g.setScale(1 / zoom); g.setPosition(this.scale.width / 2 * (1 - 1 / zoom), this.scale.height / 2 * (1 - 1 / zoom));
-    this.mapLabel.setScale(1 / zoom);
-    const size = 140, left = this.scale.width - size - 12, top = this.scale.height - size - 12;
-    this.mapLabel.setPosition((left + 8 - this.scale.width / 2) / zoom + this.scale.width / 2, (top - 17 - this.scale.height / 2) / zoom + this.scale.height / 2);
-    const map = (p: { x: number; y: number }) => ({ x: left + p.x / WORLD.width * size, y: top + p.y / WORLD.height * size });
-    g.fillStyle(0x0b111d, 0.85); g.fillRect(left, top, size, size);
-    g.lineStyle(1, 0x344252); g.strokeRect(left, top, size, size);
-    for (const key of this.model.explored) {
-      const [x, y] = key.split(',').map(Number); g.fillStyle(0x213c50, 0.6);
-      g.fillRect(left + x * EXPLORATION.cell / WORLD.width * size, top + y * EXPLORATION.cell / WORLD.height * size, EXPLORATION.cell / WORLD.width * size + 0.5, EXPLORATION.cell / WORLD.height * size + 0.5);
-    }
-    for (const a of this.model.chartedAsteroids) { if (!this.model.isExplored(a)) continue; const p = map(a); g.fillStyle(RESOURCES[a.ore].color, 0.65); g.fillRect(p.x, p.y, 1, 1); }
-    for (const base of this.model.bases) { if (!this.model.isExplored(base)) continue; const p = map(base); g.lineStyle(1, base.unlocked ? 0x75e2ac : 0xe7b477); g.strokeRect(p.x - 2, p.y - 2, 4, 4); }
-    g.fillStyle(0xe15e68); for (const e of this.model.enemies) { if (!this.model.isExplored(e) || Math.hypot(e.x - this.model.player.x, e.y - this.model.player.y) > 1100) continue; const p = map(e); g.fillCircle(p.x, p.y, 1.5); }
-    const p = map(this.model.player); g.fillStyle(0xffffff); g.fillCircle(p.x, p.y, 3);
-    const view = this.cameras.main.worldView;
-    g.lineStyle(1, 0x73c9ee, 0.5); g.strokeRect(left + view.x / WORLD.width * size, top + view.y / WORLD.height * size, view.width / WORLD.width * size, view.height / WORLD.height * size);
+    // Reuse the explored-map renderer in the cockpit radar, at the existing 5 Hz cadence.
+    this.cockpit.drawRadar(this.model,this.cameras.main.worldView);
+  }
+  private cockpitCommand(action:CockpitAction){
+    this.audio.unlock();
+    if(this.paused||this.building||this.mapOpen||this.settings.open||this.model.dead)return;
+    if(action==='settings'){this.settings.show();}
+    else if(action==='map'){this.mapOpen=true;this.buildMode=false;}
+    else if(action==='shop'){if(this.model.atStation)this.building=true;}
+    else if(action==='build')this.toggleBuildMode();
+    else this.commandInput.add(action);
   }
   private renderBuilder() {
     this.builder.hidden = !this.building;

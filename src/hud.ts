@@ -1,3 +1,4 @@
+import {cockpitIcon} from './cockpitArt.ts';
 import type { GameModel } from './model.ts';
 import { DANGER } from './data.ts';
 export type FlightHudState={base:GameModel['bases'][number];direction:string;zoom:number;muted:boolean;effects:boolean;detailsOpen:boolean};
@@ -5,7 +6,7 @@ const fmt=(n:number)=>Math.round(n).toLocaleString();
 const esc=(s:string)=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 export function flightHud(model:GameModel,state:FlightHudState){
   const p=model.player,vitals:[string,number,number,string][]=[['Hull',p.health,model.maxHealth,'#78dec0'],['Shield',model.shield,model.maxShield,'#79dfff'],['Energy',model.energy,model.maxEnergy,'#e0c886'],['Heat',model.heat,model.heatCapacity,model.heat>model.heatCapacity*.8?'#ee937b':'#a8a2dc']];
-  const rows=vitals.map(([label,n,max,color])=>`<div class="vital"><div><span>${label}</span><b>${fmt(n)} <small>/ ${fmt(max)}</small></b></div><div class="vital-bar"><i style="width:${Math.max(0,Math.min(100,max?n/max*100:0))}%;background:${color}"></i></div></div>`).join('');
+  const rows=vitals.map(([label,n,max,color])=>`<div class="vital" data-system="${label.toLowerCase()}"><span class="vital-icon">${cockpitIcon(label.toLowerCase())}</span><div><span>${label}</span><b>${fmt(n)} <small>/ ${fmt(max)}</small></b></div><div class="vital-bar"><i style="width:${Math.max(0,Math.min(100,max?n/max*100:0))}%;background:${color}"></i></div></div>`).join('');
   const colors:Record<string,string>={iron:'#b9bdc7',copper:'#d59460',crystal:'#8ad6ed',ice:'#c5ecff',radioactive:'#9fe63f'};
   const resources=Object.keys(model.cargo).map(ore=>`<tr><th><i style="background:${colors[ore]}"></i>${ore==='radioactive'?'Radioactive':ore[0].toUpperCase()+ore.slice(1)}</th><td>${fmt(model.cargo[ore as keyof typeof model.cargo])}</td><td>${fmt(model.stored[ore as keyof typeof model.stored])}</td></tr>`).join('');
   const distance=Math.hypot(p.x-state.base.x,p.y-state.base.y),hasBoost=model.modules.some(m=>m.kind==='engine'&&m.level>=2);
