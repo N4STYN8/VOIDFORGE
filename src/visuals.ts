@@ -65,6 +65,12 @@ export function drawModule(g: Phaser.GameObjects.Graphics, x: number, y: number,
   }else{
     rect(-5,-4,10,8,0x515c71);rect(-4,-3,8,6,0x9680ae);for(const y of [-2,1])rect(-4,y,8,1,0x4d405e);rect(-2,-4,1,8,0xd0c1de);rect(2,-4,1,8,0xd0c1de);
   }
+  if(level>=5){
+    // Ultimate hardware: paired bus rails, extra vents and four bright corner contacts, baked with the module.
+    for(const x of [-6,5]){rect(x,-4,1,3,color);rect(x,1,1,3,color);}
+    for(const x of [-5,4]){rect(x,-6,2,1,0xdff8fa);rect(x,5,2,1,color);}
+    rect(-2,-6,4,1,color);
+  }
   // Distinct tier bars and restrained corner fasteners stay legible at flight scale.
   rect(-5,5,10,1,0x0b121b);
   for(let i=0;i<level;i++)rect(-5+i*(10/Math.max(3,level)),5,Math.min(2.5,8/level),1,level>=3?0xffd58c:level===2?0x83deff:0xa7c2d0);

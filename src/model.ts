@@ -1,8 +1,9 @@
+import { ECONOMY, LEGACY_PURCHASES, missingMinerals, legacyInvestment, type Minerals } from './economy.ts';
 import { advanceBelt,spinFor,BELT_MOTION } from './beltMotion.ts';
 import { EnemyPopulation,type EnemyPopulationSnapshot } from './enemyPopulation.ts';
 import { POPULATION } from './populationConfig.ts';
 import { SPECIAL } from './abilityConfig.ts';
-import { freshAbility,state,tick,activate,onFire,onHit,onMiningHit,onDamageTaken,onBoost,onEnergyDeficit,onOverheat,type AbilityState } from './abilities.ts';
+import { freshAbility,state,tick,activate,onFire,ultimateCost,onMiningHit,onDamageTaken,onBoost,onEnergyDeficit,onOverheat,type AbilityState } from './abilities.ts';
 import { dangerAt, bossSites, ChunkWorld, SeedRandom, randomWorldSeed, type WorldSnapshot } from './world.ts';
 import { segmentPolygonHit, segmentCircleHit } from './asteroidGeometry.ts';
 import { clearLineOfSight, avoidMovingOre, nextEnemyState, type EnemyState } from './enemyAI.ts';
@@ -12,7 +13,7 @@ export type { Asteroid } from './mining.ts';
 import type { EffectEvent } from './effectEvents.ts';
 import { collideAsteroid, collide, type Body } from './collisions.ts';
 import { WORLD, SHIP, WEAPONS, ENEMIES, ENEMY_AI, ENEMY_SPAWN, HORDE, FLEET, WAYPOINTS, OUTPOST, STRUCTURES, STRUCTURE_SPECIAL, DRONES, type StructureKind, DANGER, BOSS, HEARING, type EnemyDefinition, type EnemyWeapon, COLLISION, ORE_COMBAT, PATROL, MODULE_DURABILITY, REPAIR, MODULES, BUILD_GRID, BASES, BASE_RADIUS, EXPLORATION, RESOURCES, type EnemyKind, CORE, ROCKET, WEAPON_TYPES, SHIP_SYSTEMS, VFX, type WeaponKind, equipment, upgradeCost, type EquipmentStats, type EquipmentKind, type ModuleKind, type Resource } from './data.ts';
-export type ShipModule = { x: number; y: number; kind: ModuleKind; level: number; cooldown: number; integrity: number; ability?:AbilityState; targetIds?: number[]; boostRemaining?:number; boostCooldown?:number };
+export type ShipModule = { invested?:Minerals; x: number; y: number; kind: ModuleKind; level: number; cooldown: number; integrity: number; ability?:AbilityState; targetIds?: number[]; boostRemaining?:number; boostCooldown?:number };
 export type Point = { x: number; y: number };
 /** A ship that is not being flown: everything that belongs to the hull rather than to the pilot. */
 export type StoredShip = { id: number; name: string; coreLevel: number; modules: ShipModule[]; health: number; paint?: number };
@@ -22,9 +23,9 @@ export type Waypoint = Point & { id: number };
 export const paintIndex = (value: unknown) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value < FLEET.paints.length ? value : 0;
 export const starterModules = (): ShipModule[] => [{ x: 1, y: 0, kind: 'cannon', level: 1, cooldown: 0, integrity: 45 }, { x: 0, y: -1, kind: 'miner', level: 1, cooldown: 0, integrity: 40 }];
 export type Input = { x: number; y: number; aim: Point; fire: boolean; mine: boolean; dock: boolean; boost?:boolean; overclock?:boolean; view?: { x: number; y: number; width: number; height: number } };
-export type Enemy = Point & { /** Outpost raid target and party membership. */ raid?:number;raidParty?:boolean; armor?:number;accuracyScale?:number;maxHealth?:number;damageScale?:number;rewardScale?:number;meltdown?:number; meltdownDone?:boolean; faction?: import("./data.ts").FactionKind; cargo?: Partial<Record<Resource,number>>; industryClock?:number; horde?: boolean; populationExempt?: boolean; mount?: Point; phase2?: boolean; phase3?: boolean; cooldown3?: number; surge?: number; surgeTimer?: number; empTimer?: number; empCharge?: number; state?: EnemyState; lastSeen?: Point; memory?: number; clock?: number; retreat?: number; retreated?: boolean; reposition?: number; sidestep?: number; stuck?: number; px?: number; py?: number; shield?: number; shieldDelay?: number; cooldown2?: number; charge?: { t: number; angle: number; weapon: number }; sx?: number; sy?: number; parent?: number; home?: Point; populationRegion?:string;populationClass?:'normal'|'elite';populationPatrol?:Point & {id:number;angle:number};rewarded?:boolean; disabledFor?: number; vx?: number; vy?: number; impactCooldown?: number; kind?: EnemyKind; squad?: number; slot?: number; patrolAngle?: number; id: number; health: number; cooldown: number; angle: number };
+export type Enemy = Point & { /** Outpost raid target and party membership. */ raid?:number;raidParty?:boolean; armor?:number;accuracyScale?:number;maxHealth?:number;damageScale?:number;rewardScale?:number;meltdown?:number; meltdownDone?:boolean; faction?: import("./data.ts").FactionKind; cargo?: Partial<Record<Resource,number>>; industryClock?:number; horde?: boolean; populationExempt?: boolean; mount?: Point; phase2?: boolean; phase3?: boolean; cooldown3?: number; surge?: number; surgeTimer?: number; empTimer?: number; empCharge?: number; state?: EnemyState; lastSeen?: Point; memory?: number; clock?: number; retreat?: number; retreated?: boolean; reposition?: number; sidestep?: number; stuck?: number; px?: number; py?: number; shield?: number; shieldDelay?: number; cooldown2?: number; charge?: { t: number; angle: number; weapon: number }; sx?: number; sy?: number; parent?: number; home?: Point; populationRegion?:string;populationClass?:'normal'|'elite';populationPatrol?:Point & {id:number;angle:number};rewarded?:boolean; empRecovery?:number;disabledFor?: number; vx?: number; vy?: number; impactCooldown?: number; kind?: EnemyKind; squad?: number; slot?: number; patrolAngle?: number; id: number; health: number; cooldown: number; angle: number };
 export type Drop = Point & {vx?:number;vy?:number; id: number; ore: Resource; amount: number };
-export type Bullet = Point & { id: number; vx: number; vy: number; life: number; enemy: boolean; damage?: number; homing?: number; rocket?: boolean; splash?: number; weapon?: WeaponKind; level?: number; attackerId?:number; penetrating?:number; hitIds?:number[]; enhanced?:boolean; guided?:boolean; fragment?:boolean; age?:number; /** Fired by an outpost turret: survives off screen like hostile fire. */ turret?:boolean };
+export type Bullet = Point & { id: number; vx: number; vy: number; life: number; enemy: boolean; damage?: number; homing?: number; rocket?: boolean; splash?: number; weapon?: WeaponKind; level?: number; attackerId?:number; penetrating?:number; hitIds?:number[]; enhanced?:boolean; guided?:boolean; ultimate?:boolean;armorPiercing?:boolean;pierceFalloff?:number;fragment?:boolean; age?:number; /** Fired by an outpost turret: survives off screen like hostile fire. */ turret?:boolean };
 const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 export class GameModel {
@@ -41,6 +42,7 @@ export class GameModel {
   bases = BASES.map((base, i) => ({ ...base, unlocked: i === 0 }));
   explored = new Set<string>();
   detachedModules: (Point & { vx: number; vy: number; kind: ModuleKind; level: number; angle: number; life: number })[] = [];
+  ultimateTimers={armor:0,shield:0,cooler:0,warp:0};
   systemsDisabled=0;
   empImmunity=0;
   energy = 100;
@@ -127,7 +129,7 @@ export class GameModel {
     const module = this.modules.filter(m => m.kind === 'builder' && m.integrity > 0).sort((a, b) => b.level - a.level)[0];
     if (!module) return undefined;
     const stats = MODULES.builder.levels[module.level - 1];
-    return { level: module.level, range: stats.buildRange ?? 0, speed: stats.buildSpeed ?? 1, discount: stats.buildDiscount ?? 0 };
+    return { level: module.level, range: stats.buildRange ?? 0, speed: (stats.buildSpeed ?? 1)*this.commandOutput, discount: stats.buildDiscount ?? 0 };
   }
   /** Why Build Mode is unavailable right now, if it is. */
   get buildModeError(): string | undefined {
@@ -244,7 +246,7 @@ export class GameModel {
   /** Price of taking a block from `level` to the next: its build cost times the current level, less any discounts. */
   structureUpgradeCost(outpost: Outpost, s: Structure): Record<Resource, number> {
     const base = STRUCTURES[s.kind].cost, discount = (1 - (this.builder?.discount ?? 0) / 100) * (outpostStats(outpost).fabrication ? 1 - STRUCTURE_SPECIAL.fabrication : 1);
-    return Object.fromEntries((Object.keys(base) as Resource[]).map(ore => [ore, Math.ceil(base[ore] * s.level * discount)])) as Record<Resource, number>;
+    return Object.fromEntries((Object.keys(base) as Resource[]).map(ore => [ore, Math.ceil(base[ore] * ECONOMY.structureUpgradeMultipliers[s.level-1] * discount)])) as Record<Resource, number>;
   }
   private outpostWorkError(s: Structure): string | undefined {
     const unavailable = this.buildModeError; if (unavailable) return unavailable;
@@ -561,11 +563,11 @@ export class GameModel {
     const fab = OUTPOST.fabricator;
     for (const outpost of this.outposts) for (const s of outpost.structures) {
       if (s.progress < 1 || s.health >= maxHealth(s) || dist({ x: cellCenter(s.cx), y: cellCenter(s.cy) }, p) > builder.range) continue;
-      const repair = Math.min(fab.hpPerSecond * dt, maxHealth(s) - s.health), iron = repair * fab.ironPerHp, energy = fab.energyPerSecond * dt;
+      const repair = Math.min(fab.hpPerSecond * dt*this.commandOutput, maxHealth(s) - s.health), iron = repair * fab.ironPerHp, energy = fab.energyPerSecond * dt;
       this.fabricatorDebt += iron;
       const whole = Math.floor(this.fabricatorDebt);
-      if (this.cargo.iron < Math.ceil(this.fabricatorDebt) || this.energy < energy) { this.fabricatorDebt -= iron; return; }
-      this.cargo.iron -= whole; this.fabricatorDebt -= whole; this.energy -= energy;
+      if (this.cargo.iron < Math.ceil(this.fabricatorDebt) || !this.operate(energy,4*dt)) { this.fabricatorDebt -= iron; return; }
+      this.cargo.iron -= whole; this.fabricatorDebt -= whole;
       const before = wear(s); s.health += repair; if (wear(s) !== before) outpost.revision++;
       return;
     }
@@ -595,7 +597,7 @@ export class GameModel {
   get chartedAsteroids() { return [...this.world.surveyed.values()]; }
   toSave(): GameSave {
     return { version: 1, seed: this.seed, population:this.population.snapshot(), world: this.world.snapshot(this.asteroids),
-      systemsDisabled:this.systemsDisabled,empImmunity:this.empImmunity,player: { ...this.player }, modules: structuredClone(this.modules), coreAbility:{...this.coreAbility},novaFields:structuredClone(this.novaFields), coreLevel: this.coreLevel, shield: this.shield, energy: this.energy, heat: this.heat, empPulses: structuredClone(this.empPulses),
+      ultimateTimers:{...this.ultimateTimers},fabricatorDebt:this.fabricatorDebt,systemsDisabled:this.systemsDisabled,empImmunity:this.empImmunity,player: { ...this.player }, modules: structuredClone(this.modules), coreAbility:{...this.coreAbility},novaFields:structuredClone(this.novaFields), coreLevel: this.coreLevel, shield: this.shield, energy: this.energy, heat: this.heat, empPulses: structuredClone(this.empPulses),
       cargo: { ...this.cargo }, stored: { ...this.stored }, bases: structuredClone(this.bases), explored: [...this.explored],
       enemies: structuredClone(this.enemies), squads: structuredClone(this.squads), drops: structuredClone(this.drops), bullets: structuredClone(this.bullets), detachedModules: structuredClone(this.detachedModules),
       kills: this.kills, shipName: this.shipName, shipPaint: this.shipPaint, hangar: structuredClone(this.hangar), waypoints: structuredClone(this.waypoints), outposts: structuredClone(this.outposts), horde: { ...this.horde }, deaths: this.deaths, id: this.id, rng: this.rng.state, spawnTimer: this.spawnTimer, shieldDelay: this.shieldDelay, impactTimer: this.impactTimer };
@@ -606,6 +608,7 @@ export class GameModel {
     const m = new GameModel(data.seed, { world: data.world,population:data.population,restoring:true });
     if (!Number.isInteger(data.coreLevel) || data.coreLevel<1 || data.coreLevel>CORE.levels.length || data.modules.some(block => !MODULES[block.kind] || !Number.isInteger(block.level) || block.level < 1 || block.level > MODULES[block.kind].levels.length || !Number.isFinite(block.integrity))) throw new Error('Invalid ship data in save.');
     m.coreAbility={...freshAbility(),...data.coreAbility};m.novaFields=structuredClone(data.novaFields??[]).slice(-SPECIAL.plasma.maxFields);
+    m.ultimateTimers={...m.ultimateTimers,...data.ultimateTimers};m.fabricatorDebt=Math.max(0,Math.min(.999999,data.fabricatorDebt??0));
     m.systemsDisabled=data.systemsDisabled??0;m.empImmunity=data.empImmunity??0;
     m.player = { ...data.player }; m.modules = structuredClone(data.modules); m.coreLevel = data.coreLevel; m.shield = data.shield; m.energy = Math.max(0,Math.min(data.energy ?? m.maxEnergy,m.maxEnergy)); m.heat = data.heat ?? 0; m.empPulses = structuredClone(data.empPulses ?? []);
     const empty = () => Object.fromEntries((Object.keys(RESOURCES) as Resource[]).map(ore => [ore, 0])) as Record<Resource, number>;
@@ -638,8 +641,9 @@ export class GameModel {
   private burst(stat:'burstSpeed'|'burstThrust'){return this.modules.reduce((sum,m)=>sum+((m.boostRemaining??0)>0?(MODULES[m.kind].levels[m.level-1][stat]??0):0),0)*this.engineRatio;}
   get maxEnergy() { return CORE.levels[this.coreLevel - 1].energyCapacity! + this.bonus('energyCapacity'); }
   get basePowerGeneration(){return CORE.levels[this.coreLevel-1].generation!+this.bonus('generation');}
-  get powerGeneration() { return this.basePowerGeneration+this.modules.reduce((sum,m)=>sum+(m.kind==='reactor'&&m.level>=5&&(m.ability?.active??0)>0?MODULES.reactor.levels[m.level-1].generation!*SPECIAL.reactor.bonus:0),0); }
-  get coolingRate() { return CORE.levels[this.coreLevel - 1].cooling! + this.bonus('cooling'); }
+  private get commandOutput(){return this.coreLevel>=5&&this.coreAbility.active>0?SPECIAL.core.output:1;}
+  get powerGeneration() { return (this.basePowerGeneration+this.modules.reduce((sum,m)=>sum+(m.kind==='reactor'&&m.level>=5&&(m.ability?.active??0)>0?MODULES.reactor.levels[m.level-1].generation!*SPECIAL.reactor.bonus:0),0))*this.commandOutput; }
+  get coolingRate() { return (CORE.levels[this.coreLevel - 1].cooling! + this.bonus('cooling')+this.modules.reduce((n,m)=>n+(m.kind==='cooler'&&m.level>=5&&(m.ability?.active??0)>0?MODULES.cooler.levels[4].cooling!*SPECIAL.cooler.bonus:0),0))*this.commandOutput; }
   get heatCapacity() { return CORE.levels[this.coreLevel - 1].heatCapacity! + this.bonus('heatCapacity'); }
   private operate(energy: number, heat: number): boolean {
     if(this.systemsDisabled>0)return false;
@@ -659,8 +663,8 @@ export class GameModel {
     if(v&&(event.x<v.x-margin||event.y<v.y-margin||event.x>v.x+v.width+margin||event.y>v.y+v.height+margin))return;
     if(this.effects.length<VFX.maxEvents)this.effects.push(event);
   }
-  private addBlast(blast: Point & {radius:number;life:number}, weapon?: WeaponKind) {
-    this.blasts.push(blast); this.effect({ type: blast.radius > 20 ? 'explosion' : 'impact', ...blast, weapon });
+  private addBlast(blast: Point & {radius:number;life:number}, weapon?: WeaponKind,level?:number) {
+    this.blasts.push(blast); this.effect({ type: blast.radius > 20 ? 'explosion' : 'impact', ...blast, weapon,level });
   }
   private emitDebris(point: Point, outward: Point, color: number, seed: number) {
     this.effect({ type:'debris',...point,angle:Math.atan2(outward.y,outward.x),color,count:2+Math.abs(seed%3) });
@@ -700,7 +704,7 @@ export class GameModel {
     if (!core && level + 1 > this.coreLevel) return `Upgrade your core / hull to level ${level + 1} first.`;
     if (level >= equipment(kind).levels.length) return 'Maximum level reached.';
     const cost = upgradeCost(kind, level);
-    if ((Object.keys(cost) as Resource[]).some(ore => this.stored[ore] < cost[ore])) return 'Not enough stored ore. Unload with E first.';
+    if ((Object.keys(cost) as Resource[]).some(ore => this.stored[ore] < cost[ore])) return `Missing: ${missingMinerals(cost,this.stored)}. Unload with E first.`;
   }
   upgradeModule(x: number, y: number): boolean {
     const error = this.upgradeError(x, y);
@@ -711,6 +715,8 @@ export class GameModel {
     const cost = upgradeCost(kind, core ? this.coreLevel : m!.level);
     for (const ore of Object.keys(cost) as Resource[]) this.stored[ore] -= cost[ore];
     if (core) this.coreLevel++; else {
+      m!.invested ??= legacyInvestment(m!.kind,m!.level);
+      for(const ore of Object.keys(cost) as Resource[])m!.invested[ore]+=cost[ore];
       const oldMax = this.moduleMaxIntegrity(m!); m!.level++;
       m!.integrity += this.moduleMaxIntegrity(m!) - oldMax;
       this.statsCache=undefined;
@@ -727,14 +733,14 @@ export class GameModel {
     if ((x === 0 && y === 0) || this.modules.some(m => m.x === x && m.y === y)) return 'That cell is occupied.';
     if (Math.abs(x) + Math.abs(y) !== 1 && !this.modules.some(m => Math.abs(m.x - x) + Math.abs(m.y - y) === 1)) return 'Attach to the core or an installed module.';
     const def = MODULES[kind];
-    if ((Object.keys(def.cost) as Resource[]).some(ore => this.stored[ore] < def.cost[ore])) return 'Not enough stored ore. Unload with E first.';
+    if ((Object.keys(def.cost) as Resource[]).some(ore => this.stored[ore] < def.cost[ore])) return `Missing: ${missingMinerals(def.cost,this.stored)}. Unload with E first.`;
   }
   installModule(kind: ModuleKind, x: number, y: number): boolean {
     const error = this.buildError(kind, x, y);
     if (error) { this.message = error; return false; }
     for (const ore of Object.keys(MODULES[kind].cost) as Resource[]) this.stored[ore] -= MODULES[kind].cost[ore];
     const oldHull = this.maxHealth, oldShield = this.maxShield;
-    this.modules.push({ x, y, kind, level: 1, cooldown: 0, integrity: MODULE_DURABILITY[kind][0] });
+    this.modules.push({ invested:{...MODULES[kind].cost}, x, y, kind, level: 1, cooldown: 0, integrity: MODULE_DURABILITY[kind][0] });
     this.player.health += this.maxHealth - oldHull;
     this.shield += this.maxShield - oldShield;
     this.message = `${MODULES[kind].label} installed.`;
@@ -766,11 +772,7 @@ export class GameModel {
     m.x = toX; m.y = toY; this.message = other ? 'Modules swapped.' : 'Module moved. Ship layout updated.'; return true;
   }
   moduleRefund(m: ShipModule) {
-    const paid = { ...MODULES[m.kind].cost };
-    for (let level = 1; level < m.level; level++) {
-      const cost = upgradeCost(m.kind, level);
-      for (const ore of Object.keys(paid) as Resource[]) paid[ore] += cost[ore];
-    }
+    const paid = {...(m.invested??legacyInvestment(m.kind,m.level))};
     const condition = Math.max(0, Math.min(1, m.integrity / this.moduleMaxIntegrity(m)));
     for (const ore of Object.keys(paid) as Resource[]) paid[ore] = Math.floor(paid[ore] * condition);
     return paid;
@@ -815,7 +817,8 @@ export class GameModel {
     const point = { x: p.x + (m.x * Math.cos(p.angle) - m.y * Math.sin(p.angle)) * BUILD_GRID.cellSize, y: p.y + (m.x * Math.sin(p.angle) + m.y * Math.cos(p.angle)) * BUILD_GRID.cellSize };
     this.detachedModules.push({ x: point.x, y: point.y, vx: this.player.vx * 0.4 + (m.x || 1) * 22, vy: this.player.vy * 0.4 + m.y * 22, kind: m.kind, level: m.level, angle: this.player.angle, life: 25 });
     if (this.detachedModules.length > 40) this.detachedModules.shift();
-    for (const ore of Object.keys(MODULES[m.kind].cost) as Resource[]) this.releaseOre(point, ore, Math.floor(MODULES[m.kind].cost[ore] * REPAIR.salvageFraction));
+    const salvageBase=m.invested?MODULES[m.kind].cost:LEGACY_PURCHASES[m.kind];
+    for (const ore of Object.keys(salvageBase) as Resource[]) this.releaseOre(point, ore, Math.floor(salvageBase[ore] * REPAIR.salvageFraction));
     this.modules = this.modules.filter(block => block !== m);
   }
   isExplored(point: Point) { return this.explored.has(`${Math.floor(point.x / EXPLORATION.cell)},${Math.floor(point.y / EXPLORATION.cell)}`); }
@@ -829,8 +832,14 @@ export class GameModel {
   }
   private damagePlayer(amount: number, hit?: Point, attackerId?:number) {
     if(this.modules.some(m=>m.kind==='engine'&&m.level>=5&&(m.ability?.phase??0)>0))return;
+    const incomingAmount=amount;
+    const fortress=this.modules.find(m=>m.kind==='armor'&&m.level>=5);
+    if(fortress)amount*=1-SPECIAL.armor.passive;
     if(this.modules.some(m=>m.kind==='armor'&&m.level>=5&&(m.ability?.active??0)>0))amount*=1-SPECIAL.armor.reduction;
-    for(const m of this.modules)if(m.kind==='armor'&&onDamageTaken(m,amount))this.effect({type:'shield',...this.player,color:MODULES.armor.color,radius:28});
+    if(this.modules.some(m=>m.kind==='shield'&&m.level>=5&&(m.ability?.active??0)>0))amount*=1-SPECIAL.shield.reduction;
+    if(fortress&&incomingAmount>=SPECIAL.armor.threshold&&(fortress.ability?.cooldown??0)<=0&&this.ultimateTimers.armor<=0&&this.operate(SPECIAL.armor.power,SPECIAL.armor.heat)){
+      onDamageTaken(fortress,incomingAmount);this.ultimateTimers.armor=SPECIAL.armor.cooldown;this.effect({type:'shield',...this.player,color:MODULES.armor.color,radius:38});
+    }
     const absorbed = Math.min(this.shield, amount), damage = amount - absorbed;
     if (absorbed > 0) this.effect({type:'shield',...(hit??this.player),radius:22,color:0x71e1ff});
     if(absorbed>0&&attackerId!==undefined&&this.modules.some(m=>m.kind==='shield'&&m.level>=5)){
@@ -839,6 +848,8 @@ export class GameModel {
     }
     this.shield -= absorbed; this.player.health = Math.max(0, this.player.health - damage);
     this.shieldDelay = 3;
+    const aegis=this.modules.find(m=>m.kind==='shield'&&m.level>=5);
+    if(aegis&&amount>0&&(aegis.ability?.cooldown??0)<=0&&this.ultimateTimers.shield<=0&&this.operate(SPECIAL.shield.power,SPECIAL.shield.heat)){activate(state(aegis),SPECIAL.shield.duration,SPECIAL.shield.cooldown);this.ultimateTimers.shield=SPECIAL.shield.cooldown;this.effect({type:'shield',...this.player,color:MODULES.shield.color,radius:48});}
     if (damage <= 0 || !hit) return;
     const positions = (Object.keys(MODULES) as ModuleKind[]).flatMap(kind => this.modulePositions(kind));
     const nearest = positions.sort((a, b) => dist(a, hit) - dist(b, hit))[0];
@@ -975,7 +986,7 @@ export class GameModel {
     if (def.behavior === 'guard' && !enemy.horde) enemy.home = { x, y };
     this.enemies.push(enemy); return enemy;
   }
-  private damageEnemy(e: Enemy, amount: number, alert = true) {
+  private damageEnemy(e: Enemy, amount: number, alert = true,armorPiercing=false) {
     const def = ENEMIES[e.kind ?? 'raider'];
     if (def.weakPoint) {
       // Reactor vents never break; once exposed they pass damage straight to the boss hull, past its shield.
@@ -995,8 +1006,8 @@ export class GameModel {
     const aura=this.enemies.find(other=>other!==e&&other.health>0&&ENEMIES[other.kind??'raider'].aura&& (other.faction??ENEMIES[other.kind??'raider'].faction)===(e.faction??def.faction)&&dist(other,e)<ENEMIES[other.kind??'raider'].aura!.range);
     const facing=Math.cos(Math.atan2(this.player.y-e.y,this.player.x-e.x)-e.angle)>.4;
     const housing=def.boss?.frontArmor && (!def.boss.parts.some(part=>ENEMIES[part.kind].role==='housing')||this.enemies.some(part=>part.parent===e.id&&part.health>0&&ENEMIES[part.kind??'raider'].role==='housing'));
-    if(facing&&housing)amount=absorbed+(amount-absorbed)*(1-def.boss!.frontArmor!);
-    e.health -= (amount - absorbed)*(1-Math.min(.65,e.armor??0))*(1-(aura?ENEMIES[aura.kind??'raider'].aura!.reduction:0));
+    if(facing&&housing&&!armorPiercing)amount=absorbed+(amount-absorbed)*(1-def.boss!.frontArmor!);
+    e.health -= (amount - absorbed)*(1-Math.min(.65,armorPiercing?0:e.armor??0))*(1-(aura?ENEMIES[aura.kind??'raider'].aura!.reduction:0));
   }
   private enemyExplosion(b:Bullet,point:Point){const radius=b.splash??0;this.effect({type:'explosion',...point,radius,weapon:b.weapon,color:0xf2a36a});if(!this.atStation&&dist(point,this.player)<radius+SHIP.radius)this.damagePlayer((b.damage??0)*Math.max(.25,1-dist(point,this.player)/(radius+SHIP.radius)),point,b.attackerId);}
   private enemyShot(e: Enemy, w: EnemyWeapon, angle: number) {
@@ -1178,21 +1189,22 @@ export class GameModel {
     this.oreHits++; this.addBlast({ ...point, radius: 10, life: 0.1 },weapon);
     if (asteroid.amount <= 0) this.destroyAsteroid(asteroid.id);
   }
-  private hitEnemy(enemy:Enemy,damage:number){
+  private disableByEmp(enemy:Enemy,duration:number){if(!ENEMIES[enemy.kind??'raider'].boss&&(enemy.empRecovery??0)<=0){enemy.disabledFor=Math.max(enemy.disabledFor??0,duration);enemy.empRecovery=duration+SPECIAL.emp.recovery;}}
+  private hitEnemy(enemy:Enemy,damage:number,armorPiercing=false){
     if(enemy.health<=0||damage<=0)return;
-    this.enemyHits++;this.damageEnemy(enemy,damage);if(enemy.health<=0)this.enemyDestroyed(enemy);
+    this.enemyHits++;this.damageEnemy(enemy,damage,true,armorPiercing);if(enemy.health<=0)this.enemyDestroyed(enemy);
   }
   private arc(from:Point,to:Point,color:number){this.effect({type:'arc',...from,toX:to.x,toY:to.y,color});}
   private fragment(b:Bullet,point:Point){
     if(b.weapon!=='flak'||b.level!==5||b.fragment)return;
     const available=SPECIAL.flak.maxActive-this.bullets.filter(b=>b.fragment&&b.life>0).length;
     for(let i=0;i<Math.min(SPECIAL.flak.count,available);i++){
-      const angle=Math.atan2(b.vy,b.vx)+(i===0?-.5:.5);
+      const angle=Math.atan2(b.vy,b.vx)+(i-(SPECIAL.flak.count-1)/2)*.45;
       this.bullets.push({id:this.id++,...point,vx:Math.cos(angle)*600,vy:Math.sin(angle)*600,life:1,age:0,enemy:false,damage:(b.damage??0)*SPECIAL.flak.fraction,weapon:'flak',level:5,fragment:true});
     }
   }
   private explodeRocket(bullet: Bullet, point: Point) {
-    this.addBlast({ ...point, radius: bullet.splash ?? 65, life: 0.18 },bullet.weapon);
+    this.addBlast({ ...point, radius: bullet.splash ?? 65, life: 0.18 },bullet.weapon,bullet.level);
     for (const e of this.enemies) if (e.health > 0 && dist(e, point) <= (bullet.splash ?? 65) + ENEMIES[e.kind ?? 'raider'].radius) {
       this.hitEnemy(e,bullet.damage??65);
     }
@@ -1213,13 +1225,13 @@ export class GameModel {
     dt = Math.min(dt, 0.05);
     this.systemsDisabled=Math.max(0,this.systemsDisabled-dt);this.empImmunity=Math.max(0,this.empImmunity-dt);
     this.world.advance(dt);
-    tick(this.coreAbility,dt);
+    tick(this.coreAbility,dt);for(const key of Object.keys(this.ultimateTimers) as (keyof typeof this.ultimateTimers)[])this.ultimateTimers[key]=Math.max(0,this.ultimateTimers[key]-dt);
     for(const m of this.modules)if(m.level>=5){const a=state(m);tick(a,dt);if(m.kind==='cannon')a.sustained=input.fire&&!this.atStation?a.sustained+dt:0;}
     if(input.overclock&&this.coreLevel>=5&&this.coreAbility.cooldown<=0&&this.operate(SPECIAL.core.power,SPECIAL.core.heat)){
       activate(this.coreAbility,SPECIAL.core.duration,SPECIAL.core.cooldown);this.effect({type:'shield',...this.player,color:CORE.color,radius:40});
     }
-    for(const m of this.modules)if(m.kind==='cooler'&&onOverheat(m,this.heat,this.heatCapacity)){
-      this.heat=Math.max(0,this.heat-this.heatCapacity*SPECIAL.cooler.fraction);this.effect({type:'shield',...this.modulePoint(m),color:MODULES.cooler.color,radius:45});
+    for(const m of this.modules)if(m.kind==='cooler'&&m.level>=5&&(m.ability?.cooldown??0)<=0&&this.ultimateTimers.cooler<=0&&this.heat>=this.heatCapacity*SPECIAL.cooler.threshold&&this.operate(SPECIAL.cooler.power,0)&&onOverheat(m,this.heat,this.heatCapacity)){
+      this.ultimateTimers.cooler=SPECIAL.cooler.cooldown;this.heat=Math.max(0,this.heat-this.heatCapacity*SPECIAL.cooler.fraction);this.effect({type:'shield',...this.modulePoint(m),color:MODULES.cooler.color,radius:55});
     }
     for(const m of this.modules)if(m.kind==='reactor'&&m.level>=5){
       if(onEnergyDeficit(m,this.energy,this.maxEnergy,this.powerDemand,this.basePowerGeneration))this.effect({type:'shield',...this.modulePoint(m),color:MODULES.reactor.color,radius:25});
@@ -1229,9 +1241,9 @@ export class GameModel {
     this.energy = Math.min(this.maxEnergy, this.energy + this.powerGeneration * dt);
     this.heat = Math.max(0, this.heat - this.coolingRate * dt);
     this.powerLimited = false; this.heatLimited = false;
-    if (this.shieldDelay <= 0 && this.shield < this.maxShield) for (const m of this.modules) if (m.kind === 'shield') {
-      const stats = MODULES.shield.levels[m.level - 1], amount = Math.min(this.maxShield - this.shield, stats.recharge! * dt);
-      const fraction = amount / stats.recharge!;
+    if ((this.shieldDelay <= 0||this.modules.some(m=>m.kind==='shield'&&(m.ability?.active??0)>0)) && this.shield < this.maxShield) for (const m of this.modules) if (m.kind === 'shield') {
+      const stats = MODULES.shield.levels[m.level - 1], field=m.level>=5&&(m.ability?.active??0)>0, amount = Math.min(this.maxShield - this.shield, stats.recharge! * dt*this.commandOutput*(field?SPECIAL.shield.regen:1));
+      const fraction = amount / (stats.recharge!*this.commandOutput*(field?SPECIAL.shield.regen:1))*(field?SPECIAL.shield.cost:1);
       if (this.operate((stats.power ?? 0) * fraction, (stats.heat ?? 0) * fraction)) this.shield += amount;
     }
     let engines=0,powered=0;
@@ -1242,7 +1254,7 @@ export class GameModel {
       const running=Boolean(input.x||input.y||m.boostRemaining>0||activate);
       if(!running||this.operate((running?(stats.power??0)*dt:0)+(activate?(stats.boostPower??0):0),(running?(stats.heat??0)*dt:0)+(activate?(stats.boostHeat??0):0))){
         powered++;
-        if(activate){onBoost(m);m.boostRemaining=stats.boostDuration!;m.boostCooldown=stats.boostCooldown!;this.effect({type:'muzzle',...this.modulePoint(m),angle:this.player.angle+Math.PI,color:MODULES.engine.color});}
+        if(activate){if(m.level>=5&&this.ultimateTimers.warp<=0){onBoost(m);this.ultimateTimers.warp=SPECIAL.engine.phaseCooldown;}m.boostRemaining=stats.boostDuration!;m.boostCooldown=stats.boostCooldown!;this.effect({type:'muzzle',...this.modulePoint(m),angle:this.player.angle+Math.PI,color:MODULES.engine.color});}
       }
     }
     this.engineRatio=engines?powered/engines:1;
@@ -1270,24 +1282,27 @@ export class GameModel {
       const weapon=MODULES[m.kind].weapon;
       if (!input.fire || this.atStation || m.cooldown > 0 || !weapon) continue;
       const stats=MODULES[m.kind].levels[m.level-1],type=WEAPON_TYPES[weapon];
-      if(!this.operate(stats.power??0,stats.heat??0)){if(m.ability)m.ability.sustained=0;continue;}
+      const cost=ultimateCost(m);if(weapon==='emp'&&this.empPulses.length>=SPECIAL.emp.maxPulses)continue;
+      if(!this.operate((stats.power??0)*cost.power,(stats.heat??0)*cost.heat)){if(m.ability)m.ability.sustained=0;continue;}
       const special=onFire(m);
       const source=this.modulePoint(m),angle=Math.atan2(input.aim.y-source.y,input.aim.x-source.x);
       this.effect({type:'muzzle',x:source.x+Math.cos(angle)*10,y:source.y+Math.sin(angle)*10,angle,weapon,level:m.level,color:type.color});
-      if(weapon==='emp')this.empPulses.push({...source,radius:0,maxRadius:stats.empRange!,damage:stats.damage!,stun:stats.stun!,hits:[],cascade:m.level===5,secondary:0});
-      else for(let pellet=0;pellet<type.pellets;pellet++){
-        const direction=angle+(type.pellets>1?(pellet/(type.pellets-1)-.5)*type.spread:0);
+      if(weapon==='emp')this.empPulses.push({...source,radius:0,maxRadius:stats.empRange!*(m.level>=5?SPECIAL.emp.radius:1),damage:stats.damage!*this.commandOutput,stun:stats.stun!,hits:[],cascade:m.level===5,secondary:0});
+      else {const pellets=weapon==='flak'&&m.level>=5?SPECIAL.flak.pellets:type.pellets;for(let pellet=0;pellet<pellets;pellet++){
+        const direction=angle+(pellets>1?(pellet/(pellets-1)-.5)*type.spread:0);
         this.shoot(source,direction,false);
         const bullet=this.bullets[this.bullets.length-1];
-        bullet.damage=stats.damage;bullet.weapon=weapon;bullet.level=m.level;bullet.splash=stats.splash;bullet.rocket=weapon==='rocket';
-        if(special.penetrating){bullet.penetrating=SPECIAL.rail.targets;bullet.enhanced=true;bullet.hitIds=[];}
+        bullet.damage=stats.damage!*this.commandOutput;bullet.weapon=weapon;bullet.level=m.level;bullet.splash=stats.splash;bullet.rocket=weapon==='rocket';
+        if(special.penetrating||special.overcharged){const ultimate=special.penetrating?SPECIAL.rail:SPECIAL.pulse;bullet.penetrating=ultimate.targets;bullet.enhanced=true;bullet.ultimate=true;bullet.armorPiercing=special.penetrating;bullet.hitIds=[];bullet.pierceFalloff=ultimate.falloff;bullet.damage*=ultimate.damage;}
+        if(special.supernova){bullet.ultimate=true;bullet.damage*=SPECIAL.plasma.damage;bullet.splash=stats.splash!*SPECIAL.plasma.blast;}
         bullet.vx=Math.cos(direction)*type.speed;bullet.vy=Math.sin(direction)*type.speed;
+      }
       }
       if(special.swarm){
         const available=SPECIAL.rocket.maxActive-this.bullets.filter(b=>b.guided&&b.life>0).length;
         for(let i=0;i<Math.min(available,SPECIAL.rocket.count);i++){
-          const direction=angle+(i-1)*.24;this.shoot(source,direction,false);const b=this.bullets[this.bullets.length-1];
-          Object.assign(b,{weapon:'rocket',level:5,rocket:true,guided:true,age:0,damage:stats.damage!*SPECIAL.rocket.fraction,splash:stats.splash!*.45,vx:Math.cos(direction)*WEAPON_TYPES.rocket.speed,vy:Math.sin(direction)*WEAPON_TYPES.rocket.speed});
+          const direction=angle+(i-(SPECIAL.rocket.count-1)/2)*.16;this.shoot(source,direction,false);const b=this.bullets[this.bullets.length-1];
+          Object.assign(b,{weapon:'rocket',level:5,rocket:true,guided:true,age:0,damage:stats.damage!*this.commandOutput*SPECIAL.rocket.fraction,splash:stats.splash!*.45,vx:Math.cos(direction)*WEAPON_TYPES.rocket.speed,vy:Math.sin(direction)*WEAPON_TYPES.rocket.speed});
         }
       }
       m.cooldown=stats.cooldown!/special.rate;
@@ -1311,7 +1326,7 @@ export class GameModel {
         if (beams.length && !this.operate((stats.power??0)*dt*efficiency,(stats.heat??0)*dt*efficiency)) continue;
         this.miningLinks.push({ from: { x: source.x, y: source.y }, to: impact, targetId: target.id, level:source.level,moduleX:source.moduleX,moduleY:source.moduleY });
         this.minedTarget ??= target; this.miningPoint ??= impact;
-        const removed = mineMaterial(target, source.rate * dt+onMiningHit(module,dt), impact);
+        const removed = mineMaterial(target, (source.rate * dt+onMiningHit(module,dt))*this.commandOutput, impact);
         if (removed > 0) {
           this.releaseOre(impact, target.ore, removed,{x:target.vx*BELT_MOTION.dropInheritance,y:target.vy*BELT_MOTION.dropInheritance});
           this.emitDebris(impact, { x: impact.x - target.x, y: impact.y - target.y }, RESOURCES[target.ore].color, target.id + target.amount);
@@ -1323,8 +1338,9 @@ export class GameModel {
     const claimed = new Set<number>(), dropsById = new Map(this.drops.map(drop => [drop.id, drop]));
     for (const module of this.modules) if (module.kind === 'tractor') {
       const stats = MODULES.tractor.levels[module.level-1];
-      const source = this.modulePoint(module), slots = stats.targets!;
+      const source = this.modulePoint(module);
       const sweep=module.level>=5&&((state(module).active>0)||(state(module).cooldown<=0));
+      const slots=stats.targets!+(sweep?SPECIAL.tractor.slots:0);
       const range=stats.tractor!*(sweep?SPECIAL.tractor.rangeMultiplier:1);
       const ids = (module.targetIds ??= []);
       let count = 0;
@@ -1341,10 +1357,10 @@ export class GameModel {
         if (!nearest) break; ids.push(nearest.id); claimed.add(nearest.id);
       }
       if (!ids.length) continue;
-      if (!this.operate((stats.power??0)*dt,(stats.heat??0)*dt)) { for(const id of ids)claimed.delete(id); ids.length=0;continue; }
+      if (!this.operate((stats.power??0)*dt*(sweep?SPECIAL.tractor.cost:1),(stats.heat??0)*dt*(sweep?SPECIAL.tractor.cost:1))) { for(const id of ids)claimed.delete(id); ids.length=0;continue; }
       if(module.level>=5&&activate(state(module),SPECIAL.tractor.duration,SPECIAL.tractor.cooldown))this.effect({type:'shield',...source,color:MODULES.tractor.color,radius:32});
       for (const id of ids) {
-        const drop=dropsById.get(id)!; const distance=dist(source,drop),step=Math.min(distance,stats.pull!*dt);
+        const drop=dropsById.get(id)!; const distance=dist(source,drop),step=Math.min(distance,stats.pull!*dt*this.commandOutput*(sweep?SPECIAL.tractor.speed:1));
         if(distance>0){drop.x+=(source.x-drop.x)/distance*step;drop.y+=(source.y-drop.y)/distance*step;}
         this.tractorLinks.push({from:source,to:{x:drop.x,y:drop.y},level:module.level,targetId:id,moduleX:module.x,moduleY:module.y});
         if(dist(source,drop)<=SHIP_SYSTEMS.collectionRadius) this.collectDrop(drop,source);
@@ -1380,6 +1396,7 @@ export class GameModel {
     }
     for (const e of this.enemies) {
       if(e.health<=0)continue;
+      e.empRecovery=Math.max(0,(e.empRecovery??0)-dt);
       if ((e.disabledFor ?? 0) > 0) { e.disabledFor=Math.max(0,e.disabledFor!-dt);e.vx=0;e.vy=0;continue; }
       if(e.meltdown!==undefined&&!e.meltdownDone){e.meltdown-=dt;const blast=ENEMIES[e.kind??'raider'].boss!.meltdown!;e.empCharge=e.meltdown;if(e.meltdown<=0){e.meltdownDone=true;e.health=0;if(!safe&&dist(e,p)<blast.radius)this.damagePlayer(blast.damage);this.enemyDestroyed(e);}continue;}
       const previous = { x: e.x, y: e.y };
@@ -1546,12 +1563,12 @@ export class GameModel {
     for(const pulse of this.empPulses){
       pulse.radius=Math.min(pulse.maxRadius,pulse.radius+WEAPON_TYPES.emp.speed*dt);
       for(const enemy of this.enemies)if(enemy.health>0&&!pulse.hits.includes(enemy.id)&&dist(enemy,pulse)<=pulse.radius+ENEMIES[enemy.kind??'raider'].radius){
-        pulse.hits.push(enemy.id);if(!ENEMIES[enemy.kind??'raider'].boss)enemy.disabledFor=Math.max(enemy.disabledFor??0,pulse.stun);this.hitEnemy(enemy,pulse.damage);
+        pulse.hits.push(enemy.id);this.disableByEmp(enemy,pulse.stun);this.hitEnemy(enemy,pulse.damage);
         this.effect({type:'impact',x:enemy.x,y:enemy.y,weapon:'emp',radius:20,color:WEAPON_TYPES.emp.color});
         if(pulse.cascade&&(pulse.secondary??0)<SPECIAL.emp.maxSecondary){
           const nearby=this.enemies.filter(e=>e!==enemy&&e.health>0&&!pulse.hits.includes(e.id)&&dist(e,enemy)<=SPECIAL.emp.range).sort((a,b)=>dist(a,enemy)-dist(b,enemy));
           for(const secondary of nearby.slice(0,SPECIAL.emp.maxSecondary-(pulse.secondary??0))){
-            pulse.secondary=(pulse.secondary??0)+1;pulse.hits.push(secondary.id);secondary.disabledFor=Math.max(secondary.disabledFor??0,pulse.stun*SPECIAL.emp.stunFraction);
+            pulse.secondary=(pulse.secondary??0)+1;pulse.hits.push(secondary.id);this.disableByEmp(secondary,pulse.stun*SPECIAL.emp.stunFraction);
             this.hitEnemy(secondary,pulse.damage*SPECIAL.emp.fraction);this.arc(enemy,secondary,MODULES.emp.color);
           }
         }
@@ -1584,7 +1601,8 @@ export class GameModel {
         const struck = structureOnSegment(this.outposts, start, b);
         if (struck) { b.life = 0; this.effect({ type: 'impact', ...struck.point, radius: 12, color: 0xffb070, weapon: b.weapon }); this.damageStructure(struck.outpost, struck.structure, b.damage ?? WEAPONS.enemy.damage, b.attackerId); continue; }
       }
-      for(let hit=0;hit<(b.enhanced?SPECIAL.rail.targets:1);hit++){
+      const penetrationBudget=b.enhanced?Math.min(8,b.penetrating??SPECIAL.rail.targets):1;
+      for(let hit=0;hit<penetrationBudget;hit++){
       let oreHit: { asteroid: Asteroid; point: Point; t: number } | undefined;
       for (const asteroid of this.asteroids) {
         if (segmentCircleHit(start, b, asteroid, asteroid.radius + 4) === undefined) continue;
@@ -1611,9 +1629,8 @@ export class GameModel {
         if (b.enemy) {if((b.splash??0)>0)this.enemyExplosion(b,point);else this.damagePlayer(b.damage ?? WEAPONS.enemy.damage, point,b.attackerId);}
         else if ((b.splash ?? 0)>0) this.explodeRocket(b, point);
         else if (target) {
-          this.hitEnemy(target,b.damage??WEAPONS.player.damage);
-          const chain=onHit(b,target,this.enemies);if(chain){this.hitEnemy(chain.target,chain.damage);this.arc(target,chain.target,MODULES.pulse.color);}
-          if(b.enhanced){(b.hitIds??=[]).push(target.id);b.penetrating=(b.penetrating??1)-1;b.damage=(b.damage??0)*SPECIAL.rail.falloff;if(b.penetrating>0)b.life=1;}
+          this.hitEnemy(target,b.damage??WEAPONS.player.damage,b.armorPiercing??(b.enhanced&&b.weapon==='rail'));
+          if(b.enhanced){(b.hitIds??=[]).push(target.id);b.penetrating=(b.penetrating??1)-1;b.damage=(b.damage??0)*(b.pierceFalloff??SPECIAL.rail.falloff);if(b.penetrating>0)b.life=1;}
           this.addBlast({ ...point, radius: b.weapon==='rail'?35:12, life: 0.1 },b.weapon);
         }
       } else break;
@@ -1647,7 +1664,7 @@ export class GameModel {
 
 
 export type GameSave = {
-  systemsDisabled?:number;empImmunity?:number;version: 1; seed: string; population?:EnemyPopulationSnapshot;world: WorldSnapshot; player: GameModel['player']; modules: ShipModule[];
+  ultimateTimers?:GameModel['ultimateTimers'];fabricatorDebt?:number;systemsDisabled?:number;empImmunity?:number;version: 1; seed: string; population?:EnemyPopulationSnapshot;world: WorldSnapshot; player: GameModel['player']; modules: ShipModule[];
   coreAbility?:AbilityState;novaFields?:GameModel['novaFields'];coreLevel: number; shield: number; energy?:number; heat?:number; empPulses?:GameModel['empPulses']; cargo: Record<Resource, number>; stored: Record<Resource, number>;
   bases: GameModel['bases']; explored: string[]; enemies: Enemy[]; squads: GameModel['squads']; drops: Drop[];
   bullets: Bullet[]; detachedModules: GameModel['detachedModules']; kills: number; outposts?: Outpost[]; shipName?: string; shipPaint?: number; hangar?: StoredShip[]; waypoints?: Waypoint[]; horde?: GameModel['horde']; deaths: number; id: number; rng: number;

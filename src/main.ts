@@ -317,7 +317,7 @@ class SpaceScene extends Phaser.Scene {
       aim, fire: !this.buildMode && pointer.leftButtonDown(), overclock:Phaser.Input.Keyboard.JustDown(this.keys.C)||this.commandInput.has('overclock'), boost, mine: !this.buildMode && (pointer.rightButtonDown() || this.keys.SPACE.isDown), dock, view: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
     });
     if (!this.paused && !this.building && !this.mapOpen && !this.settings.open) {
-      for(const event of this.model.effects){if(event.type==='cue'&&event.cue)this.audio.play(event.cue,event.pitch,event.volume);else if(event.type==='muzzle'&&event.weapon&&!event.silent)this.audio.playWeapon(event.weapon);if(event.type==='arc')this.audio.play('pulse');if(event.type==='collection')this.audio.play('collect');if(event.type==='shield')this.audio.play('shield');}
+      for(const event of this.model.effects){if(event.type==='cue'&&event.cue)this.audio.play(event.cue,event.pitch,event.volume);else if(event.type==='muzzle'&&event.weapon&&!event.silent)this.audio.playWeapon(event.weapon,event.level===5?.8:1);if(event.type==='arc')this.audio.play('pulse');if(event.type==='collection')this.audio.play('collect');if(event.type==='shield')this.audio.play('shield');}
       // Hull hits crunch, shield hits ring (the shield cue comes from its own event), and losing the ship has its own sound.
       if (this.model.dead && beforeHull > 0) this.audio.play('death'); else if (this.model.player.health < beforeHull) this.audio.play('hull');
       if (this.model.oreHits > beforeOreHits) this.audio.play('impact');

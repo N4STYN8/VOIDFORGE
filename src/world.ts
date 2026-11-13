@@ -1,3 +1,4 @@
+import { ECONOMY } from './economy.ts';
 import { hashSeed,SeedRandom } from './random.ts';
 export { hashSeed,SeedRandom } from './random.ts';
 import { initializeBelts,attachBelt,placeBeltAtTime,motionPoint,captureBelt,sourceChunkCenters,BELT_MOTION,type BeltMotion } from './beltMotion.ts';
@@ -12,7 +13,7 @@ type Geography={belts:Belt[];clusters:Cluster[]};
 export function randomWorldSeed(): string { return globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`; }
 export type Belt = { x: number; y: number; angle: number; length: number; width: number; curve: number; phase: number; density: number; ore: Resource };
 export type Cluster = { x: number; y: number; radius: number; density: number; ore: Resource };
-export type WorldSpec = { version: 1; seed: string; bases: typeof BASES; belts: Belt[]; clusters: Cluster[]; exitAngle: number; starter: Asteroid[]; generationSize?:number; expansion?:Geography;populationFields?:Geography;beltMotions?:BeltMotion[];motionEpoch?:number };
+export type WorldSpec = { economyVersion?:2; version: 1; seed: string; bases: typeof BASES; belts: Belt[]; clusters: Cluster[]; exitAngle: number; starter: Asteroid[]; generationSize?:number; expansion?:Geography;populationFields?:Geography;beltMotions?:BeltMotion[];motionEpoch?:number };
 const distance = (a: {x:number;y:number}, b: {x:number;y:number}) => Math.hypot(a.x-b.x,a.y-b.y);
 function noise(seed: string, x: number, y: number) {
   const ix = Math.floor(x), iy = Math.floor(y), sx = x - ix, sy = y - iy;
@@ -84,6 +85,10 @@ export function inCorridor(spec: WorldSpec, x:number,y:number,radius:number) {
   const along=dx*Math.cos(spec.exitAngle)+dy*Math.sin(spec.exitAngle),side=-dx*Math.sin(spec.exitAngle)+dy*Math.cos(spec.exitAngle);
   return Math.abs(along)<1350&&Math.abs(side)<100+radius;
 }
+export function asteroidYield(spec:WorldSpec,radius:number,roll:number,ore:Resource){
+ const base=ECONOMY.mining.minimum+Math.floor(roll*ECONOMY.mining.spread)+(ore==='radioactive'?ECONOMY.mining.radioactiveBonus:0);
+ return spec.economyVersion===2?Math.max(1,Math.floor(base*(radius/34)**2)):base;
+}
 export function generateChunk(spec: WorldSpec, cx: number, cy: number, arrivalSeed?:string): Asteroid[] {
   if(cx<0||cy<0||cx>=CHUNKS||cy>=CHUNKS)return [];
   const rng=new SeedRandom(`${spec.seed}:chunk:${cx}:${cy}${arrivalSeed?`:arrival:${arrivalSeed}`:''}`), result:Asteroid[]=[];
@@ -94,7 +99,7 @@ export function generateChunk(spec: WorldSpec, cx: number, cy: number, arrivalSe
     if(roll>field.density||spec.bases.some(base=>distance({x,y},base)<280+radius)||inCorridor(spec,x,y,radius)||spec.starter.some(a=>distance({x,y},a)<a.radius+radius+15))continue;
     const common=distance({x,y},spec.bases[0])<1600;
     const ore:Resource=rng.next()<0.72?field.ore:common?(rng.next()<0.6?'iron':'copper'):(['iron','copper','crystal','ice','radioactive'] as Resource[])[Math.floor(rng.next()*5)];
-    const amount=25+Math.floor(rng.next()*46)+(field.ore==='radioactive'?15:0);
+    const amount=asteroidYield(spec,radius,rng.next(),field.ore);
     result.push({id:cx<LEGACY_CHUNKS&&cy<LEGACY_CHUNKS?10000+(cy*LEGACY_CHUNKS+cx)*128+i:1000000+(cy*EXPANDED_ID_STRIDE+cx)*128+i,x,y,vx:0,vy:0,radius,ore,amount,health:amount,originalAmount:amount,originX:x,originY:y,shapeSeed:hashSeed(`${spec.seed}:shape:${cx}:${cy}:${i}${arrivalSeed?`:arrival:${arrivalSeed}`:''}`)});
   }
   if(!arrivalSeed)for(const asteroid of spec.starter)if(Math.floor(asteroid.x/CHUNK_SIZE)===cx&&Math.floor(asteroid.y/CHUNK_SIZE)===cy)result.push(structuredClone(asteroid));
@@ -105,7 +110,7 @@ export function generateChunk(spec: WorldSpec, cx: number, cy: number, arrivalSe
       const radius=23+extra.next()*22,field=fieldAt(spec,x,y),roll=extra.next();
       if(x+radius>=WORLD.width||y+radius>=WORLD.height||roll>field.density||spec.bases.some(b=>distance({x,y},b)<300+radius)||inCorridor(spec,x,y,radius)||spec.starter.some(a=>distance({x,y},a)<a.radius+radius+18)||result.some(a=>distance({x,y},a)<a.radius+radius+18))continue;
       const common=distance({x,y},spec.bases[0])<1600,ore:Resource=common?(extra.next()<.6?'iron':'copper'):extra.next()<.8?field.ore:resourcesForFields[Math.floor(extra.next()*resourcesForFields.length)];
-      const amount=25+Math.floor(extra.next()*46)+(field.ore==='radioactive'?15:0);
+      const amount=asteroidYield(spec,radius,extra.next(),field.ore);
       result.push({id:200000000+(cy*EXPANDED_ID_STRIDE+cx)*128+i,x,y,vx:0,vy:0,radius,ore,amount,health:amount,originalAmount:amount,originX:x,originY:y,shapeSeed:hashSeed(`${spec.seed}:extra-shape:${cx}:${cy}:${i}:${arrivalSeed??'initial'}`)});
     }
   }
@@ -121,22 +126,23 @@ export function validateStart(spec: WorldSpec) {
   for(let d=250;d<=1250;d+=100){const p={x:home.x+Math.cos(spec.exitAngle)*d,y:home.y+Math.sin(spec.exitAngle)*d};if(rocks.some(a=>distance(a,p)<55+a.radius))return false;}
   return true;
 }
-function createGeography(rng:SeedRandom):Geography {
-  const resources:Resource[]=['iron','copper','crystal','ice','radioactive'],scale=WORLD.width/LEGACY_SIZE;
+function createGeography(rng:SeedRandom,economy=false):Geography {
+  const resources:Resource[]=economy?ECONOMY.mining.fieldWeights:['iron','copper','crystal','ice','radioactive'],scale=WORLD.width/LEGACY_SIZE;
   const belts:Belt[]=Array.from({length:3+Math.floor(rng.next()*5)},()=>({x:1000+rng.next()*(WORLD.width-2000),y:1000+rng.next()*(WORLD.height-2000),angle:rng.next()*Math.PI*2,length:(5000+rng.next()*10000)*scale,width:(300+rng.next()*650)*scale,curve:(rng.next()-.5)*2200*scale,phase:rng.next()*Math.PI*2,density:0.4+rng.next()*0.5,ore:resources[Math.floor(rng.next()*resources.length)]}));
   const clusters:Cluster[]=Array.from({length:9+Math.floor(rng.next()*10)},()=>({x:700+rng.next()*(WORLD.width-1400),y:700+rng.next()*(WORLD.height-1400),radius:(500+rng.next()*1400)*scale,density:0.5+rng.next()*0.5,ore:resources[Math.floor(rng.next()*resources.length)]}));
+  if(economy)for(const [i,ore] of (['crystal','ice','radioactive'] as Resource[]).entries())clusters[clusters.length-1-i].ore=ore;
   return {belts,clusters};
 }
 export function createWorld(seed: string): WorldSpec {
   const rng=new SeedRandom(seed+':geography');
-  const {belts,clusters}=createGeography(rng);
+  const {belts,clusters}=createGeography(rng,true);
   for(let attempt=0;attempt<64;attempt++){
     const home={x:1600+rng.next()*(WORLD.width-3200),y:1600+rng.next()*(WORLD.height-3200)},exitAngle=rng.next()*Math.PI*2;
     const bases=BASES.map((base,i)=>({...base,x:i===0?home.x:0,y:i===0?home.y:0}));
     for(let i=1;i<bases.length;i++){for(let tries=0;tries<100;tries++){const candidate={x:800+rng.next()*(WORLD.width-1600),y:800+rng.next()*(WORLD.height-1600)};if(bases.slice(0,i).every(base=>distance(base,candidate)>2500)){bases[i].x=candidate.x;bases[i].y=candidate.y;break;}}}
     const starter:Asteroid[]=Array.from({length:8},(_,i)=>{const side=i%2===0?1:-1,angle=exitAngle+side*(0.55+Math.floor(i/2)*0.18),r=310+Math.floor(i/2)*110,x=home.x+Math.cos(angle)*r,y=home.y+Math.sin(angle)*r,amount=45+Math.floor(rng.next()*25);return{id:i+1,x,y,vx:0,vy:0,radius:27+rng.next()*7,ore:i%2===0?'iron':'copper',amount,health:amount,originalAmount:amount,originX:x,originY:y,shapeSeed:hashSeed(seed+':starter:'+i)};});
     const localCluster:Cluster={x:home.x+Math.cos(exitAngle+1.3)*700,y:home.y+Math.sin(exitAngle+1.3)*700,radius:500+rng.next()*250,density:0.6+rng.next()*0.3,ore:'iron'};
-    const spec:WorldSpec={version:1,generationSize:WORLD.width,populationFields:createGeography(new SeedRandom(seed+':denser-fields-v1')),seed,bases,belts,clusters:[...clusters,localCluster],exitAngle,starter};
+    const spec:WorldSpec={economyVersion:2,version:1,generationSize:WORLD.width,populationFields:createGeography(new SeedRandom(seed+':denser-fields-v1'),true),seed,bases,belts,clusters:[...clusters,localCluster],exitAngle,starter};
     if(validateStart(spec))return spec;
   }
   throw new Error('Unable to generate a navigable starting area for this seed.');

@@ -1,3 +1,4 @@
+import { ECONOMY } from '../src/economy.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fixtureModel } from './fixtures.ts';
@@ -7,7 +8,7 @@ import { ABILITIES } from '../src/abilityConfig.ts';
 import { cellOf, cellCenter, structureAt, connectedIds, neighbourMask, outpostRadius, wear, outpostStats, storedTotal, maxHealth, turretOf, dronesOf } from '../src/outposts.ts';
 
 const idle = { x: 0, y: 0, aim: { x: 0, y: 0 }, fire: false, mine: false, dock: false };
-const rich = { iron: 5000, copper: 5000, crystal: 5000, ice: 5000, radioactive: 5000 };
+const rich = { iron: 100000, copper: 100000, crystal: 100000, ice: 100000, radioactive: 100000 };
 /** A ship in open space with a Build module of the given level and plenty of carried cargo. */
 function builderShip(level = 1) {
   const m = fixtureModel(); m.asteroids = []; m.enemies = []; m.squads = [];
@@ -24,7 +25,7 @@ test('the Build module is a five-level ship module that needs Core level 4', () 
   const stats = MODULES.builder.levels;
   assert.ok(stats[1].buildRange! > stats[0].buildRange! && stats[1].buildSpeed! > stats[0].buildSpeed!);
   assert.ok(stats[2].buildDiscount! > 0 && !stats[1].buildDiscount); assert.ok(stats[3].buildSpeed! > stats[2].buildSpeed!);
-  const m = fixtureModel(); m.stored = { ...rich }; m.modules = [];
+  const m = fixtureModel(); m.stored = { iron:1e6,copper:1e6,crystal:1e6,ice:1e6,radioactive:1e6 }; m.modules = [];
   for (let level = 1; level < OUTPOST.coreLevel; level++) {
     assert.equal(m.coreLevel, level); assert.match(m.buildError('builder', 1, 0) ?? '', /Core level 4/); assert.equal(m.installModule('builder', 1, 0), false);
     assert.ok(m.upgradeModule(0, 0));
@@ -345,9 +346,9 @@ test('block upgrades cost minerals, need an Upgrade station past level 2, and re
   m.cargoOverride = undefined; m.cargo = { ...zero }; outpost.stored = { ...zero };
   assert.match(m.upgradeStructureError(outpost, hangar) ?? '', /Not enough/); assert.equal(m.upgradeStructure(outpost, hangar), false);
   // Paid from carried cargo first, then outpost storage.
-  const price = m.structureUpgradeCost(outpost, hangar); m.cargo = { ...zero, iron: 10 }; outpost.stored = { iron: 300, copper: 200, crystal: 60, ice: 0, radioactive: 20 };
+  const price = m.structureUpgradeCost(outpost, hangar); m.cargo = { ...zero, iron: 10 }; outpost.stored = { ...price,iron:price.iron+40,copper:price.copper+50 };
   const hull = maxHealth(hangar); hangar.health = hull - 40; assert.ok(m.upgradeStructure(outpost, hangar), m.message);
-  assert.equal(hangar.level, 2); assert.equal(m.cargo.iron, 0); assert.equal(outpost.stored.iron, 300 - (price.iron - 10)); assert.equal(outpost.stored.copper, 200 - price.copper);
+  assert.equal(hangar.level, 2); assert.equal(m.cargo.iron, 0); assert.equal(outpost.stored.iron, 50); assert.equal(outpost.stored.copper, 50);
   assert.equal(hangar.health, maxHealth(hangar) - 40); assert.ok(maxHealth(hangar) > hull);
   run(m, 2); assert.equal(outpost.drones!.length, 4);
   // Level 3 needs an Upgrade station.
@@ -358,7 +359,7 @@ test('block upgrades cost minerals, need an Upgrade station past level 2, and re
   assert.equal(turret.level, 5); assert.ok(turretOf(turret)!.damage > before * 2); assert.match(m.upgradeStructureError(outpost, turret) ?? '', /Maximum/); assert.equal(m.upgradeStructure(outpost, turret), false);
   // A level-5 Upgrade station makes later upgrades cheaper.
   const station = block('upgradeStation'), full = m.structureUpgradeCost(outpost, hangar).iron; station.level = 5; outpost.revision++;
-  assert.equal(m.structureUpgradeCost(outpost, hangar).iron, Math.ceil(STRUCTURES.droneHangar.cost.iron * hangar.level * (1 - MODULES.builder.levels[4].buildDiscount! / 100) * (1 - STRUCTURE_SPECIAL.fabrication))); assert.ok(m.structureUpgradeCost(outpost, hangar).iron < full);
+  assert.equal(m.structureUpgradeCost(outpost, hangar).iron, Math.ceil(STRUCTURES.droneHangar.cost.iron * ECONOMY.structureUpgradeMultipliers[hangar.level-1] * (1 - MODULES.builder.levels[4].buildDiscount! / 100) * (1 - STRUCTURE_SPECIAL.fabrication))); assert.ok(m.structureUpgradeCost(outpost, hangar).iron < full);
   // Out of range of the Build module: no work.
   m.player.x += 3000; assert.match(m.upgradeStructureError(outpost, hangar) ?? '', /range/);
 });

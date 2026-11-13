@@ -157,3 +157,20 @@
 - [x] Match cockpit palette/panels, improve catalog/grid/inspector readability and level indicators
 - [x] Preserve editor, fleet and upgrade interactions; check responsive layout and full build/tests
 - [ ] User visual review at their usual resolution
+- [x] Fix bottom HUD lost clicks using permanent command nodes; verify held clicks, SVG targets, keyboard focus, cooldown updates and original restrictions
+
+## Ultimate five-tier modules
+- [x] Rebalance all 17 five-tier definitions; preserve costs/core gating/unlimited placement
+- [x] Implement named paid L5 abilities, shared defense/EMP recovery, finite extraction and persistent repair debt
+- [x] Add cached L5 module detail, bounded combat effects and heavier ultimate firing pitch
+- [x] Verify tier curves, paid-shot failure, penetration, EMP recovery, conservation, saves and HUD controls
+- [ ] Human playtest L3 versus L5 loadouts against normal fleets and bosses; tune economy/difficulty from observed play
+
+## Complete economy rebalance
+- [x] Audit prices, income, rarity, cargo, enemy/boss rewards, drones, regeneration and discounts
+- [x] Centralize escalating ship/core prices and infrastructure/drone tuning
+- [x] Version new-world rarity/yields; preserve existing reserves/modules/minerals
+- [x] Prevent legacy refund inflation with paid investment records
+- [x] Show required/stored/missing mineral costs in the outfitter
+- [x] Add repeatable economy benchmark/report and regression coverage
+- [ ] Human timed starter/midgame/endgame runs: validate delivery duty, rare-material search time and core milestones

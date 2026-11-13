@@ -120,3 +120,15 @@ The cockpit now mounts the shared `nav.ts` radar inside its circular instrument 
 `materialSymbols.ts` contains locally bundled Google Material Symbols. Preserve THIRD_PARTY_NOTICES.md and the Apache-2.0 license when editing/distributing these icons. No web font request is used.
 
 Outfitter presentation: src/outfitter.css is scoped to #builder and owns modal sizing, overriding the legacy independent zoom. Desktop uses three workspace columns with independently scrolling catalog/grid/inspector and pinned actions; narrow screens stack while retaining close access. Existing markup data attributes and main.ts editor callbacks stay authoritative. Grid art/level badges reuse cached icons; full module names remain in native tooltips and the inspector. Level pips reflect the selected module's real tier.
+
+Command-button identity is a correctness boundary: Cockpit keeps a per-action map of native buttons and status nodes and patches their properties in place. Never replace the whole command-console innerHTML during HUD refreshes; browser-normalized SVG/boolean attributes make raw markup equality unreliable, and replacing a pressed/focused button loses native click and keyboard activation. Browser regression checks must include presses spanning multiple 100ms HUD ticks, not only instantaneous automated clicks.
+
+## Ultimate progression decisions — 2026-11-13
+- Keep base tier curves in data.ts and ultimate modifiers/descriptions in abilityConfig.ts. abilities.ts previews special costs without mutating counters; model pays before onFire advances a shot. Command output is one multiplier over base generation/cooling, never recursive.
+- Ship-wide ultimateTimers prevent redundant armor/shield/cooler/phase activations; per-enemy empRecovery prevents staggered-emitter stunlocks. Both persist as optional compatible save additions. Fractional fabricatorDebt also persists to prevent save/load repair rounding exploits.
+- Penetration uses a fixed per-update collision budget while remaining targets decrement; hitIds prevent duplicate hits. Rails bypass armor, never shields. Existing effect pool/cached sprites handle L5 rails, trails, rings and deeper shot pitch without simulation RNG or new assets.
+
+## Economy compatibility and measurement
+- economy.ts depends on data.ts only through erased type imports; data.ts consumes economy constants. Price rounding is upward, refunds downward. New equipment records an optional invested mineral ledger; upgrades initialize missing ledgers with legacy costs before adding actual new spending. Save serialization/fleet transfer preserve it through the existing module objects.
+- WorldSpec.economyVersion is optional: 2 for new weighted geography/area-scaled reserves; absent keeps original resource quantity calculations. Existing spec fields, IDs, mining modifications and RNG draw count remain intact.
+- scripts/economy.ts is developer-only, uses isolated GameModels for actual 60-second extraction and reports explicit duty/resource-share assumptions, core milestones, module costs, combat scenarios, automation ceilings and regional resource samples. No browser save access or runtime dependency.

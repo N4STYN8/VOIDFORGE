@@ -20,6 +20,7 @@ export function tacticalReadout(model:GameModel,aim:Point){
 export class Cockpit {
  readonly root=document.createElement('div');
  private navigation!:HTMLElement;private target!:HTMLElement;private weapons!:HTMLElement;private commands!:HTMLElement;private contactCount!:HTMLElement;
+ private commandButtons=new Map<CockpitAction,{button:HTMLButtonElement;status:HTMLElement}>();
  private compact=false;
  private stationIcon='';
  setStationIcon(url:string){this.stationIcon=url;}
@@ -45,7 +46,18 @@ this.root.querySelector('#cockpit-session')!.append(session);const help=document
   const tactical=tacticalReadout(model,aim);this.write(this.target,`${tactical.station&&this.stationIcon?`<img class="contact-icon" src="${this.stationIcon}" alt="">`:""}${tactical.target}`);this.write(this.weapons,tactical.weapons);this.contactCount.textContent=String(tactical.contacts).padStart(2,'0')+' CONTACTS';
   const engines=model.modules.filter(m=>m.kind==='engine'&&m.level>=2&&m.integrity>0),cooldown=Math.max(0,...engines.map(m=>m.boostCooldown??0));
   const commands:[CockpitAction,string,string,string,boolean][]=[['boost','Shift','Burst',model.boostActive?'ACTIVE':engines.length?(model.boostReady?'READY':`${Math.ceil(cooldown)}s`):'L2 ENGINE',!engines.length],['overclock','C','Overclock',model.coreLevel<5?'L5 CORE':model.coreAbility.active>0?`${Math.ceil(model.coreAbility.active)}s ACTIVE`:model.coreAbility.cooldown>0?`${Math.ceil(model.coreAbility.cooldown)}s`:'READY',model.coreLevel<5],['shop','Q','Outfitter',model.atStation?'DOCKED':'AT FORGE',!model.atStation],['build','F','Build mode',buildMode?'ACTIVE':model.builder?'AVAILABLE':'BUILD MODULE',!model.builder],['map','M','Sector map','EXPLORED',false],['dock','E','Dock / repair','MINERALS',false],['settings','⚙','Settings','AUDIO / VFX',false]];
-  this.write(this.commands,commands.map(([action,key,label,status,locked])=>`<button type="button" data-command="${action}" ${(!['map','settings','shop'].includes(action)&&blocked||!['map','settings'].includes(action)&&(model.dead||locked))?'disabled':''} title="${esc(label)} · ${esc(status)}"><i class="command-icon">${cockpitIcon(action)}</i><span><kbd>${key}</kbd> ${label}<small>${status}</small></span></button>`).join(''));
+  // Keep native button identity across HUD ticks: replacing a pressed/focused node loses its click.
+  for(const [action,key,label,status,locked] of commands){
+   let entry=this.commandButtons.get(action);
+   if(!entry){
+    const button=document.createElement('button');button.type='button';button.dataset.command=action;
+    button.innerHTML=`<i class="command-icon">${cockpitIcon(action)}</i><span><kbd>${key}</kbd> ${label}<small></small></span>`;
+    entry={button,status:button.querySelector('small')!};this.commandButtons.set(action,entry);this.commands.append(button);
+   }
+   entry.button.disabled=(!['map','settings','shop'].includes(action)&&blocked)||(!['map','settings'].includes(action)&&(model.dead||locked));
+   entry.button.title=`${label} · ${status}`;
+   if(entry.status.textContent!==status)entry.status.textContent=status;
+  }
  }
  mountRadar(radar:HTMLElement){
   this.root.querySelector('.radar-button')!.remove();

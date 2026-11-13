@@ -1,3 +1,4 @@
+import { ECONOMY } from './economy.ts';
 import { EXTRA_ENEMIES,type ExtraEnemyKind } from './enemyDefinitions.ts';
 export const WORLD = { width: 19200 * Math.sqrt(10), height: 19200 * Math.sqrt(10), stationX: 3200, stationY: 3200 };
 export const RESOURCES = { iron: { label: 'Iron', color: 0xb9bdc7 }, copper: { label: 'Copper', color: 0xd59460 }, crystal: { label: 'Crystal', color: 0x8ad6ed }, ice: { label: 'Ice', color: 0xc5ecff }, radioactive: { label: 'Radioactive', color: 0x9fe63f } };
@@ -163,43 +164,43 @@ export type EquipmentStats = { damage?: number; cooldown?: number; mining?: numb
 export type EquipmentDefinition = { label: string; color: number; mass: number; cost: Record<Resource, number>; weapon?: WeaponKind; description: string; levels: EquipmentStats[] };
 const cost = (iron: number, copper = 0, crystal = 0, ice = 0, radioactive = 0): Record<Resource, number> => ({ iron, copper, crystal, ice, radioactive });
 export const MODULES: Record<ModuleKind, EquipmentDefinition> = {
-  cannon: { label: 'Autocannon', color: 0xffce70, mass: 4, cost: cost(20,10), weapon: 'cannon', description: 'Rapid kinetic rounds. Energy/heat costs are per volley.', levels: [{damage:12,cooldown:.18,power:2.8,heat:1.2},{damage:30,cooldown:.16,power:4,heat:1.8},{damage:45,cooldown:.14,power:5.5,heat:2.5}] },
-  pulse: { label: 'Pulse laser', color: 0x6de4ff, mass: 4, cost: cost(25,15,5), weapon: 'pulse', description: 'Fast cyan bolts with short energy trails.', levels: [{damage:11,cooldown:.22,power:4,heat:2},{damage:28,cooldown:.2,power:5.5,heat:3},{damage:42,cooldown:.18,power:7,heat:4}] },
-  rail: { label: 'Railgun', color: 0xd8f2ff, mass: 9, cost: cost(45,25,12), weapon: 'rail', description: 'High-velocity slugs and strong impact shockwaves.', levels: [{damage:45,cooldown:1.1,power:18,heat:14},{damage:110,cooldown:1,power:24,heat:19},{damage:160,cooldown:.9,power:32,heat:25}] },
-  plasma: { label: 'Plasma cannon', color: 0xaeff90, mass: 7, cost: cost(35,20,8), weapon: 'plasma', description: 'Slow plasma orbs burst on impact with area damage.', levels: [{damage:27,cooldown:.7,splash:40,power:12,heat:10},{damage:70,cooldown:.65,splash:50,power:17,heat:14},{damage:105,cooldown:.6,splash:65,power:23,heat:19}] },
-  rocket: { label: 'Missile launcher', color: 0xff9766, mass: 7, cost: cost(30,15), weapon: 'rocket', description: 'Visible missiles with exhaust and area explosions; no ammo cost.', levels: [{damage:39,cooldown:1.5,splash:65,power:10,heat:9},{damage:95,cooldown:1.3,splash:85,power:14,heat:13},{damage:140,cooldown:1.1,splash:105,power:19,heat:18}] },
-  flak: { label: 'Flak cannon', color: 0xffa678, mass: 6, cost: cost(30,20,5), weapon: 'flak', description: 'Five pellets per volley in a spread. Costs apply to the whole volley.', levels: [{damage:4,cooldown:.65,power:9,heat:7},{damage:11,cooldown:.6,power:13,heat:10},{damage:16,cooldown:.55,power:18,heat:14}] },
-  emp: { label: 'EMP emitter', color: 0x729cff, mass: 6, cost: cost(35,20,10), weapon: 'emp', description: 'Expanding electric pulse damages and temporarily disables enemies.', levels: [{damage:9,cooldown:2,empRange:140,stun:2.2,power:20,heat:8},{damage:25,cooldown:1.8,empRange:190,stun:3,power:28,heat:12},{damage:40,cooldown:1.6,empRange:240,stun:4,power:38,heat:16}] },
-  miner: { label: 'Mining beam', color: 0x75ebc3, mass: 4, cost: cost(15,10), description: 'Hold right click / Space to auto-mine. Power/heat are per second; upgraded beams split targets.', levels: [{mining:9,power:8,heat:3},{mining:15,power:12,heat:5},{mining:24,power:18,heat:7}] },
-  tractor: { label: 'Tractor beam', color: 0xe1a0ff, mass: 3, cost: cost(25,15,5), description: 'Independent target slots pull ore to this module. Power/heat are per active second.', levels: [{tractor:180,pull:150,targets:1,power:4,heat:1},{tractor:300,pull:225,targets:2,power:6,heat:1.5},{tractor:450,pull:300,targets:3,power:9,heat:2}] },
-  cargo: { label: 'Cargo hold', color: 0xc599e8, mass: 3, cost: cost(20), description: 'Adds cargo capacity and passive loose-ore pickup reach. Multiple holds combine.', levels: [{pickup:30,cargo:60},{pickup:55,cargo:120},{pickup:85,cargo:200}] },
-  armor: { label: 'Armor plating', color: 0xa8b8c9, mass: 8, cost: cost(25,5), description: 'Adds hull and sturdy structure, at the cost of mass.', levels: [{hull:30},{hull:55},{hull:90}] },
-  shield: { label: 'Shield generator', color: 0x71e1ff, mass: 5, cost: cost(25,15,5), description: 'Adds shield; recharging uses energy after three seconds without hits.', levels: [{shield:40,recharge:5,power:3,heat:.5},{shield:75,recharge:8,power:5,heat:.8},{shield:120,recharge:12,power:8,heat:1.2}] },
-  engine: { label: 'Speed booster', color: 0x6db9ff, mass: 2, cost: cost(20,15), description: 'Powered cruise bonuses. Level 2+ adds a Shift-triggered burst with energy/heat cost and cooldown.', levels: [{speed:25,acceleration:80,power:6,heat:3},{speed:45,acceleration:140,power:9,heat:5,burstSpeed:150,burstThrust:400,boostDuration:1.8,boostCooldown:6,boostPower:18,boostHeat:12},{speed:70,acceleration:220,power:13,heat:8,burstSpeed:240,burstThrust:650,boostDuration:2.2,boostCooldown:5,boostPower:24,boostHeat:18}] },
-  reactor: { label: 'Reactor', color: 0xffda86, mass: 8, cost: cost(30,15,5), description: 'Adds energy production and storage. Reactors combine their output.', levels: [{generation:35,energyCapacity:70},{generation:60,energyCapacity:110},{generation:100,energyCapacity:170}] },
-  cooler: { label: 'Cooling system', color: 0x9edfff, mass: 4, cost: cost(20,10,0,10), description: 'Adds heat dissipation and thermal capacity. Cooling systems combine.', levels: [{cooling:18,heatCapacity:25},{cooling:30,heatCapacity:40},{cooling:48,heatCapacity:65}] },
-  builder: { label: 'Build module', color: 0xd9a441, mass: 6, cost: cost(60,40,15), description: 'Requires Core level 4. Enters Build Mode (F) to construct outposts on the world grid from carried cargo. Must be intact and the ship must not be short of energy.', levels: [{buildRange:240,buildSpeed:1},{buildRange:320,buildSpeed:1.5},{buildRange:320,buildSpeed:1.5,buildDiscount:10}] },
+  cannon: { label: 'Autocannon', color: 0xffce70, mass: 4, cost: {...ECONOMY.purchases.cannon}, weapon: 'cannon', description: 'Rapid kinetic rounds. Energy/heat costs are per volley.', levels: [{"damage":12,"cooldown":0.18,"power":2.8,"heat":1.2},{"damage":18,"cooldown":0.175,"power":3.5,"heat":1.4},{"damage":26,"cooldown":0.17,"power":4.2,"heat":1.6}] },
+  pulse: { label: 'Pulse laser', color: 0x6de4ff, mass: 4, cost: {...ECONOMY.purchases.pulse}, weapon: 'pulse', description: 'Fast cyan bolts with short energy trails.', levels: [{"damage":11,"cooldown":0.22,"power":4,"heat":2},{"damage":17,"cooldown":0.21,"power":4.8,"heat":2.3},{"damage":25,"cooldown":0.2,"power":5.8,"heat":2.7}] },
+  rail: { label: 'Railgun', color: 0xd8f2ff, mass: 9, cost: {...ECONOMY.purchases.rail}, weapon: 'rail', description: 'High-velocity slugs and strong impact shockwaves.', levels: [{"damage":45,"cooldown":1.1,"power":18,"heat":14},{"damage":70,"cooldown":1.05,"power":22,"heat":16},{"damage":105,"cooldown":1,"power":27,"heat":19}] },
+  plasma: { label: 'Plasma cannon', color: 0xaeff90, mass: 7, cost: {...ECONOMY.purchases.plasma}, weapon: 'plasma', description: 'Slow plasma orbs burst on impact with area damage.', levels: [{"damage":27,"cooldown":0.7,"power":12,"heat":10,"splash":40},{"damage":42,"cooldown":0.68,"power":15,"heat":12,"splash":50},{"damage":60,"cooldown":0.64,"power":18,"heat":14,"splash":65}] },
+  rocket: { label: 'Missile launcher', color: 0xff9766, mass: 7, cost: {...ECONOMY.purchases.rocket}, weapon: 'rocket', description: 'Visible missiles with exhaust and area explosions; no ammo cost.', levels: [{"damage":39,"cooldown":1.5,"power":10,"heat":9,"splash":65},{"damage":60,"cooldown":1.45,"power":13,"heat":11,"splash":75},{"damage":85,"cooldown":1.4,"power":16,"heat":14,"splash":85}] },
+  flak: { label: 'Flak cannon', color: 0xffa678, mass: 6, cost: {...ECONOMY.purchases.flak}, weapon: 'flak', description: 'Five pellets per volley in a spread. Costs apply to the whole volley.', levels: [{"damage":4,"cooldown":0.65,"power":9,"heat":7},{"damage":6,"cooldown":0.62,"power":12,"heat":9},{"damage":8,"cooldown":0.58,"power":15,"heat":11}] },
+  emp: { label: 'EMP emitter', color: 0x729cff, mass: 6, cost: {...ECONOMY.purchases.emp}, weapon: 'emp', description: 'Expanding electric pulse damages and temporarily disables enemies.', levels: [{"damage":9,"cooldown":5,"power":20,"heat":8,"empRange":140,"stun":1},{"damage":16,"cooldown":4.8,"power":27,"heat":11,"empRange":180,"stun":1.5},{"damage":25,"cooldown":4.6,"power":35,"heat":14,"empRange":220,"stun":2}] },
+  miner: { label: 'Mining beam', color: 0x75ebc3, mass: 4, cost: {...ECONOMY.purchases.miner}, description: 'Hold right click / Space to auto-mine. Power/heat are per second; upgraded beams split targets.', levels: [{"mining":9,"power":8,"heat":3},{"mining":15,"power":12,"heat":5},{"mining":24,"power":18,"heat":7}] },
+  tractor: { label: 'Tractor beam', color: 0xe1a0ff, mass: 3, cost: {...ECONOMY.purchases.tractor}, description: 'Independent target slots pull ore to this module. Power/heat are per active second.', levels: [{"tractor":180,"pull":150,"targets":1,"power":4,"heat":1},{"tractor":300,"pull":225,"targets":2,"power":6,"heat":1.5},{"tractor":450,"pull":300,"targets":3,"power":9,"heat":2}] },
+  cargo: { label: 'Cargo hold', color: 0xc599e8, mass: 3, cost: {...ECONOMY.purchases.cargo}, description: 'Adds cargo capacity and passive loose-ore pickup reach. Multiple holds combine.', levels: [{"pickup":30,"cargo":60},{"pickup":55,"cargo":120},{"pickup":85,"cargo":200}] },
+  armor: { label: 'Armor plating', color: 0xa8b8c9, mass: 8, cost: {...ECONOMY.purchases.armor}, description: 'Adds hull and sturdy structure, at the cost of mass.', levels: [{"hull":30},{"hull":55},{"hull":90}] },
+  shield: { label: 'Shield generator', color: 0x71e1ff, mass: 5, cost: {...ECONOMY.purchases.shield}, description: 'Adds shield; recharging uses energy after three seconds without hits.', levels: [{"shield":40,"recharge":5,"power":3,"heat":0.5},{"shield":70,"recharge":8,"power":4.5,"heat":0.7},{"shield":110,"recharge":12,"power":6.5,"heat":1}] },
+  engine: { label: 'Speed booster', color: 0x6db9ff, mass: 2, cost: {...ECONOMY.purchases.engine}, description: 'Powered cruise bonuses. Level 2+ adds a Shift-triggered burst with energy/heat cost and cooldown.', levels: [{"speed":25,"acceleration":80,"power":6,"heat":3},{"speed":45,"acceleration":140,"power":9,"heat":5,"burstSpeed":150,"burstThrust":400,"boostDuration":1.8,"boostCooldown":6,"boostPower":18,"boostHeat":12},{"speed":70,"acceleration":220,"power":13,"heat":8,"burstSpeed":240,"burstThrust":650,"boostDuration":2.2,"boostCooldown":5,"boostPower":24,"boostHeat":18}] },
+  reactor: { label: 'Reactor', color: 0xffda86, mass: 8, cost: {...ECONOMY.purchases.reactor}, description: 'Adds energy production and storage. Reactors combine their output.', levels: [{"generation":35,"energyCapacity":70},{"generation":60,"energyCapacity":110},{"generation":100,"energyCapacity":170}] },
+  cooler: { label: 'Cooling system', color: 0x9edfff, mass: 4, cost: {...ECONOMY.purchases.cooler}, description: 'Adds heat dissipation and thermal capacity. Cooling systems combine.', levels: [{"cooling":18,"heatCapacity":25},{"cooling":30,"heatCapacity":40},{"cooling":48,"heatCapacity":65}] },
+  builder: { label: 'Build module', color: 0xd9a441, mass: 6, cost: {...ECONOMY.purchases.builder}, description: 'Requires Core level 4. Enters Build Mode (F) to construct outposts on the world grid from carried cargo. Must be intact and the ship must not be short of energy.', levels: [{"buildRange":240,"buildSpeed":1,"buildDiscount":0},{"buildRange":300,"buildSpeed":1.6,"buildDiscount":0},{"buildRange":360,"buildSpeed":2.2,"buildDiscount":8}] },
 };
-export const CORE: EquipmentDefinition = { label: 'Core', color: 0x73c9ee, mass: 12, cost: cost(30,15), description: 'Core tiers unlock item tiers and improve hull, power and cooling. No module-count cap.', levels: [{hull:100,generation:40,energyCapacity:100,cooling:12,heatCapacity:100},{hull:150,generation:60,energyCapacity:160,cooling:16,heatCapacity:140},{hull:225,generation:90,energyCapacity:240,cooling:22,heatCapacity:200}] };
+export const CORE: EquipmentDefinition = { label: 'Core', color: 0x73c9ee, mass: 12, cost: {...ECONOMY.purchases.core}, description: 'Core tiers unlock item tiers and improve hull, power and cooling. No module-count cap.', levels: [{"hull":100,"generation":40,"energyCapacity":100,"cooling":12,"heatCapacity":100},{"hull":150,"generation":60,"energyCapacity":160,"cooling":18,"heatCapacity":150},{"hull":225,"generation":90,"energyCapacity":240,"cooling":28,"heatCapacity":230}] };
 export const MAX_MODULE_LEVEL=5;
 const ADVANCED_LEVELS:Record<EquipmentKind,[EquipmentStats,EquipmentStats]>={
- core:[{hull:320,generation:125,energyCapacity:340,cooling:30,heatCapacity:280},{hull:450,generation:170,energyCapacity:480,cooling:40,heatCapacity:380}],
- cannon:[{damage:62,cooldown:.125,power:7,heat:3.2},{damage:82,cooldown:.11,power:9,heat:4}],
- pulse:[{damage:58,cooldown:.16,power:9,heat:5},{damage:78,cooldown:.14,power:12,heat:6.5}],
- rail:[{damage:220,cooldown:.8,power:42,heat:32},{damage:295,cooldown:.7,power:54,heat:40}],
- plasma:[{damage:145,cooldown:.55,splash:80,power:30,heat:25},{damage:195,cooldown:.5,splash:95,power:39,heat:32}],
- rocket:[{damage:190,cooldown:1,splash:120,power:25,heat:24},{damage:250,cooldown:.9,splash:135,power:33,heat:31}],
- flak:[{damage:22,cooldown:.5,power:24,heat:19},{damage:29,cooldown:.45,power:31,heat:25}],
- emp:[{damage:56,cooldown:1.4,empRange:280,stun:4.5,power:48,heat:21},{damage:75,cooldown:1.2,empRange:320,stun:5,power:60,heat:27}],
- miner:[{mining:35,power:25,heat:10},{mining:48,power:34,heat:14}],
- tractor:[{tractor:550,pull:375,targets:4,power:12,heat:2.5},{tractor:650,pull:450,targets:5,power:16,heat:3}],
- cargo:[{pickup:110,cargo:300},{pickup:140,cargo:500}],
- armor:[{hull:135},{hull:195}],
- shield:[{shield:180,recharge:17,power:11,heat:1.7},{shield:260,recharge:24,power:15,heat:2.3}],
- engine:[{speed:100,acceleration:310,power:18,heat:11,burstSpeed:320,burstThrust:850,boostDuration:2.5,boostCooldown:4.5,boostPower:32,boostHeat:24},{speed:135,acceleration:420,power:24,heat:15,burstSpeed:420,burstThrust:1100,boostDuration:2.8,boostCooldown:4,boostPower:42,boostHeat:32}],
- reactor:[{generation:150,energyCapacity:250},{generation:220,energyCapacity:360}],
- cooler:[{cooling:70,heatCapacity:95},{cooling:100,heatCapacity:140}],
- builder:[{buildRange:400,buildSpeed:2.5,buildDiscount:10},{buildRange:480,buildSpeed:3,buildDiscount:15}],
+ core:[{"hull":320,"generation":130,"energyCapacity":350,"cooling":40,"heatCapacity":350},{"hull":450,"generation":180,"energyCapacity":500,"cooling":60,"heatCapacity":500}],
+ cannon:[{"damage":36,"cooldown":0.16,"power":5.1,"heat":1.9},{"damage":50,"cooldown":0.15,"power":5.8,"heat":2.1}],
+ pulse:[{"damage":34,"cooldown":0.19,"power":7,"heat":3.2},{"damage":44,"cooldown":0.18,"power":8,"heat":3.7}],
+ rail:[{"damage":140,"cooldown":0.95,"power":33,"heat":23},{"damage":180,"cooldown":0.9,"power":40,"heat":27}],
+ plasma:[{"damage":80,"cooldown":0.6,"power":22,"heat":17,"splash":80},{"damage":100,"cooldown":0.55,"power":27,"heat":20,"splash":95}],
+ rocket:[{"damage":110,"cooldown":1.3,"power":20,"heat":18,"splash":100},{"damage":140,"cooldown":1.2,"power":25,"heat":22,"splash":115}],
+ flak:[{"damage":11,"cooldown":0.53,"power":20,"heat":15},{"damage":14,"cooldown":0.48,"power":29,"heat":22}],
+ emp:[{"damage":35,"cooldown":4.4,"power":46,"heat":18,"empRange":260,"stun":2.5},{"damage":48,"cooldown":7,"power":75,"heat":30,"empRange":340,"stun":4}],
+ miner:[{"mining":33,"power":23,"heat":9},{"mining":45,"power":27,"heat":11}],
+ tractor:[{"tractor":560,"pull":400,"targets":4,"power":12,"heat":2.5},{"tractor":700,"pull":600,"targets":5,"power":16,"heat":3}],
+ cargo:[{"pickup":110,"cargo":300},{"pickup":160,"cargo":600}],
+ armor:[{"hull":120},{"hull":150}],
+ shield:[{"shield":150,"recharge":18,"power":9,"heat":1.5},{"shield":200,"recharge":25,"power":12,"heat":2}],
+ engine:[{"speed":95,"acceleration":300,"power":18,"heat":10,"burstSpeed":350,"burstThrust":1000,"boostDuration":2.5,"boostCooldown":5.5,"boostPower":35,"boostHeat":25},{"speed":125,"acceleration":400,"power":22,"heat":13,"burstSpeed":600,"burstThrust":1600,"boostDuration":2,"boostCooldown":6,"boostPower":60,"boostHeat":40}],
+ reactor:[{"generation":140,"energyCapacity":250},{"generation":175,"energyCapacity":350}],
+ cooler:[{"cooling":70,"heatCapacity":95},{"cooling":90,"heatCapacity":125}],
+ builder:[{"buildRange":440,"buildSpeed":3.2,"buildDiscount":12},{"buildRange":600,"buildSpeed":5,"buildDiscount":18}],
 };
 for(const [kind,levels]of Object.entries(ADVANCED_LEVELS)) (kind==='core'?CORE:MODULES[kind as ModuleKind]).levels.push(...levels);
 export const ROCKET = { speed: 330, lifetime: 3.2 };
@@ -215,8 +216,11 @@ export const HEARING = { range: 1700 };
 export const VFX = { particleBudget:320, visibleMargin:100, maxEvents:256, beamColors:{tractor:[0xf095ff,0xd783ff,0xb98aff,0xd2b0ff,0xf0c0ff],mining:[0x75ebc3,0x83edff,0xf0f8b1,0xb3ffe2,0xf7fff1]} };
 export function equipment(kind: EquipmentKind) { return kind === 'core' ? CORE : MODULES[kind]; }
 export function upgradeCost(kind: EquipmentKind, currentLevel: number): Record<Resource, number> {
-  const base = equipment(kind).cost;
-  return { iron: Math.max(15, base.iron) * currentLevel, copper: Math.max(5, base.copper) * currentLevel, crystal: currentLevel >= 2 ? 5 * currentLevel : 0, ice: currentLevel>=3?10*(currentLevel-2):0, radioactive:currentLevel>=4?10:0 };
+  const index=currentLevel-1;
+  if(!Number.isInteger(currentLevel)||index<0||index>=4)throw new RangeError('Upgrade level must be 1–4');
+  if(kind==='core')return {...ECONOMY.coreUpgrades[index]};
+  const base=equipment(kind).cost,extra=ECONOMY.tierMaterials[index],scale=ECONOMY.upgradeMultipliers[index];
+  return Object.fromEntries((Object.keys(base) as Resource[]).map(ore=>[ore,Math.ceil(base[ore]*scale+extra[ore])])) as Record<Resource,number>;
 }
 export function statsLabel(stats: EquipmentStats) {
   return Object.entries(stats).map(([key, value]) => `${({ damage: 'Damage', cooldown: 'Shot interval (s)', mining: 'Ore/s', cargo:'Cargo capacity +',pickup: 'Pickup +m', hull: 'Hull', speed: 'Speed +', acceleration: 'Thrust +', splash: 'Blast radius', shield: 'Shield', recharge: 'Recharge/s', tractor: 'Beam range', pull: 'Pull speed', targets: 'Targets', power:'Energy',heat:'Heat',generation:'Power/s',energyCapacity:'Energy capacity',cooling:'Cooling/s',heatCapacity:'Heat capacity',empRange:'EMP radius',stun:'Disable (s)',burstSpeed:'Burst speed +',burstThrust:'Burst thrust +',boostDuration:'Burst duration (s)',boostCooldown:'Burst cooldown (s)',boostPower:'Burst energy',boostHeat:'Burst heat' } as Record<string, string>)[key]} ${value}`).join(' · ');
@@ -244,7 +248,7 @@ export const WAYPOINTS = { max: 12, pickRadius: 14, colors: [0xffd166, 0x7fd6f2,
 export const OUTPOST = {
   coreLevel: 4, cell: BUILD_GRID.cellSize, radius: 14, coreSpacing: 900, baseClearance: 340, energyPerBlock: 6, awaySpeed: 0.5, awayRange: 2,
   largeGrid: 160, gridZoom: [1.15, 1.75], key: 'F', rotateKey: 'R',
-  fabricator: { hpPerSecond: 25, ironPerHp: 0.08, energyPerSecond: 8 },
+  fabricator: { hpPerSecond: 50, ironPerHp: 0.08, energyPerSecond: 16 },
   /** Turrets only run for outposts within `activeRange` of the ship; cargo moves to and from an outpost within `transferRange` of its core. */
   activeRange: 2600, transferRange: 240, panelRange: 620, turretScan: 0.3, turretAim: 0.14,
   /** Blocks above `stationLevel` need an Upgrade station in the outpost. Manual repair costs `repairIronPerHp` iron per hull point. */
@@ -262,9 +266,9 @@ export type StructureKind = 'outpostCore' | 'wall' | 'reinforcedWall' | 'autocan
  * finite-ore extraction at `rate` ore/s, carries up to `capacity` of one ore home and unloads into
  * outpost storage. Launching costs `launchEnergy` from the outpost battery; `perAsteroid` limits crowding.
  */
-export const DRONES = { speed: 95, rate: 3, capacity: 20, range: 750, leash: 1.35, launchEnergy: 4, recharge: 2, standoff: 14, perAsteroid: 2, retry: 1.5,
+export const DRONES = { speed: 95, rate: ECONOMY.drones.rate, capacity: 20, range: 750, leash: 1.35, launchEnergy: ECONOMY.drones.launchEnergy, recharge: 2, standoff: 14, perAsteroid: 2, retry: 1.5,
   /** Every `serviceEvery` trips a drone is serviced for `serviceTime` s (`bayServiceTime` with a Drone repair bay). `awayRate` is ore/s per drone while the ship is away. */
-  serviceEvery: 6, serviceTime: 12, bayServiceTime: 3, awayRate: 1.1 };
+  serviceEvery: 6, serviceTime: 12, bayServiceTime: 3, awayRate: ECONOMY.drones.awayRate };
 /** Automatic weapon mount: `energy` is drawn from the outpost battery per shot, `turn` is rad/s. */
 export type TurretDefinition = { weapon: WeaponKind; damage: number; cooldown: number; range: number; speed: number; lifetime: number; energy: number; turn: number; splash?: number; guided?: boolean; /** Heat added to the outpost per shot. */ heat?: number };
 export type StructureDefinition = { label: string; description: string; cost: Record<Resource, number>; health: number; /** Seconds at construction speed 1. */ buildTime: number; color: number;
@@ -296,6 +300,7 @@ export const STRUCTURES: Record<StructureKind, StructureDefinition> = {
   dockingStation: { label: 'Docking station', description: 'Fly close and press E to unload cargo into outpost storage and repair the ship from outpost minerals.', cost: cost(50, 30, 10), health: 240, buildTime: 6, color: 0x7fd6f2, dock: 150 },
   storage: { label: 'Storage block', description: 'Adds mineral storage to the outpost. If it is destroyed, anything that no longer fits spills out as pickups.', cost: cost(30, 10), health: 180, buildTime: 4, color: 0xc599e8, storage: 400 },
 };
+for(const definition of Object.values(STRUCTURES))for(const ore of Object.keys(definition.cost) as Resource[])definition.cost[ore]=Math.ceil(definition.cost[ore]*ECONOMY.structureMultiplier);
 /** Level-5 specials for outpost blocks. Names and text are shown in Build Mode; the numbers they use are in STRUCTURE_SPECIAL. */
 export const STRUCTURE_ABILITIES: Record<StructureKind, { name: string; description: string }> = {
   outpostCore: { name: 'Command Network', description: 'When turrets engage, all turrets in the outpost fire 30% faster for 8 seconds. 30-second cooldown.' },

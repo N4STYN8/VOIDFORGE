@@ -217,3 +217,25 @@
 - Next task: user review of outfitter density and grid readability at the usual browser resolution.
 
 Release authorization: user requested live publication of the outfitter update. Remote main remains synchronized; publishing the tested local changes without altering other developers' work.
+
+## HUD button click fix — 2026-11-13
+- Reproduced lost clicks: command buttons were replaced every 100ms because raw generated HTML differed from browser-serialized HTML (including SVG/boolean attributes). A 250ms mouse press missed its original target; button identity also changed while keyboard-focused.
+- src/cockpit.ts now creates each command button once and patches disabled/title/status in place. The same native button survives timers and state changes. Kept command routing and all equipment/station/pause restrictions intact.
+- Validation: reproduction changed from identity=false / held map click=false to both true. Browser checks passed all seven commands with 240ms clicks, SVG icon clicks held 300ms, keyboard focus/Enter across cooldown expiry, and six responsive layouts; no errors. All 203 tests and production build passed (existing bundle warning).
+- Files: src/cockpit.ts, ARCHITECTURE.md, GAME_DESIGN.md, TASKS.md, PROGRESS.md. Clean start, origin fetched and main already synchronized; local branch codex/hud-button-clicks. No conflicts. Changes remain uncommitted; nothing pushed or deployed.
+- Next task: verify the fix with normal-duration mouse clicks on the user's browser after publication is authorized.
+
+## Ultimate Level 5 progression — 2026-11-13
+- Preserved the authorized local HUD button fix. Rebalanced all 17 equipment types across five tiers; basic weapon throughput rises about 3–5×, with named L5 paid abilities providing larger tactical spikes. Updated costs/output descriptions, utility tiers, powered fabricator repairs and lightweight L5 visuals/audio pitch.
+- Added shared defensive/phase recovery and enemy EMP recovery, prevented unpaid shots from advancing counters, and persisted recovery timers/fractional repair iron debt. Fixed penetration ending early because its loop limit decreased after each hit. Resource extraction/collection remains finite and deduplicated.
+- Validation: all 207 tests pass; production build passes with the existing large-bundle warning. Added coverage for tier throughput, unpaid ultimates, EMP recovery and compatible saves. Human fleet/boss balance remains the next specific task.
+- Git: codex/hud-button-clicks; origin fetched at task start, main synchronized; no upstream selected or pull performed on this feature branch. Existing uncommitted HUD/docs edits were present and explicitly authorized to preserve. No conflicts; changes remain local and uncommitted. Nothing pushed, merged or deployed.
+- Browser regression: six viewport sizes (390–1440px), held HUD clicks, keyboard, map/radar, settings, docking, burst, overclock, building and preference persistence all passed with no page errors. Outfitter now labels nominal power/heat as base values because ultimate bursts can exceed them.
+
+## Economy rebalance and combined release — 2026-11-13
+- Audited old linear 1–4× upgrade costs, flat final 10-radioactive gate, multi-beam extraction, rewards, regeneration and cheap automation. Added category purchase prices, 2/5/12/30× upgrades plus tier minerals, and separate costly core milestones. Preserved all five tiers, ultimate power, cargo and combat/mining mechanics.
+- Infrastructure costs ×3; structure upgrades escalate; drone income reduced to 2 active/0.6 away ore/s with 8-energy launches. Rewards and renewal cooldowns retained. New-world common-weighted fields/area-scaled yields are versioned; old worlds keep original reserves/geography. No save resource removal or equipment downgrades.
+- Fixed repricing exploit: new modules track actual invested minerals; legacy refunds/salvage keep old valuation. Outfitter displays required/stored/missing minerals and precise shortfalls.
+- npm run economy regenerates ECONOMY_REPORT.md: actual starter/early/mid/advanced/endgame extraction measured; explicit delivery/mineral assumptions estimate core 2–5 at 20.6/59.2/146/461.7 minutes. These are scenario estimates requiring human validation, not timing guarantees. Regional samples, combat rewards, module affordability and automation ceilings recorded.
+- Validation: 212 tests pass; production build passes (existing bundle-size warning). Browser: shortages, disabled unaffordable upgrades, exact core charge, paid module ledger, upgrade and desktop overflow checks pass with no errors. Prior HUD/ultimate browser checks remain recorded above. Diff reviewed; no conflicts.
+- Git: codex/hud-button-clicks had the known prior HUD/ultimate edits, explicitly included by the user's “push everything live” request. Origin fetched; HEAD matched origin/main at start; no upstream chosen/pull performed. User explicitly requested this combined release to GitHub and the existing Pages target; main push triggers that deployment. Next task: human economy pacing playtest.

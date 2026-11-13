@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fixtureModel } from './fixtures.ts';
-import { MODULES, WEAPON_TYPES, type ModuleKind, type WeaponKind } from '../src/data.ts';
+import { MODULES, REPAIR, WEAPON_TYPES, type ModuleKind, type WeaponKind } from '../src/data.ts';
 import { GameModel } from '../src/model.ts';
 import { EffectPool } from '../src/effects.ts';
 const idle={x:0,y:0,aim:{x:5500,y:5000},fire:false,mine:false,dock:false};
@@ -115,7 +115,7 @@ test('removing a loaded cargo hold is rejected and breaking it spills excess ore
   assert.equal(m.removeModule(2,0),false);assert.equal(m.cargoCapacity,240);
   m.player.x=5000;m.player.y=5000;m.modules.find(m=>m.x===1&&m.y===0)!.integrity=1;
   m.bullets=[{id:900,x:5016,y:5000,vx:0,vy:0,enemy:true,damage:10,life:1}];m.update(.01,idle);
-  assert.equal(m.cargoCapacity,120);assert.equal(m.cargoUsed,120);assert.equal(m.cargo.copper+m.drops.filter(d=>d.ore==='copper').reduce((n,d)=>n+d.amount,0),200);
+  assert.equal(m.cargoCapacity,120);assert.equal(m.cargoUsed,120);assert.equal(m.cargo.copper+m.drops.filter(d=>d.ore==='copper').reduce((n,d)=>n+d.amount,0),200+2*Math.floor(MODULES.cargo.cost.copper*REPAIR.salvageFraction));
 });
 test('loading older over-capacity inventory preserves the overflow as mineral pickups',()=>{
   const m=prepared();m.cargo.iron=500;const restored=GameModel.fromSave(m.toSave());

@@ -15,7 +15,7 @@ function arrive(f:ReturnType<typeof depleted>){for(let i=0;i<15&&!f.slot.current
 
 test('mined deposits renew after cooldown at new seeded positions with fresh finite ore and drift',()=>{
  const f=depleted();assert.ok(f.slot.due>=120&&f.slot.due<=300);assert.equal(f.world.replenish(f.home,f.rocks),0);
- arrive(f);const a=f.slot.current!;assert.ok(a);assert.ok(a.id<0);assert.notEqual(a.id,f.old.id);assert.equal(a.ore,'iron');assert.ok(a.amount>=25&&a.amount<=85);assert.equal(a.amount,a.originalAmount);assert.equal(a.health,a.amount);assert.notEqual(a.shapeSeed,f.old.shapeSeed);
+ arrive(f);const a=f.slot.current!;assert.ok(a);assert.ok(a.id<0);assert.notEqual(a.id,f.old.id);assert.equal(a.ore,'iron');assert.ok(a.amount>=1&&a.amount<=150);assert.equal(a.amount,a.originalAmount);assert.equal(a.health,a.amount);assert.notEqual(a.shapeSeed,f.old.shapeSeed);
  assert.ok(Math.hypot(a.x-f.old.x,a.y-f.old.y)>a.radius+f.old.radius+24);assert.ok(Math.hypot(a.vx,a.vy)>=1&&Math.hypot(a.vx,a.vy)<=4);assert.ok(f.world.changes.get(1)===null);
  const before=f.rocks.length;f.world.advance(10000);for(let i=0;i<20;i++)f.world.replenish(f.home,f.rocks);assert.equal(f.rocks.length,before);
 });

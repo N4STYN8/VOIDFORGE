@@ -24,3 +24,10 @@
 /* Grid labels are level badges; full names remain in tooltips and the inspector. */
 #builder .module-cell { position:relative; overflow:hidden; } #builder .module-cell>img { width:70%; height:70%; object-fit:contain; max-width:38px; max-height:38px; } #builder .module-cell>span { display:none; } #builder .module-cell small { position:absolute; right:2px; bottom:1px; padding:0 2px; background:#061722de; color:#b1e2e6; font-size:8px; line-height:1.1; }
 @media(max-width:1100px) { #builder .yard-header { position:sticky; top:0; z-index:3; padding-top:5px; background:#06141f; box-shadow:0 3px #06141f; } }
+
+/* Price checks use station storage, the same pool charged by installation/upgrades. */
+#builder .economy-requirements{width:100%;border-collapse:collapse;font-size:12px;margin:16px 0}
+#builder .economy-requirements caption{text-align:left;color:#7de7ed;margin-bottom:8px}
+#builder .economy-requirements th,#builder .economy-requirements td{padding:6px 3px;border-bottom:1px solid #25434c;text-align:right}
+#builder .economy-requirements th:first-child{text-align:left;text-transform:capitalize}
+#builder .economy-requirements .mineral-shortage td:last-child{color:#ffbf7e;font-weight:bold}

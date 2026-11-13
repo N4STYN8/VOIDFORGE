@@ -54,6 +54,7 @@ export class EffectPool {
       if(e.type==='debris'){
         for(let i=0;i<(e.count??3);i++){const a=angle+(this.random()-.5)*1.5,speed=20+this.random()*45;this.spawn({kind:'debris',x:e.x,y:e.y,vx:Math.cos(a)*speed,vy:Math.sin(a)*speed,life:.45+this.random()*.25,size:1.5+this.random()*2,color,rotation:a,spin:2-this.random()*4},view);}continue;
       }
+      if(e.level===5&&(e.type==='muzzle'||e.type==='explosion'))this.spawn({kind:'ring',x:e.x,y:e.y,life:.15,size:e.type==='muzzle'?10:Math.min(130,e.radius??40),color,priority:2},view);
       const explosion=e.type==='explosion',collection=e.type==='collection',muzzle=e.type==='muzzle';
       this.spawn({kind:'flash',x:e.x,y:e.y,life:muzzle?.055:.12,size:muzzle?4:explosion?10:5,color,priority:3,rotation:angle},view);
       const count=muzzle?2:collection?5:explosion?12:e.weapon==='rail'?9:4;

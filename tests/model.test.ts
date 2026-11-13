@@ -73,11 +73,11 @@ test('station blocks gunfire; docking only repairs when minerals are available',
 test('module installation charges stored ore and enforces adjacency and station access', () => {
   const m = fixtureModel();
   assert.equal(m.installModule('cannon', -1, 0), false);
-  m.stored = { iron: 200, copper: 100, crystal: 0, ice: 0, radioactive: 0 };
+  m.stored = { iron: 300, copper: 150, crystal: 0, ice: 0, radioactive: 0 };
   assert.equal(m.installModule('cannon', 2, 2), false);
   assert.equal(m.installModule('cannon', 1, 0), false);
   assert.equal(m.installModule('cannon', -1, 0), true);
-  assert.equal(m.stored.iron, 180); assert.equal(m.stored.copper, 90);
+  assert.equal(m.stored.iron, 240); assert.equal(m.stored.copper, 120);
   assert.equal(m.installModule('cannon', -2, 0), true);
   assert.equal(m.installModule('cannon', -2, 1), true);
   assert.equal(m.installModule('cannon', -2, 2), true);
@@ -86,7 +86,7 @@ test('module installation charges stored ore and enforces adjacency and station 
 test('installed modules add projectiles, mining throughput and pickup reach, and survive respawn', () => {
   const m = fixtureModel(); m.enemies = [];
   m.asteroids = m.asteroids.filter(a => a.x === 3380);
-  m.stored = { iron: 100, copper: 100, crystal: 0, ice: 0, radioactive: 0 };
+  m.stored = { iron: 1000, copper: 1000, crystal: 0, ice: 0, radioactive: 0 };
   assert.equal(m.installModule('miner', -1, 0), true);
   assert.equal(m.installModule('cannon', 0, 1), true);
   assert.equal(m.installModule('cargo', -2, 0), true);
@@ -143,21 +143,21 @@ test('individual upgrades charge costs, respect maximum level and station access
   const m = fixtureModel(); m.asteroids = []; m.enemies = [];
   assert.equal(m.upgradeModule(0, -1), false);
   m.coreLevel = 3;
-  m.stored = { iron: 1000, copper: 1000, crystal: 1000, ice: 0, radioactive: 0 };
+  m.stored = { iron: 10000, copper: 10000, crystal: 1000, ice: 1000, radioactive: 0 };
   assert.equal(m.upgradeModule(0, -1), true); assert.equal(m.miningRate, 15);
-  assert.equal(m.stored.iron, 985); assert.equal(m.stored.copper, 990);
+  assert.equal(m.stored.iron, 9910); assert.equal(m.stored.copper, 9940);
   assert.equal(m.modules.find(m => m.kind === 'cannon')!.level, 1);
-  assert.equal(m.upgradeModule(0, -1), true); assert.equal(m.miningRate, 24); assert.equal(m.stored.crystal, 990);
+  assert.equal(m.upgradeModule(0, -1), true); assert.equal(m.miningRate, 24); assert.equal(m.stored.crystal, 960);
   const stored = { ...m.stored };
   assert.equal(m.upgradeModule(0, -1), false); assert.deepEqual(m.stored, stored);
   assert.equal(m.upgradeModule(1, 0), true);
   m.player.x = 5000;
-  m.update(0.01, idle({ fire: true })); assert.equal(m.bullets[0].damage, 30);
+  m.update(0.01, idle({ fire: true })); assert.equal(m.bullets[0].damage, 18);
   m.player.x = 5000; assert.equal(m.upgradeModule(0, 0), false); assert.equal(m.coreLevel, 3);
 });
 test('core, armor, collectors and thrusters improve hull, pickup reach and movement across respawn', () => {
   const m = fixtureModel(); m.asteroids = []; m.enemies = [];
-  m.stored = { iron: 1000, copper: 1000, crystal: 1000, ice: 0, radioactive: 0 };
+  m.stored = { iron: 10000, copper: 10000, crystal: 1000, ice: 1000, radioactive: 0 };
   assert.equal(m.upgradeModule(0, 0), true); assert.equal(m.maxHealth, 150); assert.equal(m.player.health, 150);
   assert.equal(m.installModule('armor', -1, 0), true); assert.equal(m.maxHealth, 180);
   assert.equal(m.upgradeModule(-1, 0), true); assert.equal(m.maxHealth, 205);
@@ -170,7 +170,7 @@ test('core, armor, collectors and thrusters improve hull, pickup reach and movem
 });
 test('rockets explode on contact and damage multiple enemies once with limited fire rate', () => {
   const m = fixtureModel(); m.asteroids = []; m.enemies = [];
-  m.stored = { iron: 100, copper: 100, crystal: 0, ice: 0, radioactive: 0 };
+  m.stored = { iron: 1000, copper: 1000, crystal: 0, ice: 0, radioactive: 0 };
   assert.equal(m.installModule('rocket', -1, 0), true);
   m.modules = m.modules.filter(m => m.kind === 'rocket');
   m.player.x = 4000; m.player.y = 4000;
@@ -185,7 +185,7 @@ test('rockets explode on contact and damage multiple enemies once with limited f
 
 test('shield modules absorb hits, delay regeneration and carry upgrades across respawn', () => {
   const m = fixtureModel(); m.asteroids = []; m.enemies = [];
-  m.stored = { iron: 1000, copper: 1000, crystal: 1000, ice: 0, radioactive: 0 };
+  m.stored = { iron: 10000, copper: 10000, crystal: 1000, ice: 1000, radioactive: 0 };
   assert.equal(m.installModule('shield', -1, 0), true); assert.equal(m.shield, 40);
   m.player.x = 5000; m.player.y = 5000;
   m.bullets = [{ id: 999, x: 5000, y: 5000, vx: 0, vy: 0, life: 1, enemy: true, damage: 50 }];
@@ -194,11 +194,11 @@ test('shield modules absorb hits, delay regeneration and carry upgrades across r
   assert.equal(m.shield, 0);
   for (let i = 0; i < 40; i++) m.update(0.05, idle());
   assert.ok(m.shield > 0 && m.shield < 40);
-  m.player.x = 3200; m.player.y = 3330; m.coreLevel = 2; assert.equal(m.upgradeModule(-1, 0), true); assert.equal(m.maxShield, 75);
-  m.player.health = 0; m.respawn(); assert.equal(m.shield, 75);
+  m.player.x = 3200; m.player.y = 3330; m.coreLevel = 2; assert.equal(m.upgradeModule(-1, 0), true); assert.equal(m.maxShield, 70);
+  m.player.health = 0; m.respawn(); assert.equal(m.shield, 70);
 });
 test('moving cubes preserves upgrades and connected layout without spending minerals', () => {
-  const m = fixtureModel(); m.stored = { iron: 1000, copper: 1000, crystal: 1000, ice: 0, radioactive: 0 };
+  const m = fixtureModel(); m.stored = { iron: 10000, copper: 10000, crystal: 1000, ice: 1000, radioactive: 0 };
   m.coreLevel = 2; m.upgradeModule(1, 0); const before = { ...m.stored };
   assert.equal(m.moveModule(1, 0, -1, 0), true);
   assert.equal(m.modules.find(m => m.kind === 'cannon')!.level, 2); assert.deepEqual(m.stored, before);
@@ -241,7 +241,7 @@ test('enemy variants fire their defined damage and keep distinct engagement dist
 
 test('tractor beam pulls ore through visible links and conserves pickup amounts', () => {
   const m = fixtureModel(); m.asteroids = []; m.enemies = [];
-  m.stored = { iron: 100, copper: 100, crystal: 100, ice: 0, radioactive: 0 };
+  m.stored = { iron: 1000, copper: 1000, crystal: 100, ice: 0, radioactive: 0 };
   assert.equal(m.installModule('tractor', -1, 0), true);
   m.drops = [{ id: 999, x: m.player.x + 140, y: m.player.y, ore: 'ice', amount: 30 }];
   const x = m.drops[0].x; m.update(0.05, idle()); assert.ok(m.drops[0].x < x); assert.equal(m.tractorLinks.length, 1);
@@ -253,7 +253,7 @@ test('tractor beam pulls ore through visible links and conserves pickup amounts'
 });
 test('module damage detaches disconnected blocks and repairs require the exact quoted minerals', () => {
   const m = fixtureModel(); m.asteroids = []; m.enemies = [];
-  m.stored = { iron: 1000, copper: 1000, crystal: 1000, ice: 0, radioactive: 0 };
+  m.stored = { iron: 10000, copper: 10000, crystal: 1000, ice: 1000, radioactive: 0 };
   m.installModule('cargo', 2, 0);
   m.player.x = 5000; m.player.y = 5000; m.player.angle = 0;
   m.modules.find(m => m.kind === 'cannon')!.integrity = 5;
@@ -268,7 +268,7 @@ test('module damage detaches disconnected blocks and repairs require the exact q
   assert.equal(m.stored.iron, before.iron - cost.iron); assert.equal(m.stored.copper, before.copper - cost.copper);
 });
 test('module swaps preserve equipment and recycling returns only paid costs at current condition', () => {
-  const m = fixtureModel(); m.stored = { iron: 100, copper: 100, crystal: 0, ice: 0, radioactive: 0 };
+  const m = fixtureModel(); m.stored = { iron: 1000, copper: 1000, crystal: 0, ice: 0, radioactive: 0 };
   m.coreLevel = 2; m.upgradeModule(1, 0); assert.equal(m.moveModule(1, 0, 0, -1), true);
   assert.equal(m.modules.find(m => m.kind === 'cannon')!.level, 2);
   const refund = m.moduleRefund(m.modules.find(m => m.kind === 'cannon')!), before = { ...m.stored };
@@ -300,7 +300,7 @@ test('safe zones disable player fire while enemies patrol and cannot enter them'
 
 
 test('core hull tiers gate item levels while module counts are unrestricted', () => {
-  const m=fixtureModel();m.stored={iron:10000,copper:10000,crystal:10000,ice:10000,radioactive:10000};
+  const m=fixtureModel();m.stored={iron:100000,copper:100000,crystal:10000,ice:10000,radioactive:10000};
   assert.equal(m.upgradeModule(1,0),false);assert.ok(m.upgradeError(1,0)?.includes('core / hull'));
   m.upgradeModule(0,0);assert.equal(m.upgradeModule(1,0),true);assert.equal(m.upgradeModule(1,0),false);
   m.upgradeModule(0,0);assert.equal(m.upgradeModule(1,0),true);
@@ -325,7 +325,7 @@ test('enemy ships physically push ore and receive impact damage', () => {
 
 
 test('holding mine auto-targets reachable ore; multiple upgraded beams mine different asteroids', () => {
-  const m=fixtureModel();m.stored={iron:1000,copper:1000,crystal:1000,ice:0,radioactive:0};
+  const m=fixtureModel();m.stored={iron:10000,copper:10000,crystal:1000,ice:1000,radioactive:0};
   m.installModule('miner',-1,0);
   m.update(.05,idle({mine:true,aim:{x:0,y:0}}));
   assert.equal(m.miningLinks.length,2);assert.equal(new Set(m.miningLinks.map(b=>b.targetId)).size,1);
@@ -375,8 +375,8 @@ test('explosions push nearby asteroids outward without exceeding shot speed limi
 });
 
 
-test('starter weapons are weaker while later tiers retain their damage',()=>{
+test('starter weapons remain weak while the second tier gives a measured improvement',()=>{
  const kinds=['cannon','pulse','rail','plasma','rocket','flak','emp'] as const;
- const first=[12,11,45,27,39,4,9],second=[30,28,110,70,95,11,25];
+ const first=[12,11,45,27,39,4,9],second=[18,17,70,42,60,6,16];
  for(let i=0;i<kinds.length;i++){assert.equal(MODULES[kinds[i]].levels[0].damage,first[i]);assert.equal(MODULES[kinds[i]].levels[1].damage,second[i]);}
 });
