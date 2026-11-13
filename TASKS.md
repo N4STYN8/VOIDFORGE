@@ -152,3 +152,8 @@
 - [x] Refine cockpit toward supplied reference: angular armor, stacked icon gauges, circular radar, friendly station thumbnail and icon console; verify 185 tests and responsive controls
 - [x] Add detailed layered cockpit armor, fasteners, vents, segmented instruments; integrate latest fleet/navigation/save systems and verify 203 tests plus browser controls
 - [x] Fix large-screen panel zoom/clipping; preserve forge footer with L5 abilities/warnings, improve reference typography/icons/gauges and verify 125% display scaling
+
+## Outfitter cockpit style
+- [x] Match cockpit palette/panels, improve catalog/grid/inspector readability and level indicators
+- [x] Preserve editor, fleet and upgrade interactions; check responsive layout and full build/tests
+- [ ] User visual review at their usual resolution

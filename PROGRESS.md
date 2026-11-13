@@ -207,3 +207,13 @@
 - Validation: 203 tests/build pass; all desktop starter/L5-with-warning layouts fit at 1903x906, 1672x941, 1536x725, 1440x900, 1366x768 and 1280x720. Separate 125% display-scale check passed. Six responsive sizes, controls, markers, radar zoom, fleet and paint browser checks passed; no errors. Stress scene remained ~60 FPS.
 - Branch codex/hud-layout-fixes; clean start and fetch showed main already synchronized. User explicitly requested commit/push and live deployment after checks. No other developer changes were overwritten. Existing bundle-size warning remains.
 - Next task: user review of the deployed HUD at their actual browser resolution and zoom.
+
+## Outfitter cockpit styling — 2026-11-13
+- Restyled the shipyard to match the current navy/cyan HUD: recessed panels, shared local symbol, numbered sections, clearer catalog selection, pixel-art module frames, level indicators and compact level badges on the north-facing grid.
+- Added scoped src/outfitter.css. Desktop modal owns its viewport sizing (legacy zoom canceled); fleet/storage, launch, overview and repair footer remain visible while catalog/grid/inspector scroll independently. Narrow screens stack sections with a sticky close header and vertical scrolling.
+- Preserved all costs, stats, event attributes and editor logic; removed the redundant maximum-level error notice while retaining its actual status. Existing ship/fleet/paint artwork and simulation are unchanged.
+- Validation: 203 tests and production build pass (existing bundle warning). Browser: populated 18-module ship at seven sizes from 1903x906 to 390x667, no horizontal overflow/errors; desktop launch/repair visible. Search, drag install, upgrade, drag swap, scroll retention, remove, paint, buy/switch ship and close all passed.
+- Files: src/outfitter.css, src/outfitter.ts, src/main.ts plus GAME_DESIGN.md, ARCHITECTURE.md, TASKS.md and PROGRESS.md. Clean start; fetched origin, main already synchronized; local branch codex/outfitter-cockpit-style. No conflicts, commits, pushes or deployment.
+- Next task: user review of outfitter density and grid readability at the usual browser resolution.
+
+Release authorization: user requested live publication of the outfitter update. Remote main remains synchronized; publishing the tested local changes without altering other developers' work.

@@ -12,6 +12,7 @@ import { cellOf, cellCenter, bounds as outpostBounds, outpostStats, storedTotal,
 import { WORLD, SHIP, RESOURCES, ENEMIES, ENEMY_AI, WAYPOINTS, OUTPOST, STRUCTURES, STRUCTURE_ABILITIES, type StructureKind, type Resource, EXPLORATION, MODULES, BUILD_GRID, equipment, upgradeCost, statsLabel, type EquipmentKind, type ModuleKind, FLEET } from './data.ts';
 import './style.css';
 import './cockpit.css';
+import './outfitter.css';
 import { hashSeed } from './world.ts';
 import { loadSavedGame, saveGame, saveText, backupSavedGame } from './persistence.ts';
 /** The save found at start-up; storage is read before the game is created because the large store is asynchronous. */
