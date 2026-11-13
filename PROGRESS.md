@@ -17,11 +17,12 @@
 - Browser checks: 33-module ship with eight reactors, search using actual keyboard input, three panels, upgrade comparisons, HUD expansion, Shift burst, effects toggle and volume control; layouts inspected at 1440×1000, 1366×768, 1024×768 and 900×650. No runtime errors.
 - Heavy simultaneous combat/mining/tractor fixture (~245 active ore, eight enemies, seven weapons) measured ~60 FPS in headless Canvas. Software WebGL measured ~35 FPS, motivating the default Canvas renderer and viewport-sized background.
 
-## Publishing in progress
-- User authorized public N4STYN8/VOIDFORGE and GitHub Pages. An empty private repository already exists; it will be made public as explicitly requested.
-- Local main repository initialized and remote connected; no existing remote history to overwrite.
-- Added test/build/deploy workflow for main and test-only PR validation, plus relative Vite asset paths.
-- Push, Pages activation and live verification are the remaining steps.
+## Publishing complete
+- Public source: https://github.com/N4STYN8/VOIDFORGE
+- Live game: https://n4styn8.github.io/VOIDFORGE/
+- Main pushes run tests/build and publish GitHub Pages; PRs validate without publishing. Pull synchronizes the local copy.
+- Initial deployment succeeded. Live browser check returned HTTP 200, rendered the game/HUD and reported no runtime errors.
+- Credentials and local QA fixtures/screenshots are excluded from source.
 
 ## Scope and next task
 - The later enemy-class, tactical AI, danger-region and three-boss overhaul is explicitly staged. It is queued next; current four enemy classes/patrol systems remain working.

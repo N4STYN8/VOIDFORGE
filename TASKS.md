@@ -19,8 +19,8 @@
 
 ## Publishing
 - [x] Prepare public repository connection and test/build/Pages workflow
-- [ ] Push tested source to N4STYN8/VOIDFORGE
-- [ ] Enable Pages, await deployment and verify the live game
+- [x] Push tested source to N4STYN8/VOIDFORGE
+- [x] Enable Pages, await deployment and verify the live game
 
 ## Next coherent stage from the latest staged brief
 - [ ] Six enemy classes with distinct loadouts, silhouettes, shields, loot and sounds
