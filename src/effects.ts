@@ -11,6 +11,7 @@ export class EffectPool {
   private randomState=9217;
   private emissionClock=0;
   time=0;
+  density=1;
   constructor(budget=VFX.particleBudget){
     this.particles=Array.from({length:Math.max(0,Math.floor(budget))},(_,i)=>{this.free.push(i);return {active:false,kind:'spark',x:0,y:0,vx:0,vy:0,life:0,duration:0,size:0,growth:0,color:0xffffff,opacity:1,fade:1,rotation:0,spin:0,priority:0};});
   }
@@ -22,6 +23,7 @@ export class EffectPool {
   visible(x:number,y:number,view:EffectView,margin=VFX.visibleMargin){return x>=view.x-margin&&y>=view.y-margin&&x<=view.x+view.width+margin&&y<=view.y+view.height+margin;}
   spawn(config:ParticleConfig,view?:EffectView):boolean {
     if(!this.on||config.life<=0||(view&&!this.visible(config.x,config.y,view)))return false;
+    if(this.density<1&&this.random()>this.density)return false;
     let index=this.free.pop();
     if(index===undefined&&view){
       const cx=view.x+view.width/2,cy=view.y+view.height/2;

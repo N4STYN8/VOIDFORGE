@@ -54,3 +54,12 @@ kbd { display:inline-block; min-width:16px; text-align:center; background:#1d324
 .module-drag-ghost img { width:32px; height:32px; object-fit:contain; display:block; }
 .module-drag-ghost small { display:block; }
 .module-drag-hint { position:fixed; z-index:101; pointer-events:none; bottom:20px; left:50%; transform:translateX(-50%); max-width:90vw; padding:10px 18px; background:#122337; border:1px solid #80cfdc; color:#ecf7ff; }
+#settings-menu { width:min(480px,94vw); max-height:92vh; overflow:auto; padding:24px; background:#0d1928; color:#dce7f0; border:1px solid #72cddd; border-radius:6px; }
+#settings-menu::backdrop { background:#02060bc9; }
+#settings-menu header { display:flex; align-items:center; justify-content:space-between; gap:14px; }
+#settings-menu h2 { margin:0; } #settings-menu h3 { margin:20px 0 10px; padding-top:12px; border-top:1px solid #31485c; }
+#settings-menu p { font-size:12px; color:#a8bfd0; } .setting-row { display:flex; flex-direction:column; gap:6px; margin:14px 0; font-size:13px; }
+.setting-row span { display:flex; justify-content:space-between; } .setting-row output { color:#8ce0ed; }
+.setting-row input { width:100%; accent-color:#81dbe8; } .setting-row select { padding:8px; color:#dce7f0; background:#1b2d40; border:1px solid #49657b; }
+.setting-check { display:flex; align-items:center; gap:8px; margin:14px 0; font-size:13px; } .setting-check input { accent-color:#81dbe8; }
+.settings-saved { border-top:1px solid #31485c; padding-top:12px; } #session-controls>[data-settings] { width:100%; margin-top:8px; }

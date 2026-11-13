@@ -44,3 +44,5 @@ Editor dragging lives in `src/moduleDrag.ts`, uses pointer events with a movemen
 World expansion keeps the original 16-column asteroid ID namespace inside the former 19,200-square region; outer chunks use an offset namespace with fixed stride 4096. Optional generationSize/expansion fields migrate old v1 specs without moving original geography. Additional outer-field influence fades in over 2,000 units past the old boundary. The active 5×5 chunk window is independent of world area.
 
 Module art remains centralized in drawModule: primitive beveled housings and equipment-specific hardware are baked into the existing texture cache and shared with editor icons/salvage. Tier bars are presentation only; module coordinates, collision and equipment definitions remain independent.
+
+GameAudio routes the supplied MP3 media element and procedural effects through separate music/effects gain buses, then master gain/limiter. Vite bundles the local track using an import.meta.url asset reference. GameSettings owns the native paused modal and local preferences; particle density changes only the cosmetic pool RNG, never the simulation.

@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { GameSettings } from './settings.ts';
 import { moduleDrag } from './moduleDrag.ts';
 import { flightHud } from './hud.ts';
 import { outfitterMarkup } from './outfitter.ts';
@@ -29,6 +30,7 @@ class SpaceScene extends Phaser.Scene {
   private asteroidSprites: Phaser.GameObjects.Image[] = [];
   private mapView = { zoom: 1, centerX: 0.5, centerY: 0.5 };
   private audio = new GameAudio();
+  private settings!:GameSettings;
   private mapOpen = false;
   private mapWindow = document.createElement('section');
   private mapCanvas!: HTMLCanvasElement;
@@ -60,9 +62,10 @@ class SpaceScene extends Phaser.Scene {
   private status = document.getElementById('status')!;
   create() {
     this.sessionControls.id = 'session-controls';
-    this.sessionControls.innerHTML = '<div><small id="world-seed"></small></div><div class="session-actions"><button data-session="save">Save</button><button data-session="load">Load</button><button data-session="export">Export</button><label class="file-button">Import<input id="import-save" type="file" accept="application/json,.json"></label></div><div class="new-world"><input id="seed-input" aria-label="Optional new world seed" maxlength="80" placeholder="Optional new-world seed"><button data-session="new">New world</button></div><details class="audio-settings"><summary>Audio settings</summary><label>Master volume <input type="range" min="0" max="1" step="0.05" data-volume="master"></label><label>Effects volume <input type="range" min="0" max="1" step="0.05" data-volume="effects"></label></details>';
+    this.sessionControls.innerHTML = '<div><small id="world-seed"></small></div><div class="session-actions"><button data-session="save">Save</button><button data-session="load">Load</button><button data-session="export">Export</button><label class="file-button">Import<input id="import-save" type="file" accept="application/json,.json"></label></div><div class="new-world"><input id="seed-input" aria-label="Optional new world seed" maxlength="80" placeholder="Optional new-world seed"><button data-session="new">New world</button></div><button data-settings="true">Settings · audio / VFX</button>';
     document.body.append(this.sessionControls); this.refreshSeedLabel();
-    this.sessionControls.querySelectorAll<HTMLInputElement>('[data-volume]').forEach(input=>{input.value=String(input.dataset.volume==='master'?this.audio.masterVolume:this.audio.effectsVolume);input.addEventListener('input',()=>this.audio.setVolume(input.dataset.volume as 'master'|'effects',Number(input.value)));});
+    this.settings=new GameSettings(this.audio,this.effects,open=>{this.input.keyboard!.enabled=!open;if(open)this.input.keyboard!.disableGlobalCapture();else this.input.keyboard!.enableGlobalCapture();});
+    this.sessionControls.querySelector('[data-settings]')!.addEventListener('click',()=>this.settings.show());
     this.sessionControls.addEventListener('focusin', event => { if ((event.target as HTMLElement).id === 'seed-input') { this.input.keyboard!.enabled = false; this.input.keyboard!.disableGlobalCapture(); this.paused = true; } });
     this.sessionControls.addEventListener('focusout', () => { this.input.keyboard!.enabled = true; this.input.keyboard!.enableGlobalCapture(); });
     this.sessionControls.addEventListener('click', event => {
@@ -206,30 +209,30 @@ class SpaceScene extends Phaser.Scene {
       else this.paused = !this.paused;
     }
     if (Phaser.Input.Keyboard.JustDown(this.keys.R)) this.model.respawn();
-    if (Phaser.Input.Keyboard.JustDown(this.keys.N)) this.audio.toggleMute();
-    if(Phaser.Input.Keyboard.JustDown(this.keys.V))this.effects.enabled=!this.effects.enabled;
+    if (Phaser.Input.Keyboard.JustDown(this.keys.N)){this.audio.toggleMute();this.settings.sync();}
+    if(Phaser.Input.Keyboard.JustDown(this.keys.V)){this.effects.enabled=!this.effects.enabled;this.settings.persist();}
     const beforeHull = this.model.player.health, beforeShield = this.model.shield, beforeKills = this.model.kills, beforeHits = this.model.enemyHits, beforeOreHits = this.model.oreHits;
-    if (Phaser.Input.Keyboard.JustDown(this.keys.G) && !this.paused && !this.building && !this.mapOpen) { if (this.model.unlockBase()) this.audio.play('build'); }
+    if (Phaser.Input.Keyboard.JustDown(this.keys.G) && !this.paused && !this.building && !this.mapOpen && !this.settings.open) { if (this.model.unlockBase()) this.audio.play('build'); }
     const boost=Phaser.Input.Keyboard.JustDown(this.keys.SHIFT);
     const dock = Phaser.Input.Keyboard.JustDown(this.keys.E);
     const pointer = this.input.activePointer;
     const aim = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
     const bounds = this.cameras.main.worldView;
-    if (!this.paused && !this.building && !this.mapOpen) this.model.update(delta / 1000, {
+    if (!this.paused && !this.building && !this.mapOpen && !this.settings.open) this.model.update(delta / 1000, {
       x: Number(this.keys.D.isDown) - Number(this.keys.A.isDown), y: Number(this.keys.S.isDown) - Number(this.keys.W.isDown),
       aim, fire: pointer.leftButtonDown(), boost, mine: pointer.rightButtonDown() || this.keys.SPACE.isDown, dock, view: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
     });
-    if (!this.paused && !this.building && !this.mapOpen) {
+    if (!this.paused && !this.building && !this.mapOpen && !this.settings.open) {
       for(const event of this.model.effects){if(event.type==='muzzle'&&event.weapon)this.audio.playWeapon(event.weapon);if(event.type==='collection')this.audio.play('collect');if(event.type==='shield')this.audio.play('shield');}
       if (this.model.player.health < beforeHull || this.model.shield < beforeShield) this.audio.play('impact');
       if (this.model.oreHits > beforeOreHits) this.audio.play('impact');
       if (this.model.enemyHits > beforeHits) this.audio.play('hit');
       if (this.model.kills > beforeKills) this.audio.play('explosion');
     }
-    const audible=!this.paused&&!this.building&&!this.mapOpen&&!this.model.dead;
+    const audible=!this.paused&&!this.building&&!this.mapOpen&&!this.settings.open&&!this.model.dead;
     this.audio.setLoop('mine',audible?this.model.miningLinks.length:0);this.audio.setLoop('tractor',audible?this.model.tractorLinks.length:0);
     for (const b of this.model.bullets) this.lastBullet = Math.max(this.lastBullet, b.id);
-    if (!this.paused && !this.building && !this.mapOpen) {
+    if (!this.paused && !this.building && !this.mapOpen && !this.settings.open) {
       this.effects.update(Math.min(delta/1000,.05),bounds);this.effects.consume(this.model.effects,bounds);this.effects.continuous(this.model.miningLinks,this.model.bullets,bounds);
     }
     const p = this.model.player;

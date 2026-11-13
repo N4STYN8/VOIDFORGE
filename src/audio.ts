@@ -10,18 +10,26 @@ export const SOUND_PROFILES:Record<SoundCue,{start:number;end:number;duration:nu
   collect:{start:600,end:1050,duration:.1,wave:'sine',gain:.055},boost:{start:110,end:380,duration:.3,wave:'triangle',gain:.09},build:{start:390,end:780,duration:.18,wave:'sine',gain:.08},
 };
 export class GameAudio{
-  muted=false;masterVolume=.85;effectsVolume=.9;
+  muted=false;masterVolume=.85;effectsVolume=.9;musicVolume=.45;
+  private track?:HTMLAudioElement;private music?:GainNode;
   private context?:AudioContext;private master?:GainNode;private effects?:GainNode;
   private last:Partial<Record<SoundCue,number>>={};private voices=0;
   private loops=new Map<'mine'|'tractor',{nodes:OscillatorNode[];gain:GainNode}>();
-  constructor(){try{const settings=JSON.parse(localStorage.getItem('voidforge.audio')??'null');if(settings){this.masterVolume=Math.max(0,Math.min(1,settings.master??.85));this.effectsVolume=Math.max(0,Math.min(1,settings.effects??.9));this.muted=Boolean(settings.muted);}}catch{/* Defaults work without storage. */}}
-  unlock(){
-    if(!this.context){if(typeof AudioContext==='undefined')return;this.context=new AudioContext();this.master=this.context.createGain();this.effects=this.context.createGain();this.effects.connect(this.master);const limiter=this.context.createDynamicsCompressor();limiter.threshold.value=-10;limiter.ratio.value=4;this.master.connect(limiter);limiter.connect(this.context.destination);this.applyVolumes();}
-    if(this.context.state!=='running')void this.context.resume().catch(()=>{});
+  constructor(){try{const settings=JSON.parse(localStorage.getItem('voidforge.audio')??'null');if(settings){this.masterVolume=Math.max(0,Math.min(1,settings.master??.85));this.effectsVolume=Math.max(0,Math.min(1,settings.effects??.9));this.musicVolume=Math.max(0,Math.min(1,settings.music??.45));this.muted=Boolean(settings.muted);}}catch{/* Defaults work without storage. */}
+    if(typeof document!=='undefined')document.addEventListener('visibilitychange',()=>{if(document.hidden)this.track?.pause();else this.startMusic();});
   }
-  private applyVolumes(){if(this.context&&this.master&&this.effects){this.master.gain.setTargetAtTime(this.muted?0:this.masterVolume,this.context.currentTime,.03);this.effects.gain.setTargetAtTime(this.effectsVolume,this.context.currentTime,.03);}}
-  setVolume(kind:'master'|'effects',value:number){if(kind==='master')this.masterVolume=Math.max(0,Math.min(1,value));else this.effectsVolume=Math.max(0,Math.min(1,value));this.applyVolumes();this.persist();}
-  private persist(){try{localStorage.setItem('voidforge.audio',JSON.stringify({master:this.masterVolume,effects:this.effectsVolume,muted:this.muted}));}catch{/* Volume controls still work. */}}
+  unlock(){
+    if(!this.context){if(typeof AudioContext==='undefined')return;this.context=new AudioContext();this.master=this.context.createGain();this.effects=this.context.createGain();this.effects.connect(this.master);
+      this.music=this.context.createGain();this.music.connect(this.master);
+      this.track=new Audio(new URL('./Deep Space Patrol.mp3',import.meta.url).href);this.track.loop=true;this.track.preload='none';
+      this.context.createMediaElementSource(this.track).connect(this.music);const limiter=this.context.createDynamicsCompressor();limiter.threshold.value=-10;limiter.ratio.value=4;this.master.connect(limiter);limiter.connect(this.context.destination);this.applyVolumes();}
+    if(this.context.state!=='running')void this.context.resume().then(()=>this.startMusic()).catch(()=>{});
+    else this.startMusic();
+  }
+  private startMusic(){if(this.track&&this.track.paused&&!document.hidden&&!this.muted&&this.musicVolume>0)void this.track.play().catch(()=>{});}
+  private applyVolumes(){if(this.context&&this.master&&this.effects){this.master.gain.setTargetAtTime(this.muted?0:this.masterVolume,this.context.currentTime,.03);this.effects.gain.setTargetAtTime(this.effectsVolume,this.context.currentTime,.03);this.music?.gain.setTargetAtTime(this.musicVolume,this.context.currentTime,.03);if(this.muted||this.musicVolume===0)this.track?.pause();else this.startMusic();}}
+  setVolume(kind:'master'|'effects'|'music',value:number){if(kind==='master')this.masterVolume=Math.max(0,Math.min(1,value));else if(kind==='effects')this.effectsVolume=Math.max(0,Math.min(1,value));else this.musicVolume=Math.max(0,Math.min(1,value));this.applyVolumes();this.persist();}
+  private persist(){try{localStorage.setItem('voidforge.audio',JSON.stringify({master:this.masterVolume,effects:this.effectsVolume,music:this.musicVolume,muted:this.muted}));}catch{/* Volume controls still work. */}}
   toggleMute(){this.muted=!this.muted;if(this.muted){this.setLoop('mine',0);this.setLoop('tractor',0);}this.applyVolumes();this.persist();}
   playWeapon(kind:WeaponKind){this.play(kind==='cannon'?'fire':kind);}
   play(cue:SoundCue){
