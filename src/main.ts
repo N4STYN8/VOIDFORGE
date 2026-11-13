@@ -6,8 +6,8 @@ import { outfitterMarkup } from './outfitter.ts';
 import { EffectPool } from './effects.ts';
 import { drawParticles, drawEnergyBeam, drawProjectile, drawEmp } from './effectsRender.ts';
 import { GameModel } from './model.ts';
-import { cellOf, cellCenter, bounds as outpostBounds, outpostStats, storedTotal, type Outpost } from './outposts.ts';
-import { WORLD, SHIP, RESOURCES, ENEMIES, ENEMY_AI, OUTPOST, STRUCTURES, type StructureKind, type Resource, EXPLORATION, MODULES, BUILD_GRID, equipment, upgradeCost, statsLabel, type EquipmentKind, type ModuleKind } from './data.ts';
+import { cellOf, cellCenter, bounds as outpostBounds, outpostStats, storedTotal, structureAt, maxHealth, turretOf, dronesOf, outputOf, type Outpost, type Structure } from './outposts.ts';
+import { WORLD, SHIP, RESOURCES, ENEMIES, ENEMY_AI, OUTPOST, STRUCTURES, STRUCTURE_ABILITIES, type StructureKind, type Resource, EXPLORATION, MODULES, BUILD_GRID, equipment, upgradeCost, statsLabel, type EquipmentKind, type ModuleKind } from './data.ts';
 import './style.css';
 import { hashSeed } from './world.ts';
 import { loadSavedGame, saveGame, backupSavedGame } from './persistence.ts';
@@ -66,6 +66,7 @@ class SpaceScene extends Phaser.Scene {
   private hordeBanner = document.createElement('section');
   // Build Mode (outpost construction).
   private buildMode = false; private buildKind: StructureKind = 'outpostCore'; private buildRot = 0; private buildHeld = ''; private buildWasDown = false; private buildHover = '';
+  private buildSelected?: { outpost: number; block: number };
   private buildPanel = document.createElement('section'); private buildPanelContent = ''; private buildToggle = document.createElement('button');
   private structureIcons = new Map<StructureKind, string>();
   private gridGraphics!: Phaser.GameObjects.Graphics; private buildGhost!: Phaser.GameObjects.Image;
@@ -124,7 +125,10 @@ class SpaceScene extends Phaser.Scene {
     this.buildPanel.addEventListener('pointerdown', event => event.stopPropagation());
     this.buildPanel.addEventListener('click', event => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button'); if (!button) return;
-      if (button.dataset.structure) this.buildKind = button.dataset.structure as StructureKind;
+      if (button.dataset.structure) { this.buildKind = button.dataset.structure as StructureKind; this.buildSelected = undefined; }
+      const chosen = this.selectedBlock();
+      if (button.dataset.block && chosen) { const done = button.dataset.block === 'upgrade' ? this.model.upgradeStructure(chosen.outpost, chosen.structure) : this.model.repairStructure(chosen.outpost, chosen.structure); if (!done) this.audio.play('fail'); }
+      if (button.dataset.block === 'deselect') this.buildSelected = undefined;
       if (button.dataset.buildClose) this.buildMode = false;
       button.blur(); this.renderBuildPanel();
     });
@@ -320,9 +324,10 @@ class SpaceScene extends Phaser.Scene {
     this.bossBar.hidden=!boss||this.building||this.mapOpen;
     // Horde alert: the whole HUD flashes red from the first warning until the last hostile is gone.
     const warning=this.model.horde.warning,hunting=this.model.hordeCount,alert=(warning>0||hunting>0)&&!this.model.dead;
-    const banner=warning>0?`<strong>ALERT</strong><span>HORDE INBOUND · ${Math.ceil(warning)}</span><small>Fight, or dock at a station to lose them</small>`:hunting?`<strong>HORDE</strong><span>${hunting} of ${Math.max(hunting,this.model.horde.total)} hostiles left</span>`:'';
+    const raided=this.model.outposts.find(o=>(o.raidWarning??0)>0.05&&Math.hypot((o.cx+.5)*OUTPOST.cell-p.x,(o.cy+.5)*OUTPOST.cell-p.y)<OUTPOST.activeRange),raiders=this.model.enemies.filter(e=>e.raidParty&&e.health>0).length;
+    const banner=warning>0?`<strong>ALERT</strong><span>HORDE INBOUND · ${Math.ceil(warning)}</span><small>Fight, or dock at a station to lose them</small>`:hunting?`<strong>HORDE</strong><span>${hunting} of ${Math.max(hunting,this.model.horde.total)} hostiles left</span>`:raided?`<strong>RAID</strong><span>${raided.name.toUpperCase()} · ${Math.ceil(raided.raidWarning!)}s</span><small>Radar has picked up a raiding party</small>`:raiders?`<strong>RAID</strong><span>${raiders} raider${raiders===1?'':'s'} attacking your outpost</span>`:'';
     if(banner!==this.hordeBannerContent){this.hordeBanner.innerHTML=banner;this.hordeBannerContent=banner;}
-    this.hordeBanner.hidden=!alert||this.building||this.mapOpen;this.hordeBanner.classList.toggle('boss-below',Boolean(boss));
+    this.hordeBanner.hidden=!banner||this.model.dead||this.building||this.mapOpen;this.hordeBanner.classList.toggle('boss-below',Boolean(boss));
     this.renderBuildPanel(); this.renderOutpostPanel();
     document.body.classList.toggle('horde-alert',alert);document.body.classList.toggle('horde-warning',alert&&warning>0);
     }
@@ -348,15 +353,18 @@ class SpaceScene extends Phaser.Scene {
     if (this.buildMode) { this.buildMode = false; return; }
     const error = this.model.buildModeError;
     if (error) { this.model.message = error; this.audio.play('fail'); return; }
-    this.buildMode = true; this.buildHeld = ''; this.buildWasDown = true;
+    this.buildMode = true; this.buildHeld = ''; this.buildWasDown = true; this.buildSelected = undefined;
     if (!this.model.outposts.length) this.buildKind = 'outpostCore';
     this.model.message = 'Build Mode: pick a block, left click a green cell to build.';
   }
   /** Places blocks under the cursor while the left button is held (one per cell), and leaves Build Mode on right click. */
   private updateBuildMode(aim: { x: number; y: number }, pointer: Phaser.Input.Pointer) {
     const cx = cellOf(aim.x), cy = cellOf(aim.y), down = pointer.leftButtonDown();
-    this.buildHover = this.model.placeError(this.buildKind, cx, cy) ?? '';
+    const existing = structureAt(this.model.outposts, cx, cy);
+    this.buildHover = existing ? '' : this.model.placeError(this.buildKind, cx, cy) ?? '';
     if (pointer.rightButtonDown()) { this.buildMode = false; return; }
+    // Clicking a built block selects it for upgrade or repair instead of placing.
+    if (existing) { if (down && !this.buildWasDown) { this.buildSelected = { outpost: existing.outpost.id, block: existing.structure.id }; this.audio.play('collect'); } this.buildWasDown = down; if (!down) this.buildHeld = ''; return; }
     if (down && this.buildHeld !== `${cx},${cy}` && !(this.buildWasDown && this.buildHeld === '')) {
       this.buildHeld = `${cx},${cy}`;
       const placed = this.model.placeStructure(this.buildKind, cx, cy, this.buildRot);
@@ -365,6 +373,27 @@ class SpaceScene extends Phaser.Scene {
     }
     if (!down) this.buildHeld = '';
     this.buildWasDown = down;
+  }
+  private selectedBlock() {
+    const outpost = this.model.outposts.find(o => o.id === this.buildSelected?.outpost), structure = outpost?.structures.find(s => s.id === this.buildSelected?.block);
+    return outpost && structure ? { outpost, structure } : undefined;
+  }
+  /** Details and actions for the block selected in Build Mode. */
+  private blockDetails(outpost: Outpost, s: Structure) {
+    const def = STRUCTURES[s.kind], ability = STRUCTURE_ABILITIES[s.kind], ores = Object.keys(this.model.cargo) as Resource[], turret = turretOf(s), next = { ...s, level: s.level + 1 }, nextTurret = s.level < OUTPOST.maxLevel ? turretOf(next) : undefined;
+    const price = (cost: Record<Resource, number>) => ores.filter(ore => cost[ore] > 0).map(ore => `${cost[ore]} ${ore}`).join(' + ') || 'free';
+    const arrow = (label: string, now: number, later: number | undefined) => now || later ? `<tr><th>${label}</th><td>${Math.round(now)}</td>${later !== undefined && later !== now ? `<td class="next-value">→ ${Math.round(later)}</td>` : '<td></td>'}</tr>` : '';
+    const can = s.level < OUTPOST.maxLevel;
+    const rows = [arrow('Hull', maxHealth(s), can ? maxHealth(next) : undefined), turret ? arrow('Damage', turret.damage, nextTurret?.damage) : '', turret ? arrow('Range', turret.range, nextTurret?.range) : '',
+      arrow('Power /s', outputOf(s, def.generation), can ? outputOf(next, def.generation) : undefined), arrow('Battery', outputOf(s, def.energyCapacity), can ? outputOf(next, def.energyCapacity) : undefined), arrow('Storage', outputOf(s, def.storage), can ? outputOf(next, def.storage) : undefined),
+      arrow('Shield', outputOf(s, def.shield), can ? outputOf(next, def.shield) : undefined), arrow('Cooling /s', outputOf(s, def.cooling), can ? outputOf(next, def.cooling) : undefined), arrow('Repair /s', outputOf(s, def.repair), can ? outputOf(next, def.repair) : undefined),
+      arrow('Drones', dronesOf(s), can ? dronesOf(next) : undefined)].join('');
+    const upgradeError = this.model.upgradeStructureError(outpost, s), repairError = this.model.repairStructureError(outpost, s);
+    return `<section class="block-details"><header><div><small>SELECTED · ${outpost.name.toUpperCase()}</small><h3>${def.label}</h3></div><button data-block="deselect">Back</button></header>
+<p>Level ${s.level} / ${OUTPOST.maxLevel} · Hull ${Math.ceil(s.health)} / ${maxHealth(s)}${s.progress < 1 ? ` · building ${Math.round(s.progress * 100)}%` : ''}</p><table>${rows}</table>
+<p class="block-ability ${s.level >= OUTPOST.maxLevel ? 'unlocked' : ''}"><b>Level 5 · ${ability.name}</b> ${s.level >= OUTPOST.maxLevel ? '(active)' : '(locked)'}<br>${ability.description}</p>
+<div class="block-actions"><button data-block="upgrade" ${upgradeError ? 'disabled' : ''}>${can ? `Upgrade to level ${s.level + 1} · ${price(this.model.structureUpgradeCost(outpost, s))}` : 'Maximum level'}</button>${upgradeError && can ? `<small class="blocked">${upgradeError}</small>` : ''}
+<button data-block="repair" ${repairError ? 'disabled' : ''}>Repair · ${price(this.model.structureRepairCost(s))}</button>${repairError && s.health < maxHealth(s) ? `<small class="blocked">${repairError}</small>` : ''}</div></section>`;
   }
   private renderBuildPanel() {
     const builder = this.model.builder;
@@ -381,7 +410,9 @@ class SpaceScene extends Phaser.Scene {
     const chosen = STRUCTURES[this.buildKind], turret = chosen.turret;
     const facts = [`${chosen.health} hull`, `${chosen.buildTime}s build`, chosen.generation ? `+${chosen.generation} power/s` : '', chosen.energyCapacity ? `+${chosen.energyCapacity} battery` : '', chosen.storage ? `+${chosen.storage} storage` : '', chosen.drones ? `${chosen.drones} mining drones` : '', chosen.dock ? `dock range ${chosen.dock}` : '', turret ? `${turret.damage} dmg every ${turret.cooldown}s · range ${turret.range} · ${turret.energy} energy/shot` : ''].filter(Boolean).join(' · ');
     const status = `<p class="build-facts"><b>${chosen.label}</b> — ${chosen.description}<br>${facts}</p>` + (this.buildHover ? `<p class="build-status blocked">${this.buildHover}</p>` : `<p class="build-status ready">Left click to build ${chosen.label}.</p>`);
-    const html = `<header><div><small>BUILD MODULE · LEVEL ${builder.level}</small><h2>Build Mode</h2></div><button data-build-close="true">Close · ${OUTPOST.key}</button></header><p class="build-cargo">Carried cargo: ${carried}</p><div class="build-catalog">${items}</div>${status}<p class="build-stats">Range ${builder.range} · Speed x${builder.speed}${builder.discount ? ` · Cost -${builder.discount}%` : ''} · ${this.model.outposts.length} outpost${this.model.outposts.length === 1 ? '' : 's'}</p><p class="build-hints"><kbd>Left click</kbd> build (hold to drag walls) · <kbd>${OUTPOST.rotateKey}</kbd> rotate · <kbd>Right click</kbd> / <kbd>Esc</kbd> exit</p>`;
+    const picked = this.selectedBlock(); if (!picked) this.buildSelected = undefined;
+    const body = picked ? this.blockDetails(picked.outpost, picked.structure) : `<div class="build-catalog">${items}</div>${status}`;
+    const html = `<header><div><small>BUILD MODULE · LEVEL ${builder.level}</small><h2>Build Mode</h2></div><button data-build-close="true">Close · ${OUTPOST.key}</button></header><p class="build-cargo">Carried cargo: ${carried}</p>${body}<p class="build-stats">Range ${builder.range} · Speed x${builder.speed}${builder.discount ? ` · Cost -${builder.discount}%` : ''} · ${this.model.outposts.length} outpost${this.model.outposts.length === 1 ? '' : 's'}</p><p class="build-hints"><kbd>Left click</kbd> build (hold to drag walls), or click a built block to upgrade/repair · <kbd>${OUTPOST.rotateKey}</kbd> rotate · <kbd>Right click</kbd> / <kbd>Esc</kbd> exit</p>`;
     if (html !== this.buildPanelContent) { this.buildPanel.innerHTML = html; this.buildPanelContent = html; }
   }
   /** Readout for the nearest outpost: power, battery, storage and cargo transfer. */
@@ -398,7 +429,7 @@ class SpaceScene extends Phaser.Scene {
     const html = `<header><strong>${outpost.name.toUpperCase()}</strong><span>${outpost.structures.length} blocks · ${stats.turrets} turret${stats.turrets === 1 ? '' : 's'}</span></header>
 <div class="outpost-row"><span>Power</span><b>+${stats.generation}/s</b><span>Peak turret draw</span><b class="${stats.peakDemand > stats.generation ? 'warn' : ''}">${stats.peakDemand.toFixed(1)}/s</b></div>
 <div class="outpost-meter energy"><i style="width:${pct(energy, stats.energyCapacity)}%"></i></div><small>Battery ${energy} / ${stats.energyCapacity}${outpost.shortage ? ' · <em>ENERGY SHORTAGE: turrets waiting</em>' : ''}</small>
-<div class="outpost-meter storage"><i style="width:${pct(used, stats.storageCapacity)}%"></i></div><small>Storage ${used} / ${stats.storageCapacity} · ${ores}</small>${droneLine}${dockLine}
+<div class="outpost-meter storage"><i style="width:${pct(used, stats.storageCapacity)}%"></i></div><small>Storage ${used} / ${stats.storageCapacity} · ${ores}</small>${stats.shieldCapacity ? `<small>Shield ${Math.floor(outpost.shield ?? 0)} / ${Math.round(stats.shieldCapacity)}</small>` : ''}${stats.turrets ? `<small>Heat ${Math.floor(outpost.heat ?? 0)} / ${Math.round(stats.heatCapacity)}${outpost.overheated ? ' · <em>OVERHEATED: turrets cooling</em>' : ''}${(outpost.command ?? 0) > 0 ? ' · Command Network active' : ''}</small>` : ''}${(outpost.raidWarning ?? 0) > 0.05 ? `<small><em>RAID INBOUND in ${Math.ceil(outpost.raidWarning!)}s</em></small>` : ''}${outpost.report ? `<small class="away-report">${outpost.report}</small>` : ''}${droneLine}${dockLine}
 <footer><button data-outpost="deposit" ${blocked ? 'disabled' : ''}>Store cargo</button><button data-outpost="withdraw" ${blocked ? 'disabled' : ''}>Load cargo</button><small>${blocked ?? 'Moves as much as fits.'}</small></footer>`;
     if (html !== this.outpostPanelContent) { this.outpostPanel.innerHTML = html; this.outpostPanelContent = html; }
   }
@@ -436,7 +467,14 @@ class SpaceScene extends Phaser.Scene {
       for (const s of outpost.structures) {
         const x = s.cx * size, y = s.cy * size;
         if (s.progress < 1) { g.fillStyle(0x05070c); g.fillRect(x + 1, y + size - 4, size - 2, 3); g.fillStyle(0xf2d489); g.fillRect(x + 2, y + size - 3, (size - 4) * s.progress, 1); }
-        else if (s.kind === 'outpostCore' || s.kind === 'reactor') { g.fillStyle(0xffd27a, 0.25 + Math.sin(now * 3 + s.id) * 0.15); g.fillCircle(x + size / 2, y + size / 2, 4.5); }
+        else if (s.kind === 'outpostCore' || s.kind === 'reactor') {
+          g.fillStyle(0xffd27a, 0.25 + Math.sin(now * 3 + s.id) * 0.15); g.fillCircle(x + size / 2, y + size / 2, 4.5);
+          // Turning gear teeth on the core.
+          if (s.kind === 'outpostCore') { g.fillStyle(0xf2d489, 0.9); for (let i = 0; i < 4; i++) { const a = now * 0.8 + i * Math.PI / 2; g.fillRect(x + size / 2 + Math.cos(a) * 6 - 0.5, y + size / 2 + Math.sin(a) * 6 - 0.5, 1.5, 1.5); } }
+        }
+        else if (s.kind === 'coolingUnit') { g.lineStyle(1, 0xbfeaff, 0.85); for (let i = 0; i < 2; i++) { const a = now * 6 + i * Math.PI / 2; g.lineBetween(x + size / 2 - Math.cos(a) * 3, y + size / 2 - Math.sin(a) * 3, x + size / 2 + Math.cos(a) * 3, y + size / 2 + Math.sin(a) * 3); } }
+        else if (s.kind === 'radarTower') { const a = now * 2.2 + s.id; g.lineStyle(1, 0x9fe6ff, 0.9); g.lineBetween(x + size / 2, y + size / 2, x + size / 2 + Math.cos(a) * 5, y + size / 2 + Math.sin(a) * 5); }
+        else if (s.kind === 'shieldGenerator' && (outpost.shield ?? 0) > 0) { const reach = (STRUCTURES[s.kind].shieldRadius! + 0.5) * size; g.lineStyle(1.2, 0x79dfff, 0.12 + 0.3 * (outpost.shield! / Math.max(1, outpostStats(outpost).shieldCapacity))); g.strokeRect(x + size / 2 - reach, y + size / 2 - reach, reach * 2, reach * 2); }
         else if (STRUCTURES[s.kind].turret) {
           // Rotating turret heads are pooled sprites over the baked mount.
           const head = this.turretSprites[this.turretIndex] ?? this.add.image(0, 0, `turret-${s.kind}`).setDepth(-0.5);
@@ -459,11 +497,16 @@ class SpaceScene extends Phaser.Scene {
   }
   private drawBuildPreview(now: number) {
     const g = this.graphics, builder = this.model.builder, p = this.model.player;
+    const picked = this.buildMode ? this.selectedBlock() : undefined;
+    if (picked) { const s = picked.structure, c = OUTPOST.cell; g.lineStyle(2, 0xffe9a8, 0.6 + Math.sin(now * 6) * 0.3); g.strokeRect(s.cx * c - 1, s.cy * c - 1, c + 2, c + 2); }
     this.buildGhost.setVisible(this.buildMode && Boolean(builder) && !this.paused);
     if (!this.buildMode || !builder || this.paused) return;
     const aim = this.cameras.main.getWorldPoint(this.input.activePointer.x, this.input.activePointer.y), cx = cellOf(aim.x), cy = cellOf(aim.y), size = OUTPOST.cell, ok = !this.buildHover, color = ok ? 0x5dff9a : 0xff4d6d;
     g.lineStyle(1, 0xd9a441, 0.35 + Math.sin(now * 4) * 0.1); g.strokeCircle(p.x, p.y, builder.range);
     this.buildGhost.setTexture(`structure-${this.buildKind}`).setPosition(cellCenter(cx), cellCenter(cy)).setRotation(this.buildRot * Math.PI / 2);
+    const over = Boolean(structureAt(this.model.outposts, cx, cy));
+    this.buildGhost.setVisible(!over);
+    if (over) { g.lineStyle(1.5, 0xffe9a8, 0.9); g.strokeRect(cx * size, cy * size, size, size); return; }
     g.fillStyle(color, 0.28); g.fillRect(cx * size, cy * size, size, size); g.lineStyle(1.5, color, 0.95); g.strokeRect(cx * size, cy * size, size, size);
   }
   private switchModel(model: GameModel) {

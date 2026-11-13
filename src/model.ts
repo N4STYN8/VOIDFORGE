@@ -6,16 +6,16 @@ import { freshAbility,state,tick,activate,onFire,onHit,onMiningHit,onDamageTaken
 import { dangerAt, bossSites, ChunkWorld, SeedRandom, randomWorldSeed, type WorldSnapshot } from './world.ts';
 import { segmentPolygonHit, segmentCircleHit } from './asteroidGeometry.ts';
 import { clearLineOfSight, avoidMovingOre, nextEnemyState, type EnemyState } from './enemyAI.ts';
-import { cellOf, cellCenter, structureAt, outpostFor, connectedIds, outpostCenter, outpostRadius, structureOnSegment, maxHealth, wear, NEIGHBOURS, outpostStats, emptyStore, storedTotal, type Outpost, type Structure, type Drone } from './outposts.ts';
+import { cellOf, cellCenter, structureAt, outpostFor, connectedIds, outpostCenter, outpostRadius, structureOnSegment, maxHealth, wear, NEIGHBOURS, outpostStats, emptyStore, storedTotal, turretOf, dronesOf, shielded, outpostValue, turretDps, droneTripsBeforeService, type Outpost, type Structure, type Drone } from './outposts.ts';
 import { ensureAsteroidGeometry,asteroidLocal,asteroidWorld, miningImpact, mineMaterial, type Asteroid } from './mining.ts';
 export type { Asteroid } from './mining.ts';
 import type { EffectEvent } from './effectEvents.ts';
 import { collideAsteroid, collide, type Body } from './collisions.ts';
-import { WORLD, SHIP, WEAPONS, ENEMIES, ENEMY_AI, ENEMY_SPAWN, HORDE, OUTPOST, STRUCTURES, DRONES, type StructureKind, DANGER, BOSS, HEARING, type EnemyDefinition, type EnemyWeapon, COLLISION, ORE_COMBAT, PATROL, MODULE_DURABILITY, REPAIR, MODULES, BUILD_GRID, BASES, BASE_RADIUS, EXPLORATION, RESOURCES, type EnemyKind, CORE, ROCKET, WEAPON_TYPES, SHIP_SYSTEMS, VFX, type WeaponKind, equipment, upgradeCost, type EquipmentStats, type EquipmentKind, type ModuleKind, type Resource } from './data.ts';
+import { WORLD, SHIP, WEAPONS, ENEMIES, ENEMY_AI, ENEMY_SPAWN, HORDE, OUTPOST, STRUCTURES, STRUCTURE_SPECIAL, DRONES, type StructureKind, DANGER, BOSS, HEARING, type EnemyDefinition, type EnemyWeapon, COLLISION, ORE_COMBAT, PATROL, MODULE_DURABILITY, REPAIR, MODULES, BUILD_GRID, BASES, BASE_RADIUS, EXPLORATION, RESOURCES, type EnemyKind, CORE, ROCKET, WEAPON_TYPES, SHIP_SYSTEMS, VFX, type WeaponKind, equipment, upgradeCost, type EquipmentStats, type EquipmentKind, type ModuleKind, type Resource } from './data.ts';
 export type ShipModule = { x: number; y: number; kind: ModuleKind; level: number; cooldown: number; integrity: number; ability?:AbilityState; targetIds?: number[]; boostRemaining?:number; boostCooldown?:number };
 export type Point = { x: number; y: number };
 export type Input = { x: number; y: number; aim: Point; fire: boolean; mine: boolean; dock: boolean; boost?:boolean; overclock?:boolean; view?: { x: number; y: number; width: number; height: number } };
-export type Enemy = Point & { horde?: boolean; populationExempt?: boolean; mount?: Point; phase2?: boolean; phase3?: boolean; cooldown3?: number; surge?: number; surgeTimer?: number; empTimer?: number; empCharge?: number; state?: EnemyState; lastSeen?: Point; memory?: number; clock?: number; retreat?: number; retreated?: boolean; reposition?: number; sidestep?: number; stuck?: number; px?: number; py?: number; shield?: number; shieldDelay?: number; cooldown2?: number; charge?: { t: number; angle: number; weapon: number }; sx?: number; sy?: number; parent?: number; home?: Point; populationRegion?:string;populationClass?:'normal'|'elite';populationPatrol?:Point & {id:number;angle:number};rewarded?:boolean; disabledFor?: number; vx?: number; vy?: number; impactCooldown?: number; kind?: EnemyKind; squad?: number; slot?: number; patrolAngle?: number; id: number; health: number; cooldown: number; angle: number };
+export type Enemy = Point & { /** Id of the outpost this ship is attacking. */ raid?: number; raidParty?: boolean; horde?: boolean; populationExempt?: boolean; mount?: Point; phase2?: boolean; phase3?: boolean; cooldown3?: number; surge?: number; surgeTimer?: number; empTimer?: number; empCharge?: number; state?: EnemyState; lastSeen?: Point; memory?: number; clock?: number; retreat?: number; retreated?: boolean; reposition?: number; sidestep?: number; stuck?: number; px?: number; py?: number; shield?: number; shieldDelay?: number; cooldown2?: number; charge?: { t: number; angle: number; weapon: number }; sx?: number; sy?: number; parent?: number; home?: Point; populationRegion?:string;populationClass?:'normal'|'elite';populationPatrol?:Point & {id:number;angle:number};rewarded?:boolean; disabledFor?: number; vx?: number; vy?: number; impactCooldown?: number; kind?: EnemyKind; squad?: number; slot?: number; patrolAngle?: number; id: number; health: number; cooldown: number; angle: number };
 export type Drop = Point & {vx?:number;vy?:number; id: number; ore: Resource; amount: number };
 export type Bullet = Point & { id: number; vx: number; vy: number; life: number; enemy: boolean; damage?: number; homing?: number; rocket?: boolean; splash?: number; weapon?: WeaponKind; level?: number; attackerId?:number; penetrating?:number; hitIds?:number[]; enhanced?:boolean; guided?:boolean; fragment?:boolean; age?:number; /** Fired by an outpost turret: survives off screen like hostile fire. */ turret?:boolean };
 const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -110,8 +110,20 @@ export class GameModel {
     return true;
   }
   /** Applies damage to a block. Destroyed blocks are removed, along with anything they were holding to the core. */
-  damageStructure(outpost: Outpost, structure: Structure, amount: number) {
+  damageStructure(outpost: Outpost, structure: Structure, amount: number, attackerId?: number, direct = false) {
     if (amount <= 0 || structure.health <= 0) return;
+    if (!direct) {
+      // Level-5 plating shrugs off part of every hit; a shield generator's pool absorbs the rest first.
+      if (structure.level >= OUTPOST.maxLevel && (structure.kind === 'wall' || structure.kind === 'reinforcedWall')) amount *= 1 - (structure.kind === 'wall' ? STRUCTURE_SPECIAL.wallReduction : STRUCTURE_SPECIAL.reinforcedReduction);
+      const absorbed = Math.min(outpost.shield ?? 0, amount);
+      if (absorbed > 0 && shielded(outpost, structure)) {
+        outpost.shield = (outpost.shield ?? 0) - absorbed; outpost.shieldDelay = OUTPOST.shieldDelay; amount -= absorbed;
+        this.effect({ type: 'shield', x: cellCenter(structure.cx), y: cellCenter(structure.cy), radius: 14, color: 0x79dfff });
+        const attacker = outpostStats(outpost).reflect && attackerId !== undefined ? this.enemies.find(e => e.id === attackerId && e.health > 0) : undefined;
+        if (attacker) this.hitEnemy(attacker, absorbed * STRUCTURE_SPECIAL.reflect);
+        if (amount <= 0) return;
+      }
+    }
     const before = wear(structure); structure.health -= amount;
     if (structure.health > 0) { if (wear(structure) !== before) outpost.revision++; return; }
     const lost = structure.kind === 'outpostCore' ? [...outpost.structures] : [structure];
@@ -159,6 +171,49 @@ export class GameModel {
     this.message = moved ? `Loaded ${moved} minerals from ${outpost.name}.` : room <= 0 ? 'Cargo hold is full.' : `${outpost.name} storage is empty.`;
     return moved;
   }
+  /** Minerals available for outpost work: carried cargo plus that outpost's storage. */
+  private outpostFunds(outpost: Outpost, price: Record<Resource, number>) { const stored = outpost.stored ??= emptyStore(); return (Object.keys(price) as Resource[]).filter(ore => this.cargo[ore] + stored[ore] < price[ore]); }
+  private payOutpost(outpost: Outpost, price: Record<Resource, number>) { const stored = outpost.stored ??= emptyStore(); for (const ore of Object.keys(price) as Resource[]) { const carried = Math.min(this.cargo[ore], price[ore]); this.cargo[ore] -= carried; stored[ore] -= price[ore] - carried; } }
+  /** Price of taking a block from `level` to the next: its build cost times the current level, less any discounts. */
+  structureUpgradeCost(outpost: Outpost, s: Structure): Record<Resource, number> {
+    const base = STRUCTURES[s.kind].cost, discount = (1 - (this.builder?.discount ?? 0) / 100) * (outpostStats(outpost).fabrication ? 1 - STRUCTURE_SPECIAL.fabrication : 1);
+    return Object.fromEntries((Object.keys(base) as Resource[]).map(ore => [ore, Math.ceil(base[ore] * s.level * discount)])) as Record<Resource, number>;
+  }
+  private outpostWorkError(s: Structure): string | undefined {
+    const unavailable = this.buildModeError; if (unavailable) return unavailable;
+    if (dist({ x: cellCenter(s.cx), y: cellCenter(s.cy) }, this.player) > this.builder!.range) return 'Out of construction range. Move closer.';
+  }
+  upgradeStructureError(outpost: Outpost, s: Structure): string | undefined {
+    if (s.progress < 1) return 'Still under construction.';
+    if (s.level >= OUTPOST.maxLevel) return 'Maximum level.';
+    const work = this.outpostWorkError(s); if (work) return work;
+    if (s.level >= OUTPOST.stationLevel && !outpostStats(outpost).upgrades) return `Build an Upgrade station to go beyond level ${OUTPOST.stationLevel}.`;
+    const missing = this.outpostFunds(outpost, this.structureUpgradeCost(outpost, s));
+    if (missing.length) return `Not enough ${missing.join(' and ')} (carried plus outpost storage).`;
+  }
+  /** Raises a block one level, paying from carried cargo first and outpost storage second. */
+  upgradeStructure(outpost: Outpost, s: Structure): boolean {
+    const error = this.upgradeStructureError(outpost, s); if (error) { this.message = error; return false; }
+    this.payOutpost(outpost, this.structureUpgradeCost(outpost, s));
+    const before = maxHealth(s); s.level++; s.health += maxHealth(s) - before; outpost.revision++;
+    this.message = `${STRUCTURES[s.kind].label} upgraded to level ${s.level}.`; this.cue('build', { x: cellCenter(s.cx), y: cellCenter(s.cy) });
+    this.spillOutpostOverflow(outpost);
+    return true;
+  }
+  structureRepairCost(s: Structure): Record<Resource, number> { return { iron: Math.ceil(Math.max(0, maxHealth(s) - s.health) * OUTPOST.repairIronPerHp), copper: 0, crystal: 0, ice: 0, radioactive: 0 }; }
+  repairStructureError(outpost: Outpost, s: Structure): string | undefined {
+    if (s.progress < 1) return 'Still under construction.';
+    if (s.health >= maxHealth(s)) return 'No damage to repair.';
+    const work = this.outpostWorkError(s); if (work) return work;
+    if (this.outpostFunds(outpost, this.structureRepairCost(s)).length) return 'Not enough iron (carried plus outpost storage).';
+  }
+  /** Fully repairs one block for iron; never free. */
+  repairStructure(outpost: Outpost, s: Structure): boolean {
+    const error = this.repairStructureError(outpost, s); if (error) { this.message = error; return false; }
+    this.payOutpost(outpost, this.structureRepairCost(s)); s.health = maxHealth(s); outpost.revision++;
+    this.message = `${STRUCTURES[s.kind].label} repaired.`; this.cue('build', { x: cellCenter(s.cx), y: cellCenter(s.cy) });
+    return true;
+  }
   /** The outpost whose finished Docking station the ship is close enough to use, if any. */
   dockAt(): Outpost | undefined {
     for (const outpost of this.outposts) for (const s of outpost.structures) {
@@ -169,7 +224,8 @@ export class GameModel {
   }
   /** Docking (E) at an outpost: unload cargo into its storage, then repair from carried and outpost minerals if they cover the cost. */
   dockAtOutpost(outpost: Outpost) {
-    const moved = this.depositToOutpost(outpost), stored = outpost.stored ??= emptyStore(), price = this.repairCost, ores = Object.keys(price) as Resource[];
+    const moved = this.depositToOutpost(outpost), stored = outpost.stored ??= emptyStore(), cut = outpostStats(outpost).rapidService ? 1 - STRUCTURE_SPECIAL.rapidService : 1, full = this.repairCost;
+    const price = Object.fromEntries((Object.keys(full) as Resource[]).map(ore => [ore, Math.ceil(full[ore] * cut)])) as Record<Resource, number>, ores = Object.keys(price) as Resource[];
     const needed = ores.some(ore => price[ore] > 0);
     if (!needed) { this.message = moved ? `Docked at ${outpost.name}: stored ${moved} minerals. No repairs needed.` : `Docked at ${outpost.name}. Nothing to unload or repair.`; return; }
     if (ores.some(ore => this.cargo[ore] + stored[ore] < price[ore])) { this.message = `Docked at ${outpost.name}: stored ${moved} minerals. Not enough minerals here for repairs.`; return; }
@@ -186,12 +242,12 @@ export class GameModel {
     outpost.drones = drones.filter(d => hangars.has(d.hangar));
   }
   private updateDrones(outpost: Outpost, dt: number) {
-    const drones = outpost.drones ??= [], stored = outpost.stored ??= emptyStore(), capacity = outpostStats(outpost).storageCapacity;
+    const drones = outpost.drones ??= [], stored = outpost.stored ??= emptyStore(), stats = outpostStats(outpost), capacity = stats.storageCapacity;
     const hangars = outpost.structures.filter(s => STRUCTURES[s.kind].drones && s.progress >= 1);
-    for (const h of hangars) for (let have = drones.filter(d => d.hangar === h.id).length; have < STRUCTURES[h.kind].drones!; have++) drones.push({ id: this.id++, hangar: h.id, x: cellCenter(h.cx), y: cellCenter(h.cy), angle: 0, state: 'idle', load: 0, timer: have * 0.7 });
+    for (const h of hangars) for (let have = drones.filter(d => d.hangar === h.id).length; have < dronesOf(h); have++) drones.push({ id: this.id++, hangar: h.id, x: cellCenter(h.cx), y: cellCenter(h.cy), angle: 0, state: 'idle', load: 0, timer: have * 0.7, trips: 0 });
     for (const d of drones) {
       const hangar = hangars.find(h => h.id === d.hangar); if (!hangar) continue;
-      const home = { x: cellCenter(hangar.cx), y: cellCenter(hangar.cy) };
+      const home = { x: cellCenter(hangar.cx), y: cellCenter(hangar.cy) }, swarm = hangar.level >= OUTPOST.maxLevel;
       d.timer = Math.max(0, d.timer - dt); d.beam = undefined;
       const fly = (to: Point, stop: number) => {
         const gap = dist(d, to); if (gap <= stop + 0.5) return true;
@@ -202,15 +258,16 @@ export class GameModel {
         d.x = home.x; d.y = home.y;
         if (d.timer > 0 || storedTotal(outpost) >= capacity) continue;
         if ((outpost.energy ?? 0) < DRONES.launchEnergy) { outpost.shortage = true; continue; }
-        // Nearest rock with ore that is not already crowded by other drones.
-        let target: Asteroid | undefined, best = DRONES.range;
+        // Nearest rock with ore that is not already crowded. The level-5 swarm spreads out and goes for the most valuable ore first.
+        let target: Asteroid | undefined, best = -Infinity;
         for (const a of this.asteroids) {
-          if (a.amount <= 0) continue; const gap = dist(a, home); if (gap > best) continue;
-          if (drones.filter(o => o !== d && o.target === a.id).length >= DRONES.perAsteroid) continue;
-          best = gap; target = a;
+          if (a.amount <= 0) continue; const gap = dist(a, home); if (gap > DRONES.range) continue;
+          const working = drones.filter(o => o !== d && o.target === a.id).length; if (working >= DRONES.perAsteroid) continue;
+          const score = swarm ? DANGER.ore[a.ore] * 10000 - working * 5000 - gap : -gap;
+          if (score > best) { best = score; target = a; }
         }
         if (!target) { d.timer = DRONES.retry; continue; }
-        outpost.energy = (outpost.energy ?? 0) - DRONES.launchEnergy; d.target = target.id; d.state = 'outbound';
+        outpost.energy = (outpost.energy ?? 0) - DRONES.launchEnergy; d.target = target.id; d.state = 'outbound'; this.cue('drone', home, 8);
       } else if (d.state === 'outbound' || d.state === 'mining') {
         const rock = this.asteroids.find(a => a.id === d.target && a.amount > 0);
         // Rock gone, drifted out of reach, or a different ore than the load already aboard: head home.
@@ -229,47 +286,199 @@ export class GameModel {
         const amount = d.ore ? Math.max(0, Math.min(d.load, capacity - storedTotal(outpost))) : 0;
         if (d.ore && amount > 0) { stored[d.ore] += amount; d.load -= amount; }
         if (d.load > 0) continue;
-        d.ore = undefined; d.state = 'idle'; d.timer = DRONES.recharge;
+        // Every few trips the drone is serviced; a repair bay makes that quick.
+        d.trips = (d.trips ?? 0) + 1; const service = d.trips >= droneTripsBeforeService(stats);
+        if (service) d.trips = 0;
+        d.ore = undefined; d.state = 'idle'; d.timer = service ? (stats.droneService ? DRONES.bayServiceTime : DRONES.serviceTime) : DRONES.recharge;
       }
     }
   }
+  /** An enemy with no fight on its hands attacks an outpost it was sent to raid, or one it has wandered within sight of. Returns true if it did. */
+  private raidOutpost(e: Enemy, def: EnemyDefinition, dt: number): boolean {
+    if (def.part || def.boss || !def.weapons.length) return false;
+    let outpost = e.raid === undefined ? undefined : this.outposts.find(o => o.id === e.raid);
+    if (!outpost && e.raidParty) { e.raid = undefined; e.raidParty = false; }
+    if (!outpost) outpost = this.outposts.find(o => dist(outpostCenter(o), e) < def.detection + outpostRadius(o) && dist(outpostCenter(o), this.player) < OUTPOST.activeRange);
+    if (!outpost) return false;
+    e.raid = outpost.id; const centre = outpostCenter(outpost);
+    // Badly hurt raiders break off and leave.
+    if (e.raidParty && e.health < def.health * OUTPOST.raid.retreatAt) {
+      const away = Math.atan2(e.y - centre.y, e.x - centre.x); e.angle = away; e.x = clamp(e.x + Math.cos(away) * def.speed * dt, 30, WORLD.width - 30); e.y = clamp(e.y + Math.sin(away) * def.speed * dt, 30, WORLD.height - 30);
+      if (dist(e, centre) > OUTPOST.raid.giveUp) { e.rewarded = true; e.health = 0; }
+      return true;
+    }
+    // Turrets and power first, then whatever is closest.
+    let target: Structure | undefined, best = Infinity;
+    for (const s of outpost.structures) { const d = dist({ x: cellCenter(s.cx), y: cellCenter(s.cy) }, e) - (STRUCTURES[s.kind].turret || STRUCTURES[s.kind].generation ? 400 : 0); if (d < best) { best = d; target = s; } }
+    if (!target) return false;
+    const point = { x: cellCenter(target.cx), y: cellCenter(target.cy) }, gap = dist(e, point), aim = Math.atan2(point.y - e.y, point.x - e.x), hold = Math.min(def.stop, def.range * 0.8);
+    if (gap > hold) { const travel = avoidMovingOre(e, aim, this.asteroids, def.radius); e.x = clamp(e.x + Math.cos(travel) * def.speed * 0.8 * dt, 30, WORLD.width - 30); e.y = clamp(e.y + Math.sin(travel) * def.speed * 0.8 * dt, 30, WORLD.height - 30); }
+    e.angle = aim; e.state = 'attack';
+    if (gap < def.range) def.weapons.forEach((weapon, i) => {
+      if ((i === 0 ? e.cooldown : e.cooldown2 ?? 0) > 0) return;
+      if (i === 0) e.cooldown = weapon.cooldown + (weapon.charge ?? 0); else e.cooldown2 = weapon.cooldown + (weapon.charge ?? 0);
+      this.enemyShot(e, { ...weapon, homing: undefined }, aim);
+    });
+    return true;
+  }
   private updateTurrets(outpost: Outpost, dt: number) {
+    const stats = outpostStats(outpost), special = STRUCTURE_SPECIAL, boost = (outpost.command ?? 0) > 0 ? 1 + special.command.bonus : 1;
+    let engaged = false;
     for (const s of outpost.structures) {
-      const turret = STRUCTURES[s.kind].turret; if (!turret || s.progress < 1) continue;
-      const x = cellCenter(s.cx), y = cellCenter(s.cy);
+      const turret = s.progress >= 1 ? turretOf(s) : undefined; if (!turret) continue;
+      const x = cellCenter(s.cx), y = cellCenter(s.cy), range = turret.range * (1 + stats.radar), top = s.level >= OUTPOST.maxLevel;
       s.cooldown = Math.max(0, (s.cooldown ?? 0) - dt); s.scan = (s.scan ?? 0) - dt; s.angle ??= s.rot * Math.PI / 2;
-      let target = s.target === undefined ? undefined : this.enemies.find(e => e.id === s.target && e.health > 0 && dist(e, { x, y }) <= turret.range);
+      s.quiet = (s.quiet ?? 0) + dt; if (s.quiet > special.gatling.cool) s.ramp = 0;
+      let target = s.target === undefined ? undefined : this.enemies.find(e => e.id === s.target && e.health > 0 && dist(e, { x, y }) <= range);
       if (!target && s.scan <= 0) {
         // Look for the nearest hostile in range a few times a second rather than every frame.
-        s.scan = OUTPOST.turretScan; let best = turret.range;
-        for (const e of this.enemies) { if (e.health <= 0) continue; const d = dist(e, { x, y }); if (d <= best) { best = d; target = e; } }
+        s.scan = OUTPOST.turretScan; let best = range;
+        for (const e of this.enemies) { if (e.health <= 0 || ENEMIES[e.kind ?? 'raider'].weakPoint) continue; const d = dist(e, { x, y }); if (d <= best) { best = d; target = e; } }
       }
       s.target = target?.id;
       if (!target) continue;
+      engaged = true;
       const wanted = Math.atan2(target.y - y, target.x - x), turn = Math.atan2(Math.sin(wanted - s.angle), Math.cos(wanted - s.angle));
       s.angle += clamp(turn, -turret.turn * dt, turret.turn * dt);
-      if (Math.abs(turn) > OUTPOST.turretAim || s.cooldown > 0) continue;
+      if (Math.abs(turn) > OUTPOST.turretAim || s.cooldown > 0 || outpost.overheated) continue;
       if ((outpost.energy ?? 0) < turret.energy) { outpost.shortage = true; continue; }
-      outpost.energy = (outpost.energy ?? 0) - turret.energy; s.cooldown = turret.cooldown;
-      const muzzle = OUTPOST.cell * 0.7, bullet: Bullet = { id: this.id++, x: x + Math.cos(s.angle) * muzzle, y: y + Math.sin(s.angle) * muzzle, vx: Math.cos(s.angle) * turret.speed, vy: Math.sin(s.angle) * turret.speed, life: turret.lifetime, enemy: false, damage: turret.damage, weapon: turret.weapon, turret: true };
+      outpost.energy = (outpost.energy ?? 0) - turret.energy; outpost.heat = (outpost.heat ?? 0) + (turret.heat ?? 0);
+      // Level-5 autocannons spin up while they keep firing.
+      if (top && s.kind === 'autocannonTurret') s.ramp = Math.min(1, (s.ramp ?? 0) + turret.cooldown / special.gatling.ramp);
+      s.quiet = 0; s.shots = (s.shots ?? 0) + 1;
+      s.cooldown = turret.cooldown / boost / (1 + (s.ramp ?? 0) * special.gatling.maxBonus);
+      const muzzle = OUTPOST.cell * 0.7, shot = (angle: number, damage: number, splash?: number): Bullet => ({ id: this.id++, x: x + Math.cos(angle) * muzzle, y: y + Math.sin(angle) * muzzle, vx: Math.cos(angle) * turret.speed, vy: Math.sin(angle) * turret.speed, life: turret.lifetime, enemy: false, damage, weapon: turret.weapon, turret: true, splash });
+      const bullet = shot(s.angle, turret.damage, turret.splash);
       if (turret.weapon === 'rocket') bullet.rocket = true;
-      if (turret.splash) bullet.splash = turret.splash;
       if (turret.guided) { bullet.guided = true; bullet.age = 0; }
+      // Level-5 railguns: every Nth round punches through several hulls (the ship's Hypervelocity handling).
+      if (top && s.kind === 'railgunTurret' && s.shots % special.railEvery === 0) { bullet.enhanced = true; bullet.penetrating = SPECIAL.rail.targets; bullet.hitIds = []; }
       this.bullets.push(bullet);
+      // Level-5 missile turrets add a fan of guided mini-missiles.
+      if (top && s.kind === 'missileTurret') for (let i = 0; i < special.swarm.count; i++) { const mini = shot(s.angle + (i - (special.swarm.count - 1) / 2) * 0.5, turret.damage * special.swarm.fraction, (turret.splash ?? 60) * 0.5); mini.rocket = true; mini.guided = true; mini.age = 0; this.bullets.push(mini); }
       this.effect({ type: 'muzzle', x: bullet.x, y: bullet.y, angle: s.angle, weapon: turret.weapon, silent: true }); this.cue(turret.weapon === 'cannon' ? 'fire' : turret.weapon, { x, y });
     }
+    // Level-5 core: the first shots of an engagement trigger a short outpost-wide rate boost.
+    if (engaged && stats.command && (outpost.command ?? 0) <= 0 && (outpost.commandCooldown ?? 0) <= 0) { outpost.command = special.command.duration; outpost.commandCooldown = special.command.cooldown; }
+  }
+  /** Repair stations mend the most damaged block in their radius, paying stored iron and battery energy. */
+  private updateRepairStations(outpost: Outpost, dt: number) {
+    const stored = outpost.stored ??= emptyStore(), special = STRUCTURE_SPECIAL.reconstruction;
+    for (const station of outpost.structures) {
+      const def = STRUCTURES[station.kind]; if (!def.repair || station.progress < 1) continue;
+      let worst: Structure | undefined, low = 1;
+      for (const s of outpost.structures) { if (s.progress < 1 || Math.max(Math.abs(s.cx - station.cx), Math.abs(s.cy - station.cy)) > (def.repairRadius ?? 0)) continue; const f = s.health / maxHealth(s); if (f < low) { low = f; worst = s; } }
+      if (!worst) continue;
+      const rate = def.repair * [1, 1.4, 1.8, 2.3, 3][station.level - 1] * (station.level >= OUTPOST.maxLevel && low < special.below ? special.multiplier : 1);
+      const repair = Math.min(rate * dt, maxHealth(worst) - worst.health), energy = OUTPOST.repairEnergyPerSecond * dt;
+      const debt = (outpost.repairDebt ?? 0) + repair * OUTPOST.repairIronPerHp, whole = Math.floor(debt);
+      if (stored.iron < Math.ceil(debt) || (outpost.energy ?? 0) < energy) { if ((outpost.energy ?? 0) < energy) outpost.shortage = true; continue; }
+      stored.iron -= whole; outpost.repairDebt = debt - whole; outpost.energy = (outpost.energy ?? 0) - energy;
+      const before = wear(worst); worst.health += repair; if (wear(worst) !== before) outpost.revision++;
+    }
+  }
+  /** Raids: a countdown per outpost. Near the ship a raid party arrives (with warning if there is radar); far away it is banked and settled later. */
+  private updateRaids(outpost: Outpost, dt: number, active: boolean) {
+    const raid = OUTPOST.raid, centre = outpostCenter(outpost), stats = outpostStats(outpost);
+    outpost.raidTimer ??= raid.interval[0] + this.random() * (raid.interval[1] - raid.interval[0]);
+    if ((outpost.raidWarning ?? 0) > 0) {
+      const before = Math.floor(outpost.raidWarning! / HORDE.alarmEvery); outpost.raidWarning! -= dt;
+      if (active && Math.floor(outpost.raidWarning! / HORDE.alarmEvery) !== before) this.cue('hordeAlarm', centre);
+      if (outpost.raidWarning! > 0) return;
+      outpost.raidWarning = 0;
+      if (!active) { outpost.pendingRaids = (outpost.pendingRaids ?? 0) + 1; return; }
+      // Arrive from the side away from the ship so the party is not spawned on top of the player.
+      const level = Math.max(1, Math.min(raid.size.length, this.dangerAt(centre))), away = Math.atan2(centre.y - this.player.y, centre.x - this.player.x) + (this.random() - 0.5) * 1.6;
+      for (let i = 0; i < raid.size[level - 1]; i++) {
+        const pool = i === 0 && level >= 2 ? ENEMY_SPAWN.elite[level - 1] : ENEMY_SPAWN.normal[level - 1], kind = pool[Math.floor(this.random() * pool.length)], angle = away + (i - raid.size[level - 1] / 2) * 0.18;
+        this.spawnEnemy(kind, clamp(centre.x + Math.cos(angle) * raid.distance, 60, WORLD.width - 60), clamp(centre.y + Math.sin(angle) * raid.distance, 60, WORLD.height - 60), angle + Math.PI, { raid: outpost.id, raidParty: true, horde: false });
+      }
+      this.message = `RAID: hostiles are attacking ${outpost.name}!`; this.cue('hordeAlarm', centre);
+      return;
+    }
+    outpost.raidTimer -= dt;
+    if (outpost.raidTimer > 0) return;
+    outpost.raidTimer = raid.interval[0] + this.random() * (raid.interval[1] - raid.interval[0]);
+    if (outpostValue(outpost) < raid.minValue) return;
+    // Radar buys warning time; without it the raid simply arrives.
+    outpost.raidWarning = stats.radar > 0 ? raid.radarWarning * (stats.radarLevel >= OUTPOST.maxLevel ? STRUCTURE_SPECIAL.radarWarning : 1) : 0.01;
+    if (active && stats.radar > 0) { this.message = `RADAR: raid inbound on ${outpost.name} in ${Math.ceil(outpost.raidWarning)}s.`; this.cue('hordeAlarm', centre); }
+  }
+  /** Settles what happened while the ship was away: banked raids, repairs, then drone mining against the real asteroids now in range. */
+  private resolveAway(outpost: Outpost) {
+    const elapsed = Math.min(OUTPOST.awayCap, outpost.away ?? 0), stats = outpostStats(outpost), stored = outpost.stored ??= emptyStore(), centre = outpostCenter(outpost), notes: string[] = [];
+    outpost.away = 0;
+    // Raids: whatever the defences could not stop over a short fight lands on turrets and reactors first.
+    const raids = outpost.pendingRaids ?? 0; outpost.pendingRaids = 0;
+    if (raids > 0) {
+      const level = Math.max(1, Math.min(OUTPOST.raid.awayDamage.length, this.dangerAt(centre))), powered = stats.generation > 0 || stats.turrets === 0;
+      const defence = (powered ? turretDps(outpost) * OUTPOST.raid.defenceSeconds : 0) + stats.shieldCapacity;
+      let damage = Math.max(0, OUTPOST.raid.awayDamage[level - 1] - defence) * raids, lost = 0; const blocks = outpost.structures.length;
+      const order = [...outpost.structures].sort((a, b) => Number(Boolean(STRUCTURES[b.kind].turret || STRUCTURES[b.kind].generation)) - Number(Boolean(STRUCTURES[a.kind].turret || STRUCTURES[a.kind].generation)) || Number(a.kind === 'outpostCore') - Number(b.kind === 'outpostCore'));
+      for (const s of order) { if (damage <= 0 || !outpost.structures.includes(s)) continue; const hit = Math.min(damage, s.health); damage -= hit; this.damageStructure(outpost, s, hit, undefined, true); }
+      lost = blocks - outpost.structures.length;
+      notes.push(lost ? `${raids} raid${raids > 1 ? 's' : ''} destroyed ${lost} block${lost > 1 ? 's' : ''}` : `${raids} raid${raids > 1 ? 's' : ''} repelled`);
+      if (!this.outposts.includes(outpost)) { this.message = `${outpost.name} was destroyed by a raid while you were away.`; return; }
+    }
+    const after = outpostStats(outpost);
+    outpost.energy = after.energyCapacity; outpost.heat = 0; outpost.overheated = false; outpost.shield = after.shieldCapacity;
+    // Repair stations work through the damage as far as stored iron allows.
+    let budget = after.repair * elapsed, mended = 0;
+    for (const s of [...outpost.structures].sort((a, b) => a.health / maxHealth(a) - b.health / maxHealth(b))) {
+      if (budget <= 0 || s.progress < 1) continue;
+      const repair = Math.min(budget, maxHealth(s) - s.health, Math.floor(stored.iron / OUTPOST.repairIronPerHp)); if (repair <= 0) continue;
+      stored.iron -= Math.ceil(repair * OUTPOST.repairIronPerHp); s.health += repair; budget -= repair; mended += repair; outpost.revision++;
+    }
+    if (mended > 0) notes.push(`repaired ${Math.round(mended)} hull`);
+    // Drones: their banked work is taken out of the actual rocks in range, so nothing is created.
+    const hangars = outpost.structures.filter(s => s.progress >= 1 && STRUCTURES[s.kind].drones);
+    let work = after.generation > 0 ? Math.floor(after.drones * DRONES.awayRate * elapsed) : 0, mined = 0;
+    if (work > 0 && hangars.length) {
+      const rocks = this.asteroids.filter(a => a.amount > 0 && hangars.some(h => dist(a, { x: cellCenter(h.cx), y: cellCenter(h.cy) }) <= DRONES.range)).sort((a, b) => dist(a, centre) - dist(b, centre));
+      for (const rock of rocks) {
+        const room = after.storageCapacity - storedTotal(outpost), take = Math.min(work, room, rock.amount); if (take <= 0) break;
+        const removed = mineMaterial(rock, take, miningImpact(rock, centre, rock));
+        stored[rock.ore] += removed; work -= removed; mined += removed;
+        if (rock.amount <= 0) this.destroyAsteroid(rock.id);
+      }
+    }
+    if (mined > 0) notes.push(`drones stored ${mined} ore`);
+    for (const d of outpost.drones ?? []) if (d.load === 0) { d.state = 'idle'; d.target = undefined; }
+    outpost.report = notes.length ? `${outpost.name} while you were away (${Math.round(elapsed / 60)} min): ${notes.join(', ')}.` : undefined;
+    if (outpost.report) this.message = outpost.report;
   }
   private updateOutposts(dt: number) {
     const builder = this.builder, p = this.player;
-    for (const outpost of this.outposts) {
-      const stats = outpostStats(outpost);
-      outpost.stored ??= emptyStore();
-      outpost.energy = Math.min(stats.energyCapacity, (outpost.energy ?? 0) + stats.generation * dt);
-      outpost.shortage = false;
-      // Turrets and drones are simulated only for outposts near the ship.
-      if (this.dead || dist(outpostCenter(outpost), p) >= OUTPOST.activeRange) continue;
+    for (const outpost of [...this.outposts]) {
+      const stats = outpostStats(outpost), distance = dist(outpostCenter(outpost), p), active = !this.dead && distance < OUTPOST.activeRange;
+      outpost.stored ??= emptyStore(); outpost.shortage = false;
+      const low = (outpost.energy ?? 0) < stats.energyCapacity * STRUCTURE_SPECIAL.overdriveBelow;
+      outpost.energy = Math.min(stats.energyCapacity, (outpost.energy ?? 0) + (stats.generation + (low ? stats.overdrive : 0)) * dt);
+      // Heat: turret fire adds it, cores and coolers remove it; an overheated outpost holds fire until it is back under 60%.
+      outpost.purgeCooldown = Math.max(0, (outpost.purgeCooldown ?? 0) - dt);
+      outpost.heat = Math.max(0, (outpost.heat ?? 0) - stats.cooling * dt);
+      if (outpost.heat >= stats.heatCapacity && stats.heatCapacity > 0) {
+        if (stats.purge && outpost.purgeCooldown <= 0) { outpost.heat *= 1 - STRUCTURE_SPECIAL.purge.fraction; outpost.purgeCooldown = STRUCTURE_SPECIAL.purge.cooldown; } else outpost.overheated = true;
+      } else if (outpost.overheated && outpost.heat < stats.heatCapacity * 0.6) outpost.overheated = false;
+      // Shields recharge from the battery after a quiet spell.
+      outpost.shieldDelay = Math.max(0, (outpost.shieldDelay ?? 0) - dt); outpost.shield = Math.min(outpost.shield ?? 0, stats.shieldCapacity);
+      if (stats.shieldCapacity > 0 && outpost.shieldDelay <= 0 && outpost.shield < stats.shieldCapacity) {
+        const gain = Math.min(stats.shieldRegen * dt, stats.shieldCapacity - outpost.shield), cost = gain * OUTPOST.shieldEnergyPerPoint;
+        if (outpost.energy >= cost) { outpost.energy -= cost; outpost.shield += gain; } else outpost.shortage = true;
+      }
+      outpost.command = Math.max(0, (outpost.command ?? 0) - dt); outpost.commandCooldown = Math.max(0, (outpost.commandCooldown ?? 0) - dt);
+      this.updateRaids(outpost, dt, active);
+      // Turrets, drones and repairs are simulated only for outposts near the ship; time away is banked instead.
+      if (!active) { outpost.away = Math.min(OUTPOST.awayCap, (outpost.away ?? 0) + dt); continue; }
+      if ((outpost.away ?? 0) >= OUTPOST.awayMin) {
+        // Settle only once the ship is close and the streamed asteroid field around the outpost has had time to load.
+        outpost.settle = distance < OUTPOST.resolveRange ? (outpost.settle ?? 0) + dt : 0;
+        if (distance < OUTPOST.resolveRange && (!this.streaming || outpost.settle >= OUTPOST.resolveDelay)) { outpost.settle = 0; this.resolveAway(outpost); if (!this.outposts.includes(outpost)) continue; }
+        else continue;
+      } else outpost.away = 0;
       if (stats.turrets) this.updateTurrets(outpost, dt);
-      if (outpost.drones?.length || outpost.structures.some(s => STRUCTURES[s.kind].drones)) this.updateDrones(outpost, dt);
+      if (outpost.drones?.length || stats.drones) this.updateDrones(outpost, dt);
+      if (stats.repair) this.updateRepairStations(outpost, dt);
     }
     for (const outpost of this.outposts) {
       const near = builder !== undefined && dist(outpostCenter(outpost), p) < builder.range * OUTPOST.awayRange + outpostRadius(outpost);
@@ -288,7 +497,7 @@ export class GameModel {
       const repair = Math.min(fab.hpPerSecond * dt, maxHealth(s) - s.health), iron = repair * fab.ironPerHp, energy = fab.energyPerSecond * dt;
       this.fabricatorDebt += iron;
       const whole = Math.floor(this.fabricatorDebt);
-      if (this.cargo.iron < whole || this.energy < energy) { this.fabricatorDebt -= iron; return; }
+      if (this.cargo.iron < Math.ceil(this.fabricatorDebt) || this.energy < energy) { this.fabricatorDebt -= iron; return; }
       this.cargo.iron -= whole; this.fabricatorDebt -= whole; this.energy -= energy;
       const before = wear(s); s.health += repair; if (wear(s) !== before) outpost.revision++;
       return;
@@ -720,7 +929,7 @@ export class GameModel {
     this.cue(w.type === 'cannon' ? 'fire' : w.type, e, def.radius);
     for (let i = 0; i < count; i++) {
       const t = count > 1 ? i / (count - 1) - 0.5 : 0, heading = angle + t * (w.spread ?? 0), side = t * 2 * (w.offset ?? 0);
-      const bullet: Bullet = { id: this.id++, x: e.x + Math.cos(angle) * reach - Math.sin(angle) * side, y: e.y + Math.sin(angle) * reach + Math.cos(angle) * side, vx: Math.cos(heading) * w.speed, vy: Math.sin(heading) * w.speed, life: w.lifetime, enemy: true, damage: w.damage, weapon: w.type };
+      const bullet: Bullet = { id: this.id++, x: e.x + Math.cos(angle) * reach - Math.sin(angle) * side, y: e.y + Math.sin(angle) * reach + Math.cos(angle) * side, vx: Math.cos(heading) * w.speed, vy: Math.sin(heading) * w.speed, life: w.lifetime, enemy: true, damage: w.damage, weapon: w.type, attackerId: e.id };
       if (w.type === 'rocket') bullet.rocket = true;
       if (w.homing) bullet.homing = w.homing;
       this.bullets.push(bullet);
@@ -1146,6 +1355,7 @@ export class GameModel {
         guard: def.behavior === 'guard', strafes: ENEMY_AI.strafe[def.behavior] >= 0.45, reloading, retreating: e.retreat > 0, repositioning: e.reposition > 0 });
       if (visible && !def.part && (previousState === undefined || previousState === 'patrol' || previousState === 'return' || previousState === 'investigate') && state !== 'patrol' && state !== 'return' && state !== 'investigate') this.cue('alert', e, def.radius);
       const engaged = state !== 'patrol' && state !== 'return';
+      if (!engaged && !safe && this.outposts.length && this.raidOutpost(e, def, dt)) { e.vx = dt > 0 ? (e.x - previous.x) / dt : 0; e.vy = dt > 0 ? (e.y - previous.y) / dt : 0; continue; }
       if (!engaged) { e.sx = 0; e.sy = 0; e.charge = undefined; e.stuck = 0; }
       if (engaged) {
         const goal = state === 'investigate' && e.lastSeen ? e.lastSeen : p, toGoal = Math.atan2(goal.y - e.y, goal.x - e.x), toPlayer = Math.atan2(p.y - e.y, p.x - e.x);
@@ -1254,7 +1464,7 @@ export class GameModel {
       if (b.enemy && this.outposts.length) {
         // Hostile fire is stopped by, and damages, finished outpost blocks. The player's own shots pass over them.
         const struck = structureOnSegment(this.outposts, start, b);
-        if (struck) { b.life = 0; this.effect({ type: 'impact', ...struck.point, radius: 12, color: 0xffb070, weapon: b.weapon }); this.damageStructure(struck.outpost, struck.structure, b.damage ?? WEAPONS.enemy.damage); continue; }
+        if (struck) { b.life = 0; this.effect({ type: 'impact', ...struck.point, radius: 12, color: 0xffb070, weapon: b.weapon }); this.damageStructure(struck.outpost, struck.structure, b.damage ?? WEAPONS.enemy.damage, b.attackerId); continue; }
       }
       for(let hit=0;hit<(b.enhanced?SPECIAL.rail.targets:1);hit++){
       let oreHit: { asteroid: Asteroid; point: Point; t: number } | undefined;

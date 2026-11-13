@@ -121,3 +121,8 @@ body.build-mode #game canvas { cursor:cell; }
 #outpost-panel footer { display:flex; align-items:center; gap:6px; margin-top:6px; } #outpost-panel footer button { padding:4px 9px; font-size:10px; border-color:#94702a; background:#2a2010; color:#f2d489; white-space:nowrap; } #outpost-panel footer small { margin:0; flex:1; min-width:0; }
 body.horde-alert #outpost-panel { bottom:108px; }
 #outpost-panel .dock-hint { color:#bfeaff; }
+.block-details header { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:8px; } .block-details h3 { margin:2px 0 0; font-size:14px; color:#f6ecd2; } .block-details header button { padding:3px 8px; font-size:10px; }
+.block-details table { width:100%; border-collapse:collapse; margin-top:6px; font-variant-numeric:tabular-nums; } .block-details th { text-align:left; font-weight:400; color:#b8a67a; padding:2px 0; } .block-details td { text-align:right; padding:2px 0; color:#f6ecd2; } .block-details td.next-value { color:#94e3c4; width:38%; }
+.block-ability { padding:6px 8px; border-left:2px solid #5c4318; background:#221a0e; color:#b8a67a; font-size:10px; } .block-ability b { color:#d9c79a; } .block-ability.unlocked { border-color:#f2d489; color:#e6dcc4; } .block-ability.unlocked b { color:#ffe9a8; }
+.block-actions { display:flex; flex-direction:column; gap:4px; margin-top:8px; } .block-actions button { padding:6px 8px; font-size:11px; border-color:#94702a; background:#2a2010; color:#f2d489; text-align:left; } .block-actions small.blocked { color:#ffb3c0; font-size:10px; }
+#outpost-panel .away-report { color:#bfe6c8; }

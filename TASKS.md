@@ -103,10 +103,12 @@
 - [x] Phase 2: world-aligned nested construction grid, Build Mode, placement preview and rules
 - [x] Phase 3: Outpost Core, wall, reinforced wall, visual connections, construction time, damage, connectivity, save/load
 - [x] Phase 4: autocannon/missile/railgun turrets, reactors and battery, storage blocks and cargo transfer
-- [ ] Phase 4 leftovers from the building list: shield generator, cooling unit, radar tower
+- [x] Shield generator, cooling unit, radar tower
 - [x] Phase 5: mining drones (hangar) and docking station unload/repair
-- [ ] Phase 5 leftover: drone repair bay, drone damage from enemies
-- [ ] Phase 6: upgrade and repair stations, five-level building upgrades
-- [ ] Phase 7: enemy raids on outposts, away-from-player simulation
-- [ ] Phase 8: effects, sound, balancing, performance pass
+- [x] Drone repair bay
+- [ ] Enemies attacking drones
+- [x] Phase 6: upgrade and repair stations, five-level building upgrades with level-5 specials
+- [x] Phase 7: enemy raids on outposts, away-from-player settlement on return
+- [x] Phase 8: machinery animation, raid/drone cues, baked sprites and cached stats
+- [ ] Outpost balancing from real play (costs, turret strength, raid size and frequency, drone rates)
 - [ ] Decide whether ships and asteroids should collide with outpost blocks

@@ -1,15 +1,22 @@
-import { OUTPOST, STRUCTURES, type StructureKind, type Resource } from './data.ts';
+import { OUTPOST, STRUCTURES, STRUCTURE_LEVELS, STRUCTURE_SPECIAL, DRONES, type StructureKind, type Resource, type TurretDefinition } from './data.ts';
 
 // Player-built outposts: pure data and grid helpers, independent of Phaser and the DOM.
 // Structures occupy square cells of the world construction grid (OUTPOST.cell world units,
 // aligned to world coordinates 0,0), so a cell index is just floor(world / cell).
 
 export type Structure = { id: number; kind: StructureKind; cx: number; cy: number; rot: number; level: number; health: number; /** 0-1; below 1 the block is still under construction and does nothing. */ progress: number;
-  /** Turret state: facing (radians), seconds until it may fire, seconds until it looks for a target again, current target id. */ angle?: number; cooldown?: number; scan?: number; target?: number };
+  /** Turret state: facing (radians), seconds until it may fire, seconds until it looks for a target again, current target id. */ angle?: number; cooldown?: number; scan?: number; target?: number;
+  /** Gatling ramp (0-1), seconds since it last fired, and shots fired (for every-Nth-shot specials). */ ramp?: number; quiet?: number; shots?: number };
 export type Outpost = { id: number; name: string; /** Cell of the Outpost Core, the structural anchor. */ cx: number; cy: number; structures: Structure[]; /** Bumped whenever the outpost's appearance changes, so its baked sprite is redrawn only then. */ revision: number;
-  /** Battery charge shared by the outpost's turrets. */ energy?: number; /** Minerals held in the outpost's storage. */ stored?: Record<Resource, number>; /** True while a turret wanted to fire but the battery was too low. */ shortage?: boolean; drones?: Drone[] };
+  /** Battery charge shared by the outpost's turrets. */ energy?: number; /** Minerals held in the outpost's storage. */ stored?: Record<Resource, number>; /** True while a turret wanted to fire but the battery was too low. */ shortage?: boolean; drones?: Drone[];
+  /** Shield pool and seconds until it may recharge again. */ shield?: number; shieldDelay?: number;
+  /** Heat from turret fire; turrets stop while `overheated`. */ heat?: number; overheated?: boolean; purgeCooldown?: number;
+  /** Command Network (level-5 core): seconds of boost left and cooldown. */ command?: number; commandCooldown?: number;
+  /** Fractional iron owed by automatic repairs. */ repairDebt?: number;
+  /** Seconds the ship has been away (capped), seconds until the next raid, raids that happened while away, and raid warning countdown. */ away?: number; settle?: number; raidTimer?: number; pendingRaids?: number; raidWarning?: number;
+  /** One-line summary of what happened while the ship was away. */ report?: string };
 /** A mining drone. `hangar` is the id of its Drone Hangar block; it carries `load` units of a single `ore`. */
-export type Drone = { id: number; hangar: number; x: number; y: number; angle: number; state: 'idle' | 'outbound' | 'mining' | 'returning'; target?: number; ore?: Resource; load: number; timer: number; /** Where its mining beam currently touches the rock. */ beam?: Point };
+export type Drone = { id: number; hangar: number; x: number; y: number; angle: number; state: 'idle' | 'outbound' | 'mining' | 'returning'; target?: number; ore?: Resource; load: number; timer: number; /** Trips since the last service. */ trips?: number; /** Where its mining beam currently touches the rock. */ beam?: Point };
 type Point = { x: number; y: number };
 
 export const cellOf = (world: number) => Math.floor(world / OUTPOST.cell);
@@ -65,7 +72,16 @@ export function outpostRadius(outpost: Outpost) {
   const b = bounds(outpost), reach = Math.max(outpost.cx - b.minX, b.maxX - outpost.cx, outpost.cy - b.minY, b.maxY - outpost.cy) + 1;
   return reach * OUTPOST.cell * Math.SQRT2;
 }
-export const maxHealth = (s: Structure) => STRUCTURES[s.kind].health;
+const lv = (s: { level: number }) => Math.max(1, Math.min(OUTPOST.maxLevel, s.level)) - 1;
+export const maxHealth = (s: Structure) => Math.round(STRUCTURES[s.kind].health * STRUCTURE_LEVELS.health[lv(s)]);
+/** A block's turret with its level applied: more damage per level, slightly more range, same energy and heat. */
+export function turretOf(s: Pick<Structure, 'kind' | 'level'>): TurretDefinition | undefined {
+  const base = STRUCTURES[s.kind].turret; if (!base) return undefined;
+  return { ...base, damage: Math.round(base.damage * STRUCTURE_LEVELS.damage[lv(s)]), range: Math.round(base.range * (1 + lv(s) * 0.04)) };
+}
+export const dronesOf = (s: Pick<Structure, 'kind' | 'level'>) => STRUCTURES[s.kind].drones ? STRUCTURE_LEVELS.drones[lv(s)] : 0;
+/** Output-type stat (power, battery, storage, shield, cooling, repair) at this block's level. */
+export const outputOf = (s: Pick<Structure, 'level'>, base: number | undefined) => (base ?? 0) * STRUCTURE_LEVELS.output[lv(s)];
 /** 0 (intact) to 3 (nearly destroyed); the sprite shows more wear at each step. */
 export const wear = (s: Structure) => Math.min(3, Math.floor((1 - Math.max(0, s.health) / maxHealth(s)) * 4));
 /** First structure a straight shot from `from` to `to` passes through, sampled every half cell. */
@@ -78,21 +94,44 @@ export function structureOnSegment(outposts: Outpost[], from: Point, to: Point) 
   return undefined;
 }
 
-export type OutpostStats = { generation: number; energyCapacity: number; storageCapacity: number; /** Energy per second if every turret fired continuously. */ peakDemand: number; turrets: number };
+export type OutpostStats = {
+  generation: number; /** Extra generation from level-5 reactors while the battery is low. */ overdrive: number; energyCapacity: number; storageCapacity: number;
+  /** Energy per second if every turret fired continuously. */ peakDemand: number; turrets: number;
+  shieldCapacity: number; shieldRegen: number; cooling: number; heatCapacity: number; repair: number; /** Fraction added to turret range. */ radar: number; radarLevel: number;
+  upgrades: boolean; fabrication: boolean; droneService: boolean; refit: boolean; drones: number; rapidService: boolean; command: boolean; purge: boolean; reflect: boolean;
+};
 const statCache = new WeakMap<Outpost, { stamp: string; stats: OutpostStats }>();
-/** Power and storage totals from finished blocks; recomputed only when the outpost changes. */
+/** Totals from finished blocks at their levels; recomputed only when the outpost changes. */
 export function outpostStats(outpost: Outpost): OutpostStats {
   const stamp = `${outpost.revision}:${outpost.structures.length}`, cached = statCache.get(outpost);
   if (cached?.stamp === stamp) return cached.stats;
-  const stats: OutpostStats = { generation: 0, energyCapacity: 0, storageCapacity: 0, peakDemand: 0, turrets: 0 };
+  const stats: OutpostStats = { generation: 0, overdrive: 0, energyCapacity: 0, storageCapacity: 0, peakDemand: 0, turrets: 0, shieldCapacity: 0, shieldRegen: 0, cooling: 0, heatCapacity: 0, repair: 0, radar: 0, radarLevel: 0,
+    upgrades: false, fabrication: false, droneService: false, refit: false, drones: 0, rapidService: false, command: false, purge: false, reflect: false };
   for (const s of outpost.structures) {
     if (s.progress < 1) continue;
-    const def = STRUCTURES[s.kind];
-    stats.generation += def.generation ?? 0; stats.energyCapacity += def.energyCapacity ?? 0; stats.storageCapacity += def.storage ?? 0;
-    if (def.turret) { stats.turrets++; stats.peakDemand += def.turret.energy / def.turret.cooldown; }
+    const def = STRUCTURES[s.kind], top = s.level >= OUTPOST.maxLevel, turret = turretOf(s);
+    stats.generation += outputOf(s, def.generation); if (top && s.kind === 'reactor') stats.overdrive += outputOf(s, def.generation);
+    stats.energyCapacity += outputOf(s, def.energyCapacity); stats.storageCapacity += outputOf(s, def.storage) * (top && s.kind === 'storage' ? 1 + STRUCTURE_SPECIAL.compression : 1);
+    stats.shieldCapacity += outputOf(s, def.shield); stats.shieldRegen += outputOf(s, def.shieldRegen); stats.cooling += outputOf(s, def.cooling); stats.heatCapacity += outputOf(s, def.heatCapacity); stats.repair += outputOf(s, def.repair);
+    if (def.radar) { stats.radar = Math.max(stats.radar, top ? STRUCTURE_SPECIAL.radar : def.radar); stats.radarLevel = Math.max(stats.radarLevel, s.level); }
+    if (def.upgrades) { stats.upgrades = true; stats.fabrication ||= top; }
+    if (def.droneService) { stats.droneService = true; stats.refit ||= top; }
+    stats.drones += dronesOf(s);
+    if (turret) { stats.turrets++; stats.peakDemand += turret.energy / turret.cooldown; }
+    if (top) { stats.rapidService ||= s.kind === 'dockingStation'; stats.command ||= s.kind === 'outpostCore'; stats.purge ||= s.kind === 'coolingUnit'; stats.reflect ||= s.kind === 'shieldGenerator'; }
   }
+  stats.storageCapacity = Math.round(stats.storageCapacity);
   statCache.set(outpost, { stamp, stats });
   return stats;
 }
+/** True when a finished shield generator covers this cell. */
+export function shielded(outpost: Outpost, s: Structure) {
+  return outpost.structures.some(g => g.progress >= 1 && STRUCTURES[g.kind].shieldRadius !== undefined && Math.max(Math.abs(g.cx - s.cx), Math.abs(g.cy - s.cy)) <= STRUCTURES[g.kind].shieldRadius!);
+}
+/** Rough worth of an outpost to raiders: stored minerals plus a little per block. */
+export const outpostValue = (outpost: Outpost) => storedTotal(outpost) + outpost.structures.length * 6;
+/** Sustained damage per second of all finished turrets. */
+export const turretDps = (outpost: Outpost) => outpost.structures.reduce((n, s) => { const t = s.progress >= 1 ? turretOf(s) : undefined; return n + (t ? t.damage / t.cooldown : 0); }, 0);
+export const droneTripsBeforeService = (stats: OutpostStats) => DRONES.serviceEvery * (stats.refit ? STRUCTURE_SPECIAL.refit : 1);
 export const emptyStore = (): Record<Resource, number> => ({ iron: 0, copper: 0, crystal: 0, ice: 0, radioactive: 0 });
 export const storedTotal = (outpost: Outpost) => Object.values(outpost.stored ?? {}).reduce((a, b) => a + b, 0);

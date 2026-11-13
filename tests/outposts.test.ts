@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { fixtureModel } from './fixtures.ts';
-import { GameModel } from '../src/model.ts';
-import { MODULES, OUTPOST, STRUCTURES, DRONES, MAX_MODULE_LEVEL, type Resource, type StructureKind } from '../src/data.ts';
+import { GameModel, type Bullet } from '../src/model.ts';
+import { MODULES, OUTPOST, STRUCTURES, STRUCTURE_ABILITIES, STRUCTURE_SPECIAL, DRONES, ENEMIES, MAX_MODULE_LEVEL, type Resource, type StructureKind } from '../src/data.ts';
 import { ABILITIES } from '../src/abilityConfig.ts';
-import { cellOf, cellCenter, structureAt, connectedIds, neighbourMask, outpostRadius, wear, outpostStats, storedTotal } from '../src/outposts.ts';
+import { cellOf, cellCenter, structureAt, connectedIds, neighbourMask, outpostRadius, wear, outpostStats, storedTotal, maxHealth, turretOf, dronesOf } from '../src/outposts.ts';
 
 const idle = { x: 0, y: 0, aim: { x: 0, y: 0 }, fire: false, mine: false, dock: false };
 const rich = { iron: 5000, copper: 5000, crystal: 5000, ice: 5000, radioactive: 5000 };
@@ -322,4 +322,225 @@ test('docking at an outpost Docking station unloads cargo and repairs from outpo
   assert.equal(m.player.health, hurt); assert.equal(outpost.stored.copper, 5); assert.equal(m.cargo.copper, 0); assert.match(m.message, /Not enough minerals/);
   // An unfinished docking station does nothing.
   dock.progress = 0.5; assert.equal(m.dockAt(), undefined);
+});
+
+const zero = { iron: 0, copper: 0, crystal: 0, ice: 0, radioactive: 0 };
+const pos = (s: { cx: number; cy: number }) => ({ x: cellCenter(s.cx), y: cellCenter(s.cy) });
+const dummy = (id: number, x: number, y: number, health = 5000) => ({ id, x, y, health, cooldown: 99, cooldown2: 99, angle: 0, disabledFor: 9999 });
+
+test('all sixteen outpost blocks exist with costs, five levels of scaling and a level-5 special', () => {
+  const kinds = Object.keys(STRUCTURES) as StructureKind[];
+  assert.equal(kinds.length, 16); assert.deepEqual(Object.keys(STRUCTURE_ABILITIES).sort(), [...kinds].sort());
+  for (const kind of kinds) {
+    assert.ok(Object.values(STRUCTURES[kind].cost).some(n => n > 0)); assert.ok(STRUCTURE_ABILITIES[kind].name && STRUCTURE_ABILITIES[kind].description);
+    let hull = 0;
+    for (let level = 1; level <= OUTPOST.maxLevel; level++) { const h = maxHealth({ id: 1, kind, cx: 0, cy: 0, rot: 0, level, health: 1, progress: 1 }); assert.ok(h > hull); hull = h; }
+  }
+  for (const kind of ['autocannonTurret', 'missileTurret', 'railgunTurret'] as StructureKind[]) assert.ok(turretOf({ kind, level: 5 })!.damage > turretOf({ kind, level: 1 })!.damage * 2);
+  assert.deepEqual([1, 2, 3, 4, 5].map(level => dronesOf({ kind: 'droneHangar', level })), [2, 4, 6, 8, 10]);
+});
+
+test('block upgrades cost minerals, need an Upgrade station past level 2, and really improve the block', () => {
+  const { m, outpost, at, block } = fort([[1, 0, 'storage'], [-1, 0, 'droneHangar'], [0, 1, 'autocannonTurret']]), hangar = block('droneHangar'), turret = block('autocannonTurret');
+  m.cargoOverride = undefined; m.cargo = { ...zero }; outpost.stored = { ...zero };
+  assert.match(m.upgradeStructureError(outpost, hangar) ?? '', /Not enough/); assert.equal(m.upgradeStructure(outpost, hangar), false);
+  // Paid from carried cargo first, then outpost storage.
+  const price = m.structureUpgradeCost(outpost, hangar); m.cargo = { ...zero, iron: 10 }; outpost.stored = { iron: 300, copper: 200, crystal: 60, ice: 0, radioactive: 20 };
+  const hull = maxHealth(hangar); hangar.health = hull - 40; assert.ok(m.upgradeStructure(outpost, hangar), m.message);
+  assert.equal(hangar.level, 2); assert.equal(m.cargo.iron, 0); assert.equal(outpost.stored.iron, 300 - (price.iron - 10)); assert.equal(outpost.stored.copper, 200 - price.copper);
+  assert.equal(hangar.health, maxHealth(hangar) - 40); assert.ok(maxHealth(hangar) > hull);
+  run(m, 2); assert.equal(outpost.drones!.length, 4);
+  // Level 3 needs an Upgrade station.
+  assert.match(m.upgradeStructureError(outpost, hangar) ?? '', /Upgrade station/);
+  m.cargoOverride = 1e9; m.cargo = { ...rich }; m.energy = m.maxEnergy; assert.ok(m.placeStructure('upgradeStation', at.cx, at.cy - 1), m.message); run(m, 6);
+  assert.equal(m.upgradeStructureError(outpost, hangar), undefined);
+  const before = turretOf(turret)!.damage; for (let level = 1; level < 5; level++) { m.energy = m.maxEnergy; assert.ok(m.upgradeStructure(outpost, turret), m.message); }
+  assert.equal(turret.level, 5); assert.ok(turretOf(turret)!.damage > before * 2); assert.match(m.upgradeStructureError(outpost, turret) ?? '', /Maximum/); assert.equal(m.upgradeStructure(outpost, turret), false);
+  // A level-5 Upgrade station makes later upgrades cheaper.
+  const station = block('upgradeStation'), full = m.structureUpgradeCost(outpost, hangar).iron; station.level = 5; outpost.revision++;
+  assert.equal(m.structureUpgradeCost(outpost, hangar).iron, Math.ceil(STRUCTURES.droneHangar.cost.iron * hangar.level * (1 - MODULES.builder.levels[4].buildDiscount! / 100) * (1 - STRUCTURE_SPECIAL.fabrication))); assert.ok(m.structureUpgradeCost(outpost, hangar).iron < full);
+  // Out of range of the Build module: no work.
+  m.player.x += 3000; assert.match(m.upgradeStructureError(outpost, hangar) ?? '', /range/);
+});
+
+test('manual and automatic repairs always cost iron', () => {
+  const { m, outpost, block } = fort([[1, 0, 'reactor'], [0, 1, 'repairStation'], [-1, 0, 'wall']]), wall = block('wall');
+  m.modules = m.modules.map(x => ({ ...x, level: 1 })); m.cargoOverride = undefined; m.cargo = { ...zero }; outpost.stored = { ...zero };
+  m.damageStructure(outpost, wall, 100); const hurt = wall.health;
+  assert.match(m.repairStructureError(outpost, wall) ?? '', /Not enough iron/); assert.equal(m.repairStructure(outpost, wall), false);
+  run(m, 3); assert.equal(wall.health, hurt);
+  // The station repairs from stored iron and battery energy.
+  outpost.stored.iron = 50; outpost.energy = 200; run(m, 3);
+  const mended = wall.health - hurt; assert.ok(mended > 20); assert.ok(50 - outpost.stored.iron >= Math.floor(mended * OUTPOST.repairIronPerHp) - 1); assert.ok(outpost.stored.iron < 50);
+  // Manual repair pays the listed price and tops the block up.
+  m.damageStructure(outpost, wall, 80); const cost = m.structureRepairCost(wall).iron; m.cargo.iron = cost; outpost.stored.iron = 0;
+  assert.ok(m.repairStructure(outpost, wall), m.message); assert.equal(wall.health, maxHealth(wall)); assert.equal(m.cargo.iron, 0);
+  assert.match(m.repairStructureError(outpost, wall) ?? '', /No damage/);
+});
+
+test('shield generators absorb hits within their radius, recharge from the battery, and reflect at level 5', () => {
+  const { m, outpost, at, block } = fort([[1, 0, 'reactor'], [-1, 0, 'shieldGenerator'], [0, 1, 'wall']]), wall = block('wall'), gen = block('shieldGenerator');
+  run(m, 40); const cap = outpostStats(outpost).shieldCapacity; assert.equal(cap, STRUCTURES.shieldGenerator.shield); assert.equal(outpost.shield, cap);
+  m.damageStructure(outpost, wall, 60); assert.equal(wall.health, maxHealth(wall)); assert.equal(outpost.shield, cap - 60);
+  // No recharge during the delay, then it climbs again and costs energy.
+  run(m, 1); assert.equal(outpost.shield, cap - 60);
+  outpost.energy = 50; const energy = outpost.energy; run(m, OUTPOST.shieldDelay + 2); assert.ok(outpost.shield! > cap - 60); assert.ok(outpost.energy! < energy + (OUTPOST.shieldDelay + 3) * outpostStats(outpost).generation);
+  // A hit bigger than the pool spills through to the hull.
+  outpost.shield = 20; m.damageStructure(outpost, wall, 50); assert.equal(outpost.shield, 0); assert.equal(wall.health, maxHealth(wall) - 30);
+  // Blocks outside the radius are not covered.
+  m.cargo = { ...rich }; let last = at.cx; for (let dx = 2; dx <= 9; dx++) { m.energy = m.maxEnergy; assert.ok(m.placeStructure('wall', at.cx + dx, at.cy), m.message); last = at.cx + dx; }
+  run(m, 4); const far = outpost.structures.find(s => s.cx === last)!; outpost.shield = cap; m.damageStructure(outpost, far, 40); assert.equal(far.health, maxHealth(far) - 40); assert.equal(outpost.shield, cap);
+  // Level 5 reflects a quarter of what the shield absorbs at whoever fired.
+  gen.level = 5; outpost.revision++; outpost.shield = 100; m.enemies = [dummy(90, pos(wall).x, pos(wall).y + 300)];
+  m.damageStructure(outpost, wall, 40, 90); assert.equal(m.enemies[0].health, 5000 - 40 * STRUCTURE_SPECIAL.reflect);
+});
+
+test('turret fire heats the outpost; overheated turrets pause until coolers bring it down', () => {
+  const { m, outpost, at, block } = fort([[1, 0, 'reactor'], [0, 1, 'railgunTurret', 3], [-1, 0, 'railgunTurret', 3]]), a = block('railgunTurret');
+  m.modules = []; m.enemies = [dummy(91, pos(a).x, pos(a).y - 420)];
+  const heatCap = outpostStats(outpost).heatCapacity; assert.equal(heatCap, STRUCTURES.outpostCore.heatCapacity);
+  let overheated = false, shotsWhileHot = 0;
+  for (let i = 0; i < 1200; i++) { outpost.energy = 200; const hot = outpost.overheated; m.bullets = m.bullets.filter(b => !b.turret); m.update(0.05, idle); if (hot && outpost.overheated && m.bullets.some(b => b.turret)) shotsWhileHot++; overheated ||= Boolean(outpost.overheated); }
+  assert.ok(overheated); assert.equal(shotsWhileHot, 0);
+  // A cooling unit raises capacity and dissipation.
+  m.modules = [{ x: 1, y: 0, kind: 'builder', level: 5, cooldown: 0, integrity: 999 }]; m.cargo = { ...rich }; m.energy = m.maxEnergy; m.enemies = [];
+  assert.ok(m.placeStructure('coolingUnit', at.cx + 2, at.cy), m.message); run(m, 6);
+  const cooled = outpostStats(outpost); assert.equal(cooled.heatCapacity, heatCap + STRUCTURES.coolingUnit.heatCapacity!); assert.equal(cooled.cooling, STRUCTURES.outpostCore.cooling! + STRUCTURES.coolingUnit.cooling!);
+  // Level-5 cooler: an overheat is purged instead of stopping the guns.
+  const cooler = block('coolingUnit'); cooler.level = 5; outpost.revision++; outpost.heat = outpostStats(outpost).heatCapacity + 5; outpost.overheated = false; outpost.purgeCooldown = 0; m.update(0.05, idle);
+  assert.equal(outpost.overheated, false); assert.ok(outpost.heat! < outpostStats(outpost).heatCapacity * 0.6); assert.ok(outpost.purgeCooldown! > 0);
+});
+
+test('level-5 turret, core, wall, storage, reactor, radar and docking specials do what they say', () => {
+  const { m, outpost, block } = fort([[1, 0, 'reactor'], [0, 1, 'autocannonTurret', 3], [-1, 0, 'missileTurret', 3], [1, 1, 'railgunTurret', 3], [-1, 1, 'storage'], [2, 0, 'wall'], [2, 1, 'radarTower'], [0, 2, 'coolingUnit'], [1, 2, 'coolingUnit'], [-1, 2, 'dockingStation']]);
+  m.modules = []; const set = (kind: StructureKind, level: number) => { block(kind).level = level; block(kind).health = maxHealth(block(kind)); outpost.revision++; };
+  // Storage compression and radar range.
+  const baseStore = outpostStats(outpost).storageCapacity; set('storage', 5); assert.equal(outpostStats(outpost).storageCapacity, Math.round(baseStore - STRUCTURES.storage.storage! + STRUCTURES.storage.storage! * 3 * (1 + STRUCTURE_SPECIAL.compression)));
+  assert.equal(outpostStats(outpost).radar, STRUCTURES.radarTower.radar); set('radarTower', 5); assert.equal(outpostStats(outpost).radar, STRUCTURE_SPECIAL.radar);
+  // Wall plating.
+  const wall = block('wall'); set('wall', 5); const hull = wall.health; m.damageStructure(outpost, wall, 100); assert.equal(wall.health, hull - 100 * (1 - STRUCTURE_SPECIAL.wallReduction));
+  // Reactor overdrive only while the battery is low.
+  set('reactor', 5); const stats = outpostStats(outpost); assert.equal(stats.overdrive, STRUCTURES.reactor.generation! * 3);
+  outpost.energy = 0; m.update(0.05, idle); const lowGain = outpost.energy!; outpost.energy = stats.energyCapacity * 0.5; m.update(0.05, idle); const normalGain = outpost.energy! - stats.energyCapacity * 0.5;
+  assert.ok(Math.abs(lowGain - (stats.generation + stats.overdrive) * 0.05) < 1e-6); assert.ok(Math.abs(normalGain - stats.generation * 0.05) < 1e-6);
+  // Turret specials, with a target straight ahead of all three.
+  const cannon = block('autocannonTurret'); m.enemies = [dummy(92, pos(cannon).x, pos(cannon).y - 360, 1e7)];
+  const fire = (seconds: number) => { const seen = new Map<number, Bullet>(); for (let i = 0; i < seconds / 0.05; i++) { outpost.energy = stats.energyCapacity; outpost.heat = 0; outpost.overheated = false; m.update(0.05, idle); for (const b of m.bullets) if (b.turret) seen.set(b.id, { ...b }); } return [...seen.values()]; };
+  const plain = fire(6); const cannonShots = plain.filter(b => b.weapon === 'cannon').length; assert.ok(plain.every(b => !b.enhanced)); assert.equal(plain.filter(b => b.rocket && b.damage! < 40).length, 0);
+  set('autocannonTurret', 5); set('missileTurret', 5); set('railgunTurret', 5); set('outpostCore', 5); outpost.structures.forEach(s => { s.shots = 0; s.ramp = 0; }); outpost.command = 0; outpost.commandCooldown = 0;
+  const special = fire(6), missile = turretOf(block('missileTurret'))!;
+  assert.ok(special.filter(b => b.weapon === 'cannon').length > cannonShots * 1.25);
+  const big = special.filter(b => b.rocket && b.damage === missile.damage).length, minis = special.filter(b => b.rocket && b.guided && Math.abs(b.damage! - missile.damage * STRUCTURE_SPECIAL.swarm.fraction) < 1e-9).length;
+  assert.ok(big >= 2); assert.equal(minis, big * STRUCTURE_SPECIAL.swarm.count);
+  const rails = special.filter(b => b.weapon === 'rail'); assert.ok(rails.length >= 3); assert.equal(rails.filter(b => b.enhanced).length, Math.floor(rails.length / STRUCTURE_SPECIAL.railEvery));
+  assert.ok(outpost.commandCooldown! > 0);
+  // Rapid Service makes docking repairs cheaper.
+  const dock = block('dockingStation'); m.enemies = []; m.bullets = []; m.player.x = pos(dock).x + 40; m.player.y = pos(dock).y + 40; m.update(0.05, idle);
+  m.cargoOverride = undefined; m.cargo = { ...zero }; outpost.stored = { ...zero, iron: 100 }; m.player.health = m.maxHealth - 50; const normal = m.repairCost.iron;
+  set('dockingStation', 5); m.update(0.05, { ...idle, dock: true }); assert.equal(m.player.health, m.maxHealth); assert.equal(outpost.stored.iron, 100 - Math.ceil(normal * (1 - STRUCTURE_SPECIAL.rapidService)));
+});
+
+test('a drone repair bay shortens servicing and the level-5 swarm goes for valuable ore', () => {
+  const { m, outpost, at, block } = fort([[1, 0, 'reactor'], [0, 1, 'storage'], [-1, 0, 'droneHangar']]), hangar = block('droneHangar'), home = pos(hangar);
+  m.asteroids = [rockAt(801, home.x - 150, home.y, 5000, 'iron'), rockAt(802, home.x - 520, home.y + 80, 5000, 'crystal')];
+  run(m, 3); assert.ok(outpost.drones!.every(d => d.target === 801));
+  // Without a bay a serviced drone sits out the long timer; with one, the short timer.
+  const d = outpost.drones![0]; d.state = 'returning'; d.load = 0; d.ore = undefined; d.trips = DRONES.serviceEvery - 1; d.x = home.x; d.y = home.y; d.target = undefined; m.update(0.05, idle);
+  assert.equal(d.state, 'idle'); assert.equal(d.timer, DRONES.serviceTime); assert.equal(d.trips, 0);
+  m.cargo = { ...rich }; m.energy = m.maxEnergy; assert.ok(m.placeStructure('droneRepairBay', at.cx, at.cy - 1), m.message); run(m, 5);
+  d.state = 'returning'; d.load = 0; d.trips = DRONES.serviceEvery - 1; d.x = home.x; d.y = home.y; d.target = undefined; m.update(0.05, idle); assert.equal(d.timer, DRONES.bayServiceTime);
+  // Level-5 hangar: ten drones, valuable ore first, spread across rocks.
+  hangar.level = 5; outpost.revision++; outpost.drones = []; outpost.energy = 500; outpost.stored = { ...zero };
+  for (let i = 0; i < 400; i++) { outpost.energy = 500; m.update(0.05, idle); }
+  assert.equal(outpost.drones.length, 10); const crystal = outpost.drones.filter(x => x.target === 802 || x.ore === 'crystal').length; assert.ok(crystal >= DRONES.perAsteroid);
+});
+
+test('raids target valuable outposts, arrive near the ship, attack blocks and break off when hurt', () => {
+  const { m, outpost, block } = fort([[1, 0, 'storage'], [-1, 0, 'reactor'], [0, 1, 'wall']]);
+  m.modules = []; const centre = pos(block('outpostCore'));
+  m.player.x = centre.x - 1500; m.player.y = centre.y; m.update(0.05, idle);
+  // A poor outpost is not worth raiding.
+  outpost.stored = { ...zero }; outpost.raidTimer = 0.01; m.update(0.05, idle); m.update(0.05, idle);
+  assert.equal(m.enemies.filter(e => e.raidParty).length, 0); assert.ok(outpost.raidTimer! > OUTPOST.raid.interval[0] - 1);
+  // A rich one is: with no radar the party simply arrives.
+  outpost.stored = { ...zero, iron: 400 }; outpost.raidTimer = 0.01; m.update(0.05, idle); m.update(0.05, idle);
+  const party = m.enemies.filter(e => e.raidParty); assert.equal(party.length, OUTPOST.raid.size[Math.min(OUTPOST.raid.size.length, m.dangerAt(centre)) - 1]);
+  assert.ok(party.every(e => e.raid === outpost.id && e.populationExempt)); assert.match(m.message, /RAID/);
+  for (const e of party) assert.ok(Math.hypot(e.x - m.player.x, e.y - m.player.y) > 900);
+  // They close in and their fire damages blocks.
+  const hull = () => outpost.structures.reduce((n, s) => n + s.health, 0), before = hull(); let closest = Infinity;
+  for (let i = 0; i < 700 && m.outposts.length; i++) { m.player.health = m.maxHealth; m.update(0.05, idle); for (const e of m.enemies) if (e.raidParty) closest = Math.min(closest, Math.hypot(e.x - centre.x, e.y - centre.y)); }
+  assert.ok(closest < 500); assert.ok(!m.outposts.length || hull() < before);
+});
+
+test('radar gives warning of a raid and hurt raiders leave without paying out', () => {
+  const { m, outpost, block } = fort([[1, 0, 'storage'], [-1, 0, 'radarTower']]);
+  m.modules = []; const centre = pos(block('outpostCore')); m.player.x = centre.x - 1400; m.update(0.05, idle);
+  outpost.stored = { ...zero, iron: 400 }; outpost.raidTimer = 0.01; m.update(0.05, idle);
+  assert.ok(Math.abs(outpost.raidWarning! - OUTPOST.raid.radarWarning) < 0.1); assert.match(m.message, /RADAR/); assert.equal(m.enemies.filter(e => e.raidParty).length, 0);
+  run(m, OUTPOST.raid.radarWarning - 1); assert.equal(m.enemies.filter(e => e.raidParty).length, 0);
+  run(m, 1.5); const party = m.enemies.filter(e => e.raidParty); assert.ok(party.length > 0);
+  // Badly damaged raiders run and eventually vanish with no kill or loot.
+  const kills = m.kills; m.drops = []; for (const e of party) e.health = ENEMIES[e.kind!].health * 0.1;
+  const start = party.map(e => Math.hypot(e.x - centre.x, e.y - centre.y)); run(m, 4);
+  party.forEach((e, i) => assert.ok(e.health <= 0 || Math.hypot(e.x - centre.x, e.y - centre.y) > start[i]));
+  for (const e of party) { e.x = centre.x + OUTPOST.raid.giveUp + 500; }
+  run(m, 0.2); assert.equal(m.enemies.filter(e => e.raidParty).length, 0); assert.equal(m.kills, kills); assert.equal(m.drops.length, 0);
+});
+
+test('time away is banked and settled on return: drones only take ore that is really there', () => {
+  const { m, outpost, block } = fort([[1, 0, 'reactor'], [0, 1, 'storage'], [-1, 0, 'droneHangar']]), home = pos(block('droneHangar')), centre = pos(block('outpostCore'));
+  m.modules = []; m.drops = []; outpost.stored = { ...zero }; outpost.raidTimer = 1e9;
+  const back = { x: m.player.x, y: m.player.y };
+  // Away: nothing is simulated, the clock just runs (capped).
+  m.player.x = centre.x + OUTPOST.activeRange + 1500; m.asteroids = []; for (let i = 0; i < 200; i++) m.update(0.05, idle);
+  assert.ok(Math.abs(outpost.away! - 10) < 0.2); assert.equal(storedTotal(outpost), 0); assert.ok(outpost.drones!.every(d => d.state === 'idle'));
+  outpost.away = 1e9; m.update(0.05, idle); assert.equal(outpost.away, OUTPOST.awayCap);
+  // Return with 90 ore in range: at most 90 arrives, exactly matching what left the rocks.
+  outpost.away = 600; m.asteroids = [rockAt(901, home.x - 200, home.y, 60), rockAt(902, home.x - 300, home.y + 100, 30, 'copper'), rockAt(903, home.x - DRONES.range - 600, home.y, 500)];
+  m.player.x = back.x; m.player.y = back.y; m.update(0.05, idle);
+  const work = Math.floor(2 * DRONES.awayRate * 600); assert.ok(work > 90);
+  assert.equal(outpost.away, 0); assert.deepEqual(outpost.stored, { ...zero, iron: 60, copper: 30 }); assert.ok(!m.asteroids.some(a => a.id === 901 || a.id === 902)); assert.equal(m.asteroids.find(a => a.id === 903)!.amount, 500);
+  assert.match(m.message, /while you were away/); assert.match(outpost.report ?? '', /drones stored 90 ore/); assert.equal(m.drops.reduce((n, d) => n + d.amount, 0), 0);
+  // Limited by banked work and by storage room.
+  m.player.x = centre.x + OUTPOST.activeRange + 1500; m.update(0.05, idle); outpost.away = 30; m.asteroids = [rockAt(904, home.x - 200, home.y, 5000)];
+  m.player.x = back.x; m.update(0.05, idle); assert.equal(outpost.stored.iron, 60 + Math.floor(2 * DRONES.awayRate * 30)); assert.equal(m.asteroids[0].amount, 5000 - Math.floor(2 * DRONES.awayRate * 30));
+  m.player.x = centre.x + OUTPOST.activeRange + 1500; m.update(0.05, idle); outpost.away = OUTPOST.awayCap; const room = outpostStats(outpost).storageCapacity - storedTotal(outpost);
+  m.player.x = back.x; m.update(0.05, idle); assert.equal(storedTotal(outpost), outpostStats(outpost).storageCapacity); assert.equal(m.asteroids[0].amount, 5000 - Math.floor(2 * DRONES.awayRate * 30) - room);
+  // No power, no mining.
+  const reactor = block('reactor'), core = block('outpostCore'); void core; m.damageStructure(outpost, reactor, 9999); outpost.stored = { ...zero };
+  assert.ok(outpostStats(outpost).generation > 0);
+});
+
+test('raids banked while away damage the outpost unless its defences cover them; repairs still cost iron', () => {
+  const build = (blocks: [number, number, StructureKind, number?][]) => { const f = fort(blocks); f.m.modules = []; f.outpost.raidTimer = 1e9; return f; };
+  const leaveAndReturn = (f: ReturnType<typeof fort>, seconds: number, raids: number) => {
+    const centre = pos(f.block('outpostCore')), back = f.m.player.x; f.m.asteroids = [];
+    f.m.player.x = centre.x + OUTPOST.activeRange + 1500; f.m.update(0.05, idle); f.outpost.away = seconds; f.outpost.pendingRaids = raids; f.m.player.x = back; f.m.update(0.05, idle);
+  };
+  // Undefended: the raid's damage lands on power blocks first.
+  const weak = build([[1, 0, 'reactor'], [-1, 0, 'wall'], [0, 1, 'wall']]), level = Math.min(OUTPOST.raid.awayDamage.length, weak.m.dangerAt(pos(weak.block('outpostCore')))), damage = OUTPOST.raid.awayDamage[level - 1];
+  const hull = weak.outpost.structures.reduce((n, s) => n + s.health, 0); leaveAndReturn(weak, 300, 1);
+  const left = weak.m.outposts.length ? weak.outpost.structures.reduce((n, s) => n + s.health, 0) : 0;
+  assert.ok(hull - left >= Math.min(damage, STRUCTURES.reactor.health)); assert.ok(!weak.outpost.structures.some(s => s.kind === 'reactor') || damage < STRUCTURES.reactor.health);
+  assert.equal(weak.outpost.pendingRaids, 0); assert.match(weak.outpost.report ?? weak.m.message, /raid/);
+  // Well defended: turrets and shields cover the raid and nothing is lost.
+  const strong = build([[1, 0, 'reactor'], [-1, 0, 'railgunTurret'], [0, 1, 'railgunTurret'], [1, 1, 'missileTurret'], [-1, 1, 'shieldGenerator'], [0, -1, 'autocannonTurret'], [1, -1, 'autocannonTurret']]);
+  for (const s of strong.outpost.structures) if (STRUCTURES[s.kind].turret) { s.level = 5; s.health = maxHealth(s); } strong.outpost.revision++;
+  const blocks = strong.outpost.structures.length, total = strong.outpost.structures.reduce((n, s) => n + s.health, 0); leaveAndReturn(strong, 300, 1);
+  assert.equal(strong.outpost.structures.length, blocks); assert.equal(strong.outpost.structures.reduce((n, s) => n + s.health, 0), total); assert.match(strong.outpost.report ?? '', /repelled/);
+  // Repair stations mend during the absence only as far as stored iron allows.
+  const mend = build([[1, 0, 'reactor'], [0, 1, 'repairStation'], [-1, 0, 'reinforcedWall']]), wall = mend.block('reinforcedWall');
+  mend.m.damageStructure(mend.outpost, wall, 300); mend.outpost.stored = { ...zero, iron: 8 }; const hurt = wall.health; leaveAndReturn(mend, 600, 0);
+  assert.equal(wall.health, hurt + Math.floor(8 / OUTPOST.repairIronPerHp)); assert.equal(mend.outpost.stored.iron, 0);
+  mend.outpost.stored.iron = 0; const stuck = wall.health; leaveAndReturn(mend, 600, 0); assert.equal(wall.health, stuck);
+});
+
+test('shield, heat, raid and away state survive a save', () => {
+  const { m, outpost, block } = fort([[1, 0, 'reactor'], [-1, 0, 'shieldGenerator'], [0, 1, 'droneHangar']]);
+  block('droneHangar').level = 3; outpost.revision++; run(m, 2);
+  Object.assign(outpost, { shield: 77, heat: 12.5, away: 0, raidTimer: 123, pendingRaids: 0, raidWarning: 0, commandCooldown: 4 });
+  const restored = GameModel.fromSave(JSON.parse(JSON.stringify(m.toSave()))), copy = restored.outposts[0];
+  assert.equal(copy.shield, 77); assert.equal(copy.heat, 12.5); assert.equal(copy.raidTimer, 123); assert.equal(copy.structures.find(s => s.kind === 'droneHangar')!.level, 3);
+  assert.equal(copy.drones!.length, 6); assert.deepEqual(outpostStats(copy), outpostStats(outpost));
 });

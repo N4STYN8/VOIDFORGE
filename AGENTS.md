@@ -173,3 +173,5 @@ Permission for one operation does not imply permission for another.
 ### 10. Most important rule
 
 Protect both developers' work. Always synchronize safely before starting new work. Never discard another developer's changes. Never automatically push. Never automatically merge. Never automatically deploy. When uncertain, STOP and ask. Development work stays local until the user explicitly authorizes the next Git operation.
+
+Outposts (user brief, all eight phases built): block types, costs and per-level scaling are STRUCTURES, STRUCTURE_LEVELS, STRUCTURE_ABILITIES, STRUCTURE_SPECIAL, DRONES and OUTPOST in src/data.ts; grid and stat helpers are in src/outposts.ts; rules live in the model. Keep these invariants: blocks sit on the world-aligned grid; minerals only move (ship cargo, outpost storage, drones, pickups) and are never created or deleted; drones and away-mining take ore from real asteroids through mineMaterial; repairs and upgrades always cost minerals; distant outposts are not simulated, they bank time and settle on return; outposts are an optional saved field.

@@ -512,7 +512,7 @@ const STEEL = [0x14181f, 0x232a34, 0x343d4a, 0x4a5565, 0x6a7688], BRASS = [0x5c4
  * Paints one 16x16 block at (x, y). `mask` marks joined neighbours (1 east, 2 south, 4 west, 8 north):
  * open sides get a brass frame, joined sides get a riveted seam and a copper pipe run to the neighbour.
  */
-function paintBlock(ctx: Ctx, x: number, y: number, kind: StructureKind, mask: number, damage: number, built: boolean, id: number) {
+function paintBlock(ctx: Ctx, x: number, y: number, kind: StructureKind, mask: number, damage: number, built: boolean, id: number, level = 1) {
   const size = OUTPOST.cell, px = (dx: number, dy: number, color: number, w = 1, h = 1) => dot(ctx, x + dx, y + dy, color, w, h), reinforced = kind === 'reinforcedWall';
   if (!built) {
     // Scaffold: dark footing, dashed brass outline and diagonal bracing until construction finishes.
@@ -557,6 +557,27 @@ function paintBlock(ctx: Ctx, x: number, y: number, kind: StructureKind, mask: n
     // Boiler core: glowing chamber in a brass collar with four copper feeds.
     px(7, 2, COPPER[1], 2, 12); px(2, 7, COPPER[1], 12, 2);
     for (let gy = -5; gy <= 5; gy++) for (let gx = -5; gx <= 5; gx++) { const d = Math.hypot(gx + 0.5, gy + 0.5); if (d < 2.2) px(8 + gx, 8 + gy, 0xfff0c0); else if (d < 3.4) px(8 + gx, 8 + gy, 0xffb347); else if (d < 4.6) px(8 + gx, 8 + gy, gx + gy < 0 ? BRASS[3] : BRASS[1]); }
+  } else if (kind === 'shieldGenerator') {
+    // Emitter: cyan lens in a brass cradle with four projector studs.
+    for (let gy = -5; gy <= 5; gy++) for (let gx = -5; gx <= 5; gx++) { const d = Math.hypot(gx + 0.5, gy + 0.5); if (d < 2.4) px(8 + gx, 8 + gy, 0xdff8ff); else if (d < 3.6) px(8 + gx, 8 + gy, 0x79dfff); else if (d < 4.8) px(8 + gx, 8 + gy, gx + gy < 0 ? BRASS[3] : BRASS[1]); }
+    for (const [gx, gy] of [[3, 3], [12, 3], [3, 12], [12, 12]]) px(gx, gy, 0x79dfff);
+  } else if (kind === 'coolingUnit') {
+    // Radiator: vent slats around a fan well (the blades are drawn live).
+    px(3, 3, STEEL[0], 10, 10); for (const gy of [4, 6, 9, 11]) px(4, gy, 0x718b9c, 8, 1);
+    for (let gy = -3; gy <= 3; gy++) for (let gx = -3; gx <= 3; gx++) if (Math.hypot(gx + 0.5, gy + 0.5) < 3.2) px(8 + gx, 8 + gy, 0x16323c);
+    px(7, 7, 0x9edfff, 2, 2);
+  } else if (kind === 'droneRepairBay') {
+    // Service cradle: clamps either side of a lit pad.
+    px(3, 3, STEEL[0], 10, 10); px(4, 5, STEEL[3], 2, 6); px(10, 5, STEEL[3], 2, 6); px(6, 6, 0x1f3a2a, 4, 4); px(7, 7, 0x8fd08a, 2, 2); px(6, 4, COPPER[1], 4, 1); px(6, 11, COPPER[1], 4, 1);
+  } else if (kind === 'upgradeStation') {
+    // Fabricator: anvil block under a violet focusing crystal.
+    px(3, 9, STEEL[4], 10, 3); px(5, 12, STEEL[3], 6, 1); px(6, 3, 0x7d5fa0, 4, 5); px(7, 2, 0xc7a6ff, 2, 6); px(7, 4, 0xf0e4ff, 1, 2); px(4, 8, BRASS[2], 8, 1);
+  } else if (kind === 'repairStation') {
+    // Repair post: teal cross on a white-edged plate.
+    px(3, 3, STEEL[1], 10, 10); px(4, 4, 0x12322c, 8, 8); px(7, 5, 0x78dec0, 2, 6); px(5, 7, 0x78dec0, 6, 2); px(7, 7, 0xe6fff6, 2, 2);
+  } else if (kind === 'radarTower') {
+    // Radar mast: ringed dish (the sweep line is drawn live).
+    for (let gy = -5; gy <= 5; gy++) for (let gx = -5; gx <= 5; gx++) { const d = Math.hypot(gx + 0.5, gy + 0.5); if (d < 1.4) px(8 + gx, 8 + gy, 0xe8f6ff); else if (d < 4 && d > 3) px(8 + gx, 8 + gy, 0x5f86a8); else if (d < 5.2 && d > 4.4) px(8 + gx, 8 + gy, gx + gy < 0 ? STEEL[4] : STEEL[2]); else if (d < 4.4) px(8 + gx, 8 + gy, 0x10202c); }
   } else if (kind === 'droneHangar') {
     // Hangar bay: dark opening with hazard chevrons and two launch rails.
     px(3, 3, STEEL[0], 10, 10); px(3, 3, BRASS[1], 10, 1); px(3, 12, BRASS[0], 10, 1);
@@ -572,6 +593,8 @@ function paintBlock(ctx: Ctx, x: number, y: number, kind: StructureKind, mask: n
     px(3, 3, STEEL[3], 10, 10); px(3, 3, STEEL[4], 10, 1); px(3, 12, STEEL[0], 10, 1);
     px(5, 3, BRASS[1], 1, 10); px(10, 3, BRASS[1], 1, 10); px(6, 6, 0x7d5fa0, 4, 4); px(6, 6, 0xc599e8, 4, 1); px(7, 8, BRASS[3], 2, 1);
   }
+  // Level pips along the lower edge (levels 2-5).
+  for (let i = 1; i < level; i++) px(3 + (i - 1) * 3, 14, level >= 5 ? 0xffe9a8 : 0x9fd8ff, 2, 1);
   // Wear: cracks and scorch marks accumulate with damage.
   const random = seeded(id * 31 + 7);
   for (let i = 0; i < damage * 4; i++) { const cx = 2 + Math.floor(random() * 12), cy = 2 + Math.floor(random() * 12); px(cx, cy, OUTLINE); px(cx + (random() < 0.5 ? 1 : 0), cy + 1, OUTLINE); if (damage >= 3 && i % 4 === 0) px(cx, cy, 0xff7a3c); }
@@ -579,7 +602,7 @@ function paintBlock(ctx: Ctx, x: number, y: number, kind: StructureKind, mask: n
 /** Bakes a whole outpost into one canvas; redrawn only when the outpost's revision changes. Returns the canvas and the world position of its top-left corner. */
 export function paintOutpost(outpost: Outpost) {
   const b = bounds(outpost), size = OUTPOST.cell, pad = 1, canvas = canvasOf((b.maxX - b.minX + 1) * size + pad * 2, (b.maxY - b.minY + 1) * size + pad * 2), ctx = canvas.getContext('2d')!;
-  for (const s of outpost.structures) paintBlock(ctx, pad + (s.cx - b.minX) * size, pad + (s.cy - b.minY) * size, s.kind, neighbourMask(outpost, s), wear(s), s.progress >= 1, s.id);
+  for (const s of outpost.structures) paintBlock(ctx, pad + (s.cx - b.minX) * size, pad + (s.cy - b.minY) * size, s.kind, neighbourMask(outpost, s), wear(s), s.progress >= 1, s.id, s.level);
   // One-pixel dark outline around the joined silhouette.
   const { width, height } = canvas, image = ctx.getImageData(0, 0, width, height), data = image.data, solid = new Uint8Array(width * height);
   for (let i = 0; i < solid.length; i++) solid[i] = data[i * 4 + 3] ? 1 : 0;
