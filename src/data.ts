@@ -223,6 +223,19 @@ export function statsLabel(stats: EquipmentStats) {
 }
 export const BUILD_GRID = { radius: 3, cellSize: 16, pickupBonus: 30 };
 /**
+ * Fleet: extra ships are bought at a station from stored minerals. Each further ship costs `growth` more
+ * than the last. Only one ship flies at a time; the others wait in the hangar with their own core level,
+ * modules and hull damage. `nameLength` caps ship names.
+ */
+export const FLEET = {
+  cost: cost(250, 120, 40), growth: 0.6, nameLength: 22,
+  /** Hull paints. Index 0 is bare metal (no recolour). `strength` is how far hull greys move toward the paint colour. */
+  paints: [{ name: 'Steel', color: 0x8194a2 }, { name: 'Crimson', color: 0xd9534f }, { name: 'Cobalt', color: 0x3f7fe0 }, { name: 'Emerald', color: 0x3fbf7f }, { name: 'Amber', color: 0xe8a33a }, { name: 'Violet', color: 0x9a6ae0 }, { name: 'Bone', color: 0xe6dcc8 }, { name: 'Onyx', color: 0x4a4f5c }],
+  paintStrength: 0.62,
+};
+/** Player map markers placed on the sector map. */
+export const WAYPOINTS = { max: 12, pickRadius: 14, colors: [0xffd166, 0x7fd6f2, 0xff8fa3, 0x9be0a0, 0xc7a6ff, 0xffb070] };
+/**
  * Player-built outposts. Blocks sit on a world-aligned construction grid whose cell equals a ship
  * module tile. `radius` is how many cells from its core an outpost may extend; `coreSpacing` and
  * `baseClearance` keep cores apart and away from stations. Building spends carried cargo and

@@ -66,3 +66,23 @@ body.hud-compact { --cockpit-left:230px; --cockpit-right:190px; } body.hud-compa
 #cockpit-top { z-index:8; } #cockpit-session { z-index:9; }
 #hud,#tactical { background:#07141f; } .cockpit-panel { background:#071720; }
 @media(min-width:1400px) { .nav-destination { display:inline; } }
+/* Detailed instrument housings: flat pixel-scale seams and hard bevels, no world art changes. */
+#cockpit #nav-radar { position:static; inset:auto; width:100%; max-width:none; padding:0; border:0; background:transparent; box-shadow:none; } #cockpit #nav-radar header { font-size:9px; padding:0 0 8px; gap:4px; } #cockpit #nav-radar canvas { width:100%; height:auto; border-radius:50%; border:2px solid #254d5d; outline:1px solid #63b9c3; outline-offset:3px; margin:5px 0 8px; image-rendering:pixelated; } #cockpit #nav-radar button { font-size:9px; padding:2px 5px; border:1px solid #46798a; background:#102735; }
+#compass { top:61px; left:calc(var(--cockpit-left) + 53px); right:calc(var(--cockpit-right) + 53px); width:calc(100vw - var(--cockpit-left) - var(--cockpit-right) - 106px); height:68px; max-width:none; transform:none; z-index:3; }
+#boss-bar { top:136px; } #horde-banner { top:136px; } #horde-banner.boss-below { top:232px; }
+#hud { box-shadow:inset 3px 0 #182e3e,inset -3px 0 #020b14,inset 0 3px #325463,inset 0 -3px #102433; border-color:#436b7a; }
+.cockpit-panel { position:relative; box-shadow:inset 3px 0 #173443,inset -3px 0 #020c15,inset 0 3px #2b5261,inset 0 -3px #102533; border-color:#4f8c97; }
+.cockpit-panel::before { content:''; position:absolute; inset:5px; border:1px solid #153642; pointer-events:none; clip-path:inherit; }
+.cockpit-panel::after { content:''; position:absolute; right:8px; bottom:7px; width:3px; height:3px; background:#668e9b; box-shadow:-7px 0 #1f4454,-14px 0 #1f4454; pointer-events:none; }
+.cockpit-panel>header { padding-left:5px; border-left:2px solid #4b9dac; background:#0a1c26; text-shadow:1px 1px #01060c; }
+#hud .vital-icon { padding:3px; width:27px; height:27px; top:5px; background:#07151e; border:1px solid #285567; clip-path:polygon(5px 0,calc(100% - 5px) 0,100% 5px,100% calc(100% - 5px),calc(100% - 5px) 100%,5px 100%,0 calc(100% - 5px),0 5px); }
+#hud .vital-bar,#hud .cargo-meter { position:relative; border:1px solid #254b5b; height:10px; box-shadow:inset 0 2px #020a12; } #hud .vital-bar::after,#hud .cargo-meter::after { content:''; position:absolute; inset:0; background:repeating-linear-gradient(90deg,transparent 0,transparent 20px,#06131baa 20px,#06131baa 22px); pointer-events:none; }
+#hud .vital-bar i { box-shadow:inset 0 2px #ffffff45,inset 0 -2px #00000066; } #hud .cargo-meter { height:7px; }
+#hud .boost-status { border:1px solid #254b5b; border-left:3px solid #6ab5c7; background:#0c2531; box-shadow:inset 0 1px #ffffff0b; } #hud .section-label { padding-top:3px; border-top:1px solid #0b2635; }
+#hud .resource-table tbody tr { border-bottom:1px solid #102735; } #hud .resource-table th i { border:1px solid #ffffff33; box-shadow:1px 1px #010812; }
+.command-icon { position:relative; width:56px; height:39px; border:1px solid #70c8d0; background:#0d2937; box-shadow:inset 3px 3px #325263,inset -3px -3px #020b13; } .command-icon::before { content:''; position:absolute; inset:4px; border:1px solid #23596a; clip-path:inherit; } .command-icon::after { content:''; position:absolute; bottom:6px; right:7px; width:3px; height:2px; background:currentColor; }
+#command-console { box-shadow:inset 0 3px #365464,inset 0 -4px #020b14; background:#081a26; } #command-console button { border-inline:1px solid #153745; } #command-console button:not(:disabled) .command-icon svg { filter:drop-shadow(1px 1px #010711); }
+.weapon-charge { position:relative; height:6px; border:1px solid #214754; } .weapon-charge::after { content:''; position:absolute; inset:0; background:repeating-linear-gradient(90deg,transparent 0,transparent 11px,#04111b 11px,#04111b 13px); } #weapon-status>div { box-shadow:inset 0 1px #214351,inset 0 -1px #030c15; }
+@media(max-width:1000px) { #compass { height:48px; } #boss-bar { top:113px; } }
+@media(max-width:650px) { #compass { display:none; } #boss-bar { top:65px; } #cockpit #nav-radar canvas { margin:3px 0; } #cockpit #nav-radar header { flex-wrap:wrap; font-size:8px; } .command-icon { width:34px; height:30px; } #hud .vital-icon { display:none; } }
+#cockpit #nav-radar { pointer-events:auto; }

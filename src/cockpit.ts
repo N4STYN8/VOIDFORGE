@@ -46,17 +46,8 @@ this.root.querySelector('#cockpit-session')!.append(session);
   const commands:[CockpitAction,string,string,string,boolean][]=[['boost','Shift','Burst',model.boostActive?'ACTIVE':engines.length?(model.boostReady?'READY':`${Math.ceil(cooldown)}s`):'L2 ENGINE',!engines.length],['overclock','C','Overclock',model.coreLevel<5?'L5 CORE':model.coreAbility.active>0?`${Math.ceil(model.coreAbility.active)}s ACTIVE`:model.coreAbility.cooldown>0?`${Math.ceil(model.coreAbility.cooldown)}s`:'READY',model.coreLevel<5],['shop','Q','Outfitter',model.atStation?'DOCKED':'AT FORGE',!model.atStation],['build','F','Build mode',buildMode?'ACTIVE':model.builder?'AVAILABLE':'BUILD MODULE',!model.builder],['map','M','Sector map','EXPLORED',false],['dock','E','Dock / repair','MINERALS',false],['settings','⚙','Settings','AUDIO / VFX',false]];
   this.write(this.commands,commands.map(([action,key,label,status,locked])=>`<button type="button" data-command="${action}" ${blocked||model.dead||locked?'disabled':''} title="${esc(label)} · ${esc(status)}"><i class="command-icon">${cockpitIcon(action)}</i><span><kbd>${key}</kbd> ${label}<small>${status}</small></span></button>`).join(''));
  }
- drawRadar(model:GameModel,_view?:Point & {width:number;height:number}){
-  const ctx=this.radar.getContext('2d');if(!ctx)return;const size=this.radar.width,c=size/2,r=c-12,range=1600;
-  ctx.clearRect(0,0,size,size);ctx.save();ctx.beginPath();ctx.arc(c,c,r,0,Math.PI*2);ctx.clip();ctx.fillStyle='#05121c';ctx.fillRect(0,0,size,size);
-  const plot=(p:Point)=>({x:c+(p.x-model.player.x)/range*r,y:c+(p.y-model.player.y)/range*r});
-  // Fog is the same explored-cell knowledge as the sector map; no unseen contacts or ore are revealed.
-  ctx.fillStyle='#0b2430';for(const key of model.explored){const [x,y]=key.split(',').map(Number),p=plot({x:x*EXPLORATION.cell,y:y*EXPLORATION.cell});const cell=EXPLORATION.cell/range*r;if(p.x+cell<0||p.y+cell<0||p.x>size||p.y>size)continue;ctx.fillRect(p.x,p.y,cell+1,cell+1);}
-  ctx.strokeStyle='#19404d';ctx.lineWidth=1;for(let i=1;i<=4;i++){ctx.beginPath();ctx.arc(c,c,r*i/4,0,Math.PI*2);ctx.stroke();}for(let i=0;i<8;i++){const a=i*Math.PI/4;ctx.beginPath();ctx.moveTo(c,c);ctx.lineTo(c+Math.cos(a)*r,c+Math.sin(a)*r);ctx.stroke();}
-  for(const rock of model.asteroids){if(!model.isExplored(rock)||Math.hypot(rock.x-model.player.x,rock.y-model.player.y)>range)continue;const p=plot(rock);ctx.fillStyle='#528c9b';ctx.fillRect(Math.round(p.x)-1,Math.round(p.y)-1,3,3);}
-  for(const base of model.bases){if(!model.isExplored(base))continue;const p=plot(base);ctx.strokeStyle=base.unlocked?'#78dec0':'#e0c886';ctx.strokeRect(Math.round(p.x)-4,Math.round(p.y)-4,8,8);}
-  for(const outpost of model.outposts){const p=plot({x:(outpost.cx+.5)*OUTPOST.cell,y:(outpost.cy+.5)*OUTPOST.cell});ctx.strokeStyle='#e0c886';ctx.strokeRect(Math.round(p.x)-3,Math.round(p.y)-3,6,6);}
-  for(const e of model.enemies){if(e.health<=0||!model.isExplored(e)||Math.hypot(e.x-model.player.x,e.y-model.player.y)>1100)continue;const p=plot(e);ctx.fillStyle='#ee7f89';ctx.beginPath();ctx.moveTo(p.x,p.y-5);ctx.lineTo(p.x+4,p.y);ctx.lineTo(p.x,p.y+5);ctx.lineTo(p.x-4,p.y);ctx.closePath();ctx.fill();}
-  ctx.translate(c,c);ctx.rotate(model.player.angle);ctx.fillStyle='#70dce8';ctx.beginPath();ctx.moveTo(9,0);ctx.lineTo(-6,-5);ctx.lineTo(-3,0);ctx.lineTo(-6,5);ctx.closePath();ctx.fill();ctx.restore();ctx.strokeStyle='#4fabb6';ctx.beginPath();ctx.arc(c,c,r,0,Math.PI*2);ctx.stroke();
+ mountRadar(radar:HTMLElement){
+  this.root.querySelector('.radar-button')!.remove();
+  this.root.querySelector('.radar-panel')!.append(radar);
  }
 }

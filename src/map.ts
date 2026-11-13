@@ -1,4 +1,5 @@
 import { EXPLORATION, RESOURCES, WORLD, DANGER, ENEMIES, OUTPOST } from './data.ts';
+import { waypointColor } from './nav.ts';
 import type { GameModel } from './model.ts';
 // Danger never changes for a seed, so each explored cell is rated once.
 const dangerCache = new Map<string, Map<string, number>>();
@@ -43,10 +44,22 @@ export function drawExplorationMap(canvas: HTMLCanvasElement, model: GameModel, 
     ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(x, y - 5); ctx.lineTo(x + 5, y); ctx.lineTo(x, y + 5); ctx.lineTo(x - 5, y); ctx.closePath(); ctx.fill();
     ctx.font = '10px monospace'; ctx.fillText(ENEMIES[site.kind].label + (site.defeated ? ' [CLEARED]' : ' [BOSS]'), Math.min(x + 9, size - 150), y + 4);
   }
+  model.waypoints.forEach((w, i) => {
+    // Player markers: a numbered diamond. Counter-scaled so they stay the same size at any map zoom.
+    const x = w.x * scale, y = w.y * scale, r = 6 / view.zoom;
+    ctx.fillStyle = waypointColor(i); ctx.strokeStyle = '#05070c'; ctx.lineWidth = 1.5 / view.zoom;
+    ctx.beginPath(); ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.font = `${11 / view.zoom}px monospace`; ctx.fillText(String(i + 1), x + r * 1.5, y + r * 0.6);
+  });
   ctx.fillStyle = '#f2808d';
   for (const e of model.enemies) if (model.isExplored(e) && Math.hypot(e.x - model.player.x, e.y - model.player.y) < 1100) { ctx.beginPath(); ctx.arc(e.x * scale, e.y * scale, 2.5, 0, Math.PI * 2); ctx.fill(); }
   const p = model.player;
   ctx.save(); ctx.translate(p.x * scale, p.y * scale); ctx.rotate(p.angle); ctx.fillStyle = '#e6f9ff'; ctx.beginPath(); ctx.moveTo(6, 0); ctx.lineTo(-4, -4); ctx.lineTo(-4, 4); ctx.closePath(); ctx.fill(); ctx.restore();
   ctx.restore();
   ctx.strokeStyle = '#32516a'; ctx.lineWidth = 1; ctx.strokeRect(0.5, 0.5, size - 1, size - 1);
+}
+/** World position under a point of the map canvas, the inverse of the transform drawExplorationMap uses. */
+export function mapToWorld(canvasSize: number, view: { zoom: number; centerX: number; centerY: number }, u: number, v: number) {
+  const scale = canvasSize / WORLD.width;
+  return { x: ((u * canvasSize - canvasSize / 2) / view.zoom + view.centerX * canvasSize) / scale, y: ((v * canvasSize - canvasSize / 2) / view.zoom + view.centerY * canvasSize) / scale };
 }

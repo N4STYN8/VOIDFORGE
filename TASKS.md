@@ -1,5 +1,22 @@
 # Tasks
 
+## Save storage — fixed, needs a real large world
+- [x] Save to IndexedDB with localStorage as the synchronous fallback; newest valid copy loads
+- [x] Trim float digits in save text (about 35% smaller)
+- [x] Backup moved to IndexedDB
+- [ ] Confirm on the live site with the world that failed
+- [ ] If saves keep growing: store asteroid outlines more compactly or drop records for untouched drifting rocks
+
+## HUD, navigation and fleet — built, needs play
+- [x] HUD restyle, alarms, collapsible menu/help and wide-screen scaling
+- [x] Radar minimap with three ranges; compass strip with markers
+- [x] Player map markers (add/remove on the sector map, saved)
+- [x] Multiple ships: buy, rename, hangar, switch at a station; cargo unloaded on switch
+- [x] 180 tests/build and browser checks at 1024x768 and 2000x1125
+- [ ] Human play: HUD size on real monitors, ship price, whether hangar ships should be tied to the station they were left at
+- [x] Per-ship hull paint (eight colours, saved per ship)
+- [ ] Next: show the paint on outfitter grid icons and the radar ship arrow; hull shapes per ship if wanted
+
 ## Moving belts — completed
 - [x] Reusable seeded drifting, elliptical orbital, flowing and static motion definitions
 - [x] Gentle minority ambient drift, cohesive individual variation and independent rotation
@@ -133,3 +150,4 @@
 - [x] Verify responsive center visibility, command behavior, regression tests/build and frame rate
 - [ ] Human cockpit readability pass during combat/mining at the target player's resolution
 - [x] Refine cockpit toward supplied reference: angular armor, stacked icon gauges, circular radar, friendly station thumbnail and icon console; verify 185 tests and responsive controls
+- [x] Add detailed layered cockpit armor, fasteners, vents, segmented instruments; integrate latest fleet/navigation/save systems and verify 203 tests plus browser controls

@@ -122,6 +122,23 @@
 - Browser checks: 33-module ship with eight reactors, search using actual keyboard input, three panels, upgrade comparisons, HUD expansion, Shift burst, effects toggle and volume control; layouts inspected at 1440×1000, 1366×768, 1024×768 and 900×650. No runtime errors.
 - Heavy simultaneous combat/mining/tractor fixture (~245 active ore, eight enemies, seven weapons) measured ~60 FPS in headless Canvas. Software WebGL measured ~35 FPS, motivating the default Canvas renderer and viewport-sized background.
 
+## HUD, navigation and fleet
+- HUD restyled: larger readable vitals with segmented bars, low-hull and high-heat alarms, ship name and fleet count in the header, collapsible session menu and controls help, and interface scaling on wide screens (1.25x from 1700 px, 1.6x from 2300 px).
+- Radar minimap (bottom right, DOM canvas): north-up and centred on the ship with three ranges (wheel or +/-), showing explored space, asteroids, drops, enemies, outposts and markers pinned to the rim. Click opens the sector map.
+- Compass strip (top centre): cardinal points slide with the ship's heading; bases, outposts, boss sites, hordes and player markers sit at their bearing and the one nearest dead ahead is named with its distance.
+- Map markers: click the sector map to drop a numbered marker (up to 12), click it again to remove it. Saved with the world.
+- Fleet: extra ships are bought at a station from stored minerals (each costs 60% more than the last). One ship flies; the others wait in the hangar with their own core level, modules and hull damage. Switching happens in the outfitter and unloads carried cargo to station storage first. Ships can be renamed.
+- Engine modules show exhaust flames under thrust; the nebula backdrop is slightly stronger.
+- Hull paint: eight paints (`FLEET.paints`), picked from swatches in the outfitter fleet strip. Each ship keeps its own; new ships get the next paint. Cosmetic and free. Painted module textures are baked once per paint on first use.
+- 180 tests (11 in `tests/fleet.test.ts`) and build pass. Browser: buy, rename, switch, markers, radar, compass and layouts at 1024x768 and 2000x1125; an older save loaded unchanged. Not played by a human; ship price and marker limit are first guesses.
+
+## Save storage fix
+- Reported bug: "Save failed: browser storage is unavailable or full" on a long-played world. Cause: every disturbed asteroid adds about 900 characters to the save, and `localStorage` holds roughly 5 MB per site (shared with the new-world backup copy).
+- Saves now also go to IndexedDB, which has far more room. `localStorage` is still written when the save fits, so a closing tab keeps its progress; when it does not fit, the older copy there is left alone and the IndexedDB copy is used. Loading takes the newest valid copy.
+- Save text keeps non-integer numbers to four decimals: about 35% smaller (238k to 153k characters on the test world). Export uses the same text.
+- The new-world/import backup moved to IndexedDB and the old `localStorage` backup is removed once that succeeds.
+- 187 tests (7 in `tests/persistence.test.ts`) and build pass. Browser: start-up load, save to both stores, and a forced quota error on `localStorage` that still saved and reloaded. Not tested on the live site or with a real multi-megabyte world.
+
 ## Publishing complete
 - Public source: https://github.com/N4STYN8/VOIDFORGE
 - Live game: https://n4styn8.github.io/VOIDFORGE/
@@ -173,3 +190,11 @@
 - Preserved both the previous local HUD edits and remote main (fetch found no new commits); no pull over local work. Branch remains codex/cockpit-hud, uncommitted. Added src/cockpitArt.ts and refined src/hud.ts alongside the previously listed UI/docs/tests files.
 - Validation: 185 tests pass; build passes with existing bundle warning. Browser checks cover all command buttons (including Settings), original shortcuts, compact persistence and six viewport sizes; no errors/overflow, clear center. Stress check remains ~60 FPS with 400 asteroids and 50 actors. Fixed Systems/radar stacking and removed center-crossing frame posts on narrow layouts.
 - No commits, pushes, merges or deployments. Next task: human combat/mining readability check against the reference at the user's usual resolution.
+
+## Detailed cockpit + latest main integration — 2026-11-13
+- Saved prior cockpit work as local commit b268601 and combined main fb84cc3 (HUD/navigation, map markers, fleets, hull paint and robust save storage). Resolved conflicts in architecture notes, HTML, status markup and scene integration without discarding either system.
+- Added layered steel skins, recessed vents, pixel markings, slotted fasteners, cyan lamp fittings, hard instrument bevels and segmented gauges/readiness strips. Existing gameplay/world sprites are preserved; small-screen framing remains simplified.
+- Reused main's zoomable radar in the cockpit, retained compass/map markers, merged hull/heat warning classes and ship-name/fleet labels, and preserved new ship painting and save behavior. Removed a duplicate nested session menu; radar pointer events and settings access verified.
+- Validation: all 203 tests and production build pass (existing bundle-size warning). Browser checks: six layouts from 1440x1000 to 390x667, all command buttons and keyboard controls, radar +/− and wheel, map marker placement, fleet purchase/switching and hull paint; no errors. Stress scene with 400 asteroids/50 actors remains ~60 FPS.
+- User explicitly authorized committing, pushing and updating the live site after these checks. Release preparation includes the complete merged history; deployment success will be reported after GitHub Pages verification.
+- Next task: human playtest of instrument readability and contrast during combat/mining.
