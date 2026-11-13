@@ -11,9 +11,16 @@ import { ensureAsteroidGeometry,asteroidLocal,asteroidWorld, miningImpact, mineM
 export type { Asteroid } from './mining.ts';
 import type { EffectEvent } from './effectEvents.ts';
 import { collideAsteroid, collide, type Body } from './collisions.ts';
-import { WORLD, SHIP, WEAPONS, ENEMIES, ENEMY_AI, ENEMY_SPAWN, HORDE, OUTPOST, STRUCTURES, STRUCTURE_SPECIAL, DRONES, type StructureKind, DANGER, BOSS, HEARING, type EnemyDefinition, type EnemyWeapon, COLLISION, ORE_COMBAT, PATROL, MODULE_DURABILITY, REPAIR, MODULES, BUILD_GRID, BASES, BASE_RADIUS, EXPLORATION, RESOURCES, type EnemyKind, CORE, ROCKET, WEAPON_TYPES, SHIP_SYSTEMS, VFX, type WeaponKind, equipment, upgradeCost, type EquipmentStats, type EquipmentKind, type ModuleKind, type Resource } from './data.ts';
+import { WORLD, SHIP, WEAPONS, ENEMIES, ENEMY_AI, ENEMY_SPAWN, HORDE, FLEET, WAYPOINTS, OUTPOST, STRUCTURES, STRUCTURE_SPECIAL, DRONES, type StructureKind, DANGER, BOSS, HEARING, type EnemyDefinition, type EnemyWeapon, COLLISION, ORE_COMBAT, PATROL, MODULE_DURABILITY, REPAIR, MODULES, BUILD_GRID, BASES, BASE_RADIUS, EXPLORATION, RESOURCES, type EnemyKind, CORE, ROCKET, WEAPON_TYPES, SHIP_SYSTEMS, VFX, type WeaponKind, equipment, upgradeCost, type EquipmentStats, type EquipmentKind, type ModuleKind, type Resource } from './data.ts';
 export type ShipModule = { x: number; y: number; kind: ModuleKind; level: number; cooldown: number; integrity: number; ability?:AbilityState; targetIds?: number[]; boostRemaining?:number; boostCooldown?:number };
 export type Point = { x: number; y: number };
+/** A ship that is not being flown: everything that belongs to the hull rather than to the pilot. */
+export type StoredShip = { id: number; name: string; coreLevel: number; modules: ShipModule[]; health: number; paint?: number };
+export type Waypoint = Point & { id: number };
+/** The loadout every new hull starts with. */
+/** A saved paint index made safe: anything unknown falls back to bare metal. */
+export const paintIndex = (value: unknown) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value < FLEET.paints.length ? value : 0;
+export const starterModules = (): ShipModule[] => [{ x: 1, y: 0, kind: 'cannon', level: 1, cooldown: 0, integrity: 45 }, { x: 0, y: -1, kind: 'miner', level: 1, cooldown: 0, integrity: 40 }];
 export type Input = { x: number; y: number; aim: Point; fire: boolean; mine: boolean; dock: boolean; boost?:boolean; overclock?:boolean; view?: { x: number; y: number; width: number; height: number } };
 export type Enemy = Point & { /** Outpost raid target and party membership. */ raid?:number;raidParty?:boolean; armor?:number;accuracyScale?:number;maxHealth?:number;damageScale?:number;rewardScale?:number;meltdown?:number; meltdownDone?:boolean; faction?: import("./data.ts").FactionKind; cargo?: Partial<Record<Resource,number>>; industryClock?:number; horde?: boolean; populationExempt?: boolean; mount?: Point; phase2?: boolean; phase3?: boolean; cooldown3?: number; surge?: number; surgeTimer?: number; empTimer?: number; empCharge?: number; state?: EnemyState; lastSeen?: Point; memory?: number; clock?: number; retreat?: number; retreated?: boolean; reposition?: number; sidestep?: number; stuck?: number; px?: number; py?: number; shield?: number; shieldDelay?: number; cooldown2?: number; charge?: { t: number; angle: number; weapon: number }; sx?: number; sy?: number; parent?: number; home?: Point; populationRegion?:string;populationClass?:'normal'|'elite';populationPatrol?:Point & {id:number;angle:number};rewarded?:boolean; disabledFor?: number; vx?: number; vy?: number; impactCooldown?: number; kind?: EnemyKind; squad?: number; slot?: number; patrolAngle?: number; id: number; health: number; cooldown: number; angle: number };
 export type Drop = Point & {vx?:number;vy?:number; id: number; ore: Resource; amount: number };
@@ -22,7 +29,14 @@ const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 export class GameModel {
   player = { x: WORLD.stationX, y: WORLD.stationY + 130, vx: 0, vy: 0, health: SHIP.health, angle: -Math.PI / 2 };
-  modules: ShipModule[] = [{ x: 1, y: 0, kind: 'cannon', level: 1, cooldown: 0, integrity: 45 }, { x: 0, y: -1, kind: 'miner', level: 1, cooldown: 0, integrity: 40 }];
+  modules: ShipModule[] = starterModules();
+  /** Name of the ship being flown, and the other ships waiting in the hangar. */
+  shipName = 'Ship 1';
+  /** Index into FLEET.paints for the ship being flown. Cosmetic only. */
+  shipPaint = 0;
+  hangar: StoredShip[] = [];
+  /** Markers the player placed on the sector map. */
+  waypoints: Waypoint[] = [];
   squads: (Point & { id: number; angle: number })[] = [];
   bases = BASES.map((base, i) => ({ ...base, unlocked: i === 0 }));
   explored = new Set<string>();
@@ -58,6 +72,54 @@ export class GameModel {
   minedTarget: Asteroid | undefined; oreHits = 0; enemyHits = 0; kills = 0; deaths = 0; message = 'Welcome, pilot. Mine nearby asteroids and unload at the station.';
   /** Bosses currently on their return cooldown (main's population ledger decides when they come back). */
   get defeatedBosses(): EnemyKind[] { return (this.sites ??= bossSites(this.world.spec)).filter(site => !this.population.bossReady(site.kind, this.world.time)).map(site => site.kind); }
+  /** Ships owned, including the one being flown. */
+  get fleetSize() { return this.hangar.length + 1; }
+  /** Stored-mineral price of the next ship. */
+  get shipPrice(): Record<Resource, number> {
+    const scale = 1 + this.hangar.length * FLEET.growth;
+    return Object.fromEntries((Object.keys(FLEET.cost) as Resource[]).map(ore => [ore, Math.ceil(FLEET.cost[ore] * scale)])) as Record<Resource, number>;
+  }
+  buyShipError(): string | undefined {
+    if (this.dead || !this.atStation) return 'Dock at an active station to buy a ship.';
+    const price = this.shipPrice, missing = (Object.keys(price) as Resource[]).filter(ore => this.stored[ore] < price[ore]);
+    if (missing.length) return `Not enough stored ${missing.join(' and ')}.`;
+  }
+  /** Buys a new hull with the starter loadout and parks it in the hangar. */
+  buyShip(): boolean {
+    const error = this.buyShipError(); if (error) { this.message = error; return false; }
+    const price = this.shipPrice; for (const ore of Object.keys(price) as Resource[]) this.stored[ore] -= price[ore];
+    const used = new Set([this.shipName, ...this.hangar.map(s => s.name)]); let n = this.fleetSize + 1; while (used.has(`Ship ${n}`)) n++;
+    this.hangar.push({ id: this.id++, name: `Ship ${n}`, coreLevel: 1, modules: starterModules(), health: CORE.levels[0].hull ?? 100, paint: this.fleetSize % FLEET.paints.length });
+    this.message = `Ship ${n} bought. Select it in the outfitter to fly it.`;
+    return true;
+  }
+  switchShipError(id: number): string | undefined {
+    if (this.dead || !this.atStation) return 'Dock at an active station to change ships.';
+    if (!this.hangar.some(s => s.id === id)) return 'That ship is not in the hangar.';
+  }
+  /** Swaps the flown ship with one from the hangar. Carried cargo is unloaded to station storage first, so nothing is lost if the other hold is smaller. */
+  switchShip(id: number): boolean {
+    const error = this.switchShipError(id); if (error) { this.message = error; return false; }
+    for (const ore of Object.keys(this.cargo) as Resource[]) { this.stored[ore] += this.cargo[ore]; this.cargo[ore] = 0; }
+    const index = this.hangar.findIndex(s => s.id === id), next = this.hangar[index];
+    this.hangar[index] = { id: this.id++, name: this.shipName, coreLevel: this.coreLevel, modules: this.modules, health: this.player.health, paint: this.shipPaint };
+    this.shipName = next.name; this.shipPaint = paintIndex(next.paint); this.coreLevel = next.coreLevel; this.modules = next.modules;
+    this.coreAbility = freshAbility(); this.novaFields = []; this.empPulses = []; this.miningLinks = []; this.tractorLinks = [];
+    this.player.health = Math.max(1, Math.min(next.health, this.maxHealth)); this.shield = this.maxShield; this.energy = this.maxEnergy; this.heat = 0; this.shieldDelay = 0;
+    this.message = `Now flying ${this.shipName}. Cargo was unloaded to station storage.`;
+    return true;
+  }
+  /** Repaints the ship being flown. Free and purely cosmetic. */
+  setShipPaint(index: number) { if (!Number.isInteger(index) || index < 0 || index >= FLEET.paints.length) return false; this.shipPaint = index; return true; }
+  renameShip(name: string) { const clean = name.replace(/[<>&"']/g, '').trim().slice(0, FLEET.nameLength); if (clean) this.shipName = clean; return this.shipName; }
+  /** Adds a marker at a world position, or removes the marker already there. Returns what happened. */
+  toggleWaypoint(point: Point, pickRadius = 0): 'added' | 'removed' | 'full' {
+    const existing = this.waypoints.find(w => dist(w, point) <= pickRadius);
+    if (existing) { this.waypoints = this.waypoints.filter(w => w !== existing); return 'removed'; }
+    if (this.waypoints.length >= WAYPOINTS.max) { this.message = `Map markers are limited to ${WAYPOINTS.max}. Click one to remove it.`; return 'full'; }
+    this.waypoints.push({ id: this.id++, x: clamp(point.x, 0, WORLD.width), y: clamp(point.y, 0, WORLD.height) });
+    return 'added';
+  }
   /** Player-built outposts; saved with the world. */
   outposts: Outpost[] = [];
   /** The best intact Build module on the ship, or undefined when construction is unavailable. */
@@ -536,7 +598,7 @@ export class GameModel {
       systemsDisabled:this.systemsDisabled,empImmunity:this.empImmunity,player: { ...this.player }, modules: structuredClone(this.modules), coreAbility:{...this.coreAbility},novaFields:structuredClone(this.novaFields), coreLevel: this.coreLevel, shield: this.shield, energy: this.energy, heat: this.heat, empPulses: structuredClone(this.empPulses),
       cargo: { ...this.cargo }, stored: { ...this.stored }, bases: structuredClone(this.bases), explored: [...this.explored],
       enemies: structuredClone(this.enemies), squads: structuredClone(this.squads), drops: structuredClone(this.drops), bullets: structuredClone(this.bullets), detachedModules: structuredClone(this.detachedModules),
-      kills: this.kills, outposts: structuredClone(this.outposts), horde: { ...this.horde }, deaths: this.deaths, id: this.id, rng: this.rng.state, spawnTimer: this.spawnTimer, shieldDelay: this.shieldDelay, impactTimer: this.impactTimer };
+      kills: this.kills, shipName: this.shipName, shipPaint: this.shipPaint, hangar: structuredClone(this.hangar), waypoints: structuredClone(this.waypoints), outposts: structuredClone(this.outposts), horde: { ...this.horde }, deaths: this.deaths, id: this.id, rng: this.rng.state, spawnTimer: this.spawnTimer, shieldDelay: this.shieldDelay, impactTimer: this.impactTimer };
   }
   static fromSave(value: unknown) {
     const data = value as GameSave;
@@ -551,7 +613,7 @@ export class GameModel {
     if ([...Object.values(m.cargo), ...Object.values(m.stored)].some(n => !Number.isFinite(n) || n < 0)) throw new Error('Invalid resource quantities in save.');
     m.bases = structuredClone(data.bases); m.explored = new Set(data.explored);
     m.enemies = structuredClone(data.enemies ?? []); m.squads = structuredClone(data.squads ?? []); m.drops = structuredClone(data.drops ?? []); m.bullets = structuredClone(data.bullets ?? []); m.detachedModules = structuredClone(data.detachedModules ?? []);
-    m.kills = data.kills; if (data.horde) m.horde = { ...m.horde, ...data.horde }; m.outposts = structuredClone(data.outposts ?? []); m.deaths = data.deaths; m.id = data.id; m.rng.state = data.rng; m.spawnTimer = data.population?data.spawnTimer:POPULATION.tick; m.shieldDelay = data.shieldDelay; m.impactTimer = data.impactTimer;
+    m.kills = data.kills; if (data.horde) m.horde = { ...m.horde, ...data.horde }; m.outposts = structuredClone(data.outposts ?? []); m.shipName = data.shipName ?? m.shipName; m.shipPaint = paintIndex(data.shipPaint); m.hangar = structuredClone(data.hangar ?? []); m.waypoints = structuredClone(data.waypoints ?? []); m.deaths = data.deaths; m.id = data.id; m.rng.state = data.rng; m.spawnTimer = data.population?data.spawnTimer:POPULATION.tick; m.shieldDelay = data.shieldDelay; m.impactTimer = data.impactTimer;
     m.asteroids = m.world.activate(m.player, [], true); const overflow=m.cargoUsed>m.cargoCapacity;m.spillCargo();m.message = overflow?'World restored. Excess cargo was preserved as nearby pickups.':`World restored. Seed: ${m.seed}`; return m;
   }
   private get aggregate(){
@@ -1588,6 +1650,6 @@ export type GameSave = {
   systemsDisabled?:number;empImmunity?:number;version: 1; seed: string; population?:EnemyPopulationSnapshot;world: WorldSnapshot; player: GameModel['player']; modules: ShipModule[];
   coreAbility?:AbilityState;novaFields?:GameModel['novaFields'];coreLevel: number; shield: number; energy?:number; heat?:number; empPulses?:GameModel['empPulses']; cargo: Record<Resource, number>; stored: Record<Resource, number>;
   bases: GameModel['bases']; explored: string[]; enemies: Enemy[]; squads: GameModel['squads']; drops: Drop[];
-  bullets: Bullet[]; detachedModules: GameModel['detachedModules']; kills: number; outposts?: Outpost[]; horde?: GameModel['horde']; deaths: number; id: number; rng: number;
+  bullets: Bullet[]; detachedModules: GameModel['detachedModules']; kills: number; outposts?: Outpost[]; shipName?: string; shipPaint?: number; hangar?: StoredShip[]; waypoints?: Waypoint[]; horde?: GameModel['horde']; deaths: number; id: number; rng: number;
   spawnTimer: number; shieldDelay: number; impactTimer: number;
 };

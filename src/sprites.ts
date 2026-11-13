@@ -88,7 +88,7 @@ export function paintBackdrop(seed: number) {
   n.fillStyle = '#050911'; n.fillRect(0, 0, 512, 512);
   n.globalCompositeOperation = 'lighter';
   for (let i = 0; i < 26; i++) {
-    const x = random() * 512, y = random() * 512, radius = 60 + random() * 150, color = palette[i % palette.length], alpha = 0.07 + random() * 0.13;
+    const x = random() * 512, y = random() * 512, radius = 60 + random() * 150, color = palette[i % palette.length], alpha = 0.1 + random() * 0.17;
     wrapped(512, x, y, radius, (px, py) => cloud(n, px, py, radius, color, alpha));
   }
   n.globalCompositeOperation = 'source-over';
@@ -514,6 +514,25 @@ export function crispModule(canvas: HTMLCanvasElement) {
     data[i + 3] = 255;
   }
   ctx.putImageData(image, 0, 0);
+}
+
+/**
+ * Returns a repainted copy of a baked module icon. Only neutral hull metal (low saturation) moves toward the
+ * paint colour, scaled by brightness, so outlines, lenses, barrels' coloured cores and glows keep their look.
+ */
+export function paintHull(source: HTMLCanvasElement, color: number, strength: number) {
+  const out = document.createElement('canvas'); out.width = source.width; out.height = source.height;
+  const ctx = out.getContext('2d')!; ctx.drawImage(source, 0, 0);
+  const image = ctx.getImageData(0, 0, out.width, out.height), data = image.data, paint = [(color >> 16) & 255, (color >> 8) & 255, color & 255];
+  for (let i = 0; i < data.length; i += 4) {
+    if (!data[i + 3]) continue;
+    const r = data[i], g = data[i + 1], b = data[i + 2], hi = Math.max(r, g, b), lo = Math.min(r, g, b);
+    if (hi - lo > 60 || hi < 30) continue;
+    const light = (r + g + b) / 3 / 255, t = strength * Math.min(1, light * 2.2);
+    // Keep the original shading: the paint is scaled to the pixel's brightness before blending.
+    for (let c = 0; c < 3; c++) data[i + c] = Math.round(data[i + c] * (1 - t) + Math.min(255, paint[c] * (0.35 + light * 1.25)) * t);
+  }
+  ctx.putImageData(image, 0, 0); return out;
 }
 
 // ---------- Player outposts (space steampunk: riveted steel, brass framing, copper pipes) ----------
