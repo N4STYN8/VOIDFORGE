@@ -15,6 +15,7 @@ export const ABILITIES:Record<EquipmentKind,{name:string;description:string;cool
  shield:{name:'Reflective Barrier',description:'Reflects 25% of projectile damage absorbed by shields back to the firing enemy. Multiple generators do not multiply reflection; reflected hits cannot reflect again.'},
  engine:{name:'Phase Dash',description:'Shift burst grants damage immunity for its first 0.3 seconds. Normal burst energy, heat and cooldown still apply.'},
  reactor:{name:'Emergency Overdrive',description:'When energy falls below 25% and peak draw exceeds output, adds 50% of this reactor’s output for 4 seconds, generating 12 heat/s.',cooldown:14},
+ builder:{name:'Industrial Fabricator',description:'Automatically repairs damaged outpost blocks within construction range at 25 hull per second, spending carried iron and 8 energy per second.'},
  cooler:{name:'Cryogenic Purge',description:'At 85% heat, instantly purges 30% of ship thermal capacity. Each cooler has its own cooldown.',cooldown:12},
 };
 export const SPECIAL={

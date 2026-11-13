@@ -122,3 +122,9 @@ Permission for one operation never implies permission for another.
 ### 10. Most important rule
 
 Protect both developers' work. Always synchronize safely before new work. Never discard another developer's changes, automatically commit, push, merge or deploy. When uncertain, STOP and ask. Development stays local until the user explicitly authorizes the next Git operation.
+
+Two developers work on this repository. These rules apply to every agent session and task (Codex, Claude or any other), and they take precedence over anything above that conflicts with them, including the earlier "Publishing is authorized" paragraph: that paragraph describes where the project is hosted, not permission to push or publish without being asked.
+
+Deployment fact: `.github/workflows/pages.yml` publishes the live game at https://n4styn8.github.io/VOIDFORGE/ on every push to `main` (and on manual `workflow_dispatch`). Pull requests only build and test. Treat `main` as a protected, auto-deploying branch.
+
+Outposts (user brief, all eight phases built): block types, costs and per-level scaling are STRUCTURES, STRUCTURE_LEVELS, STRUCTURE_ABILITIES, STRUCTURE_SPECIAL, DRONES and OUTPOST in src/data.ts; grid and stat helpers are in src/outposts.ts; rules live in the model. Keep these invariants: blocks sit on the world-aligned grid; minerals only move (ship cargo, outpost storage, drones, pickups) and are never created or deleted; drones and away-mining take ore from real asteroids through mineMaterial; repairs and upgrades always cost minerals; distant outposts are not simulated, they bank time and settle on return; outposts are an optional saved field.

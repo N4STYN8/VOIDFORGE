@@ -1,7 +1,8 @@
 import type { Asteroid } from './model.ts';
 import { ensureAsteroidGeometry } from './mining.ts';
 import { containsPoint, type Vertex } from './asteroidGeometry.ts';
-import { RESOURCES, ENEMIES, type EnemyKind } from './data.ts';
+import { RESOURCES, ENEMIES, OUTPOST, STRUCTURES, type EnemyKind, type StructureKind } from './data.ts';
+import { bounds, neighbourMask, wear, type Outpost } from './outposts.ts';
 
 // Baked top-down pixel-art sprites painted with the plain Canvas 2D API.
 // World sprites use one pixel per world unit; the backdrop is coarser. All are drawn with
@@ -513,4 +514,145 @@ export function crispModule(canvas: HTMLCanvasElement) {
     data[i + 3] = 255;
   }
   ctx.putImageData(image, 0, 0);
+}
+
+// ---------- Player outposts (space steampunk: riveted steel, brass framing, copper pipes) ----------
+
+const STEEL = [0x14181f, 0x232a34, 0x343d4a, 0x4a5565, 0x6a7688], BRASS = [0x5c4318, 0x94702a, 0xd9a441, 0xf2d489], COPPER = [0x7a4324, 0xb87333, 0xe09a5c];
+/**
+ * Paints one 16x16 block at (x, y). `mask` marks joined neighbours (1 east, 2 south, 4 west, 8 north):
+ * open sides get a brass frame, joined sides get a riveted seam and a copper pipe run to the neighbour.
+ */
+function paintBlock(ctx: Ctx, x: number, y: number, kind: StructureKind, mask: number, damage: number, built: boolean, id: number, level = 1) {
+  const size = OUTPOST.cell, px = (dx: number, dy: number, color: number, w = 1, h = 1) => dot(ctx, x + dx, y + dy, color, w, h), reinforced = kind === 'reinforcedWall';
+  if (!built) {
+    // Scaffold: dark footing, dashed brass outline and diagonal bracing until construction finishes.
+    px(0, 0, STEEL[0], size, size);
+    for (let i = 0; i < size; i += 2) { px(i, 0, BRASS[1]); px(i, size - 1, BRASS[1]); px(0, i, BRASS[1]); px(size - 1, i, BRASS[1]); }
+    for (let i = 2; i < size - 2; i += 3) { px(i, i, BRASS[0]); px(size - 1 - i, i, BRASS[0]); }
+    return;
+  }
+  px(0, 0, STEEL[1], size, size); px(1, 1, reinforced ? STEEL[3] : STEEL[2], size - 2, size - 2);
+  px(1, 1, reinforced ? STEEL[4] : STEEL[3], size - 2, 1); px(1, 1, reinforced ? STEEL[4] : STEEL[3], 1, size - 2);
+  px(1, size - 2, STEEL[0], size - 2, 1); px(size - 2, 1, STEEL[0], 1, size - 2);
+  const east = mask & 1, south = mask & 2, west = mask & 4, north = mask & 8, core = kind === 'outpostCore';
+  // Copper pipe runs toward every joined neighbour, meeting at the centre.
+  if (!core && kind !== 'storage') {
+    if (east) px(8, 7, COPPER[1], 8, 2); if (west) px(0, 7, COPPER[1], 8, 2); if (south) px(7, 8, COPPER[1], 2, 8); if (north) px(7, 0, COPPER[1], 2, 8);
+    if (east || west) px(west ? 0 : 8, 7, COPPER[2], (east && west) ? 16 : 8, 1); if (mask) px(7, 7, COPPER[0], 2, 2);
+  }
+  // Brass frame on open sides (lit top/left, shaded bottom/right); riveted seam where blocks join.
+  const frame = (open: number | boolean, fx: number, fy: number, w: number, h: number, tone: number, rivets: [number, number][]) => {
+    if (open) px(fx, fy, tone, w, h); else for (const [rx, ry] of rivets) px(rx, ry, STEEL[4]);
+  };
+  frame(!north || core, 0, 0, size, 2, BRASS[2], [[4, 1], [11, 1]]); frame(!west || core, 0, 0, 2, size, BRASS[2], [[1, 4], [1, 11]]);
+  frame(!south || core, 0, size - 2, size, 2, BRASS[1], [[4, size - 2], [11, size - 2]]); frame(!east || core, size - 2, 0, 2, size, BRASS[1], [[size - 2, 4], [size - 2, 11]]);
+  if (!north || core) px(0, 0, BRASS[3], size, 1); if (!west || core) px(0, 0, BRASS[3], 1, size);
+  if (!south || core) px(0, size - 1, BRASS[0], size, 1); if (!east || core) px(size - 1, 0, BRASS[0], 1, size);
+  for (const [rx, ry] of [[3, 3], [12, 3], [3, 12], [12, 12]]) px(rx, ry, core ? BRASS[3] : STEEL[4]);
+  if (reinforced) {
+    for (let i = 3; i < size - 3; i++) { px(i, i, BRASS[1]); px(size - 1 - i, i, BRASS[0]); }
+    px(7, 7, COPPER[2], 2, 2);
+  }
+  if (core) {
+    // Command gear around a glowing boiler window.
+    for (let gy = -6; gy <= 6; gy++) for (let gx = -6; gx <= 6; gx++) {
+      const d = Math.hypot(gx + 0.5, gy + 0.5), tooth = Math.round(Math.atan2(gy + 0.5, gx + 0.5) / (Math.PI / 4)) % 2 === 0;
+      if (d < 3) px(8 + gx, 8 + gy, d < 1.6 ? 0xfff0c0 : 0xffb347); else if (d < 4.2) px(8 + gx, 8 + gy, STEEL[0]); else if (d < 5.4 || (d < 6.4 && tooth)) px(8 + gx, 8 + gy, gx + gy < 0 ? BRASS[3] : BRASS[1]);
+    }
+  }
+  if (STRUCTURES[kind].turret) {
+    // Turret mount: a dark bearing ring; the rotating head is a separate sprite.
+    for (let gy = -6; gy <= 6; gy++) for (let gx = -6; gx <= 6; gx++) { const d = Math.hypot(gx + 0.5, gy + 0.5); if (d < 4.6) px(8 + gx, 8 + gy, STEEL[0]); else if (d < 5.8) px(8 + gx, 8 + gy, gx + gy < 0 ? BRASS[2] : BRASS[0]); }
+  } else if (kind === 'reactor') {
+    // Boiler core: glowing chamber in a brass collar with four copper feeds.
+    px(7, 2, COPPER[1], 2, 12); px(2, 7, COPPER[1], 12, 2);
+    for (let gy = -5; gy <= 5; gy++) for (let gx = -5; gx <= 5; gx++) { const d = Math.hypot(gx + 0.5, gy + 0.5); if (d < 2.2) px(8 + gx, 8 + gy, 0xfff0c0); else if (d < 3.4) px(8 + gx, 8 + gy, 0xffb347); else if (d < 4.6) px(8 + gx, 8 + gy, gx + gy < 0 ? BRASS[3] : BRASS[1]); }
+  } else if (kind === 'shieldGenerator') {
+    // Emitter: cyan lens in a brass cradle with four projector studs.
+    for (let gy = -5; gy <= 5; gy++) for (let gx = -5; gx <= 5; gx++) { const d = Math.hypot(gx + 0.5, gy + 0.5); if (d < 2.4) px(8 + gx, 8 + gy, 0xdff8ff); else if (d < 3.6) px(8 + gx, 8 + gy, 0x79dfff); else if (d < 4.8) px(8 + gx, 8 + gy, gx + gy < 0 ? BRASS[3] : BRASS[1]); }
+    for (const [gx, gy] of [[3, 3], [12, 3], [3, 12], [12, 12]]) px(gx, gy, 0x79dfff);
+  } else if (kind === 'coolingUnit') {
+    // Radiator: vent slats around a fan well (the blades are drawn live).
+    px(3, 3, STEEL[0], 10, 10); for (const gy of [4, 6, 9, 11]) px(4, gy, 0x718b9c, 8, 1);
+    for (let gy = -3; gy <= 3; gy++) for (let gx = -3; gx <= 3; gx++) if (Math.hypot(gx + 0.5, gy + 0.5) < 3.2) px(8 + gx, 8 + gy, 0x16323c);
+    px(7, 7, 0x9edfff, 2, 2);
+  } else if (kind === 'droneRepairBay') {
+    // Service cradle: clamps either side of a lit pad.
+    px(3, 3, STEEL[0], 10, 10); px(4, 5, STEEL[3], 2, 6); px(10, 5, STEEL[3], 2, 6); px(6, 6, 0x1f3a2a, 4, 4); px(7, 7, 0x8fd08a, 2, 2); px(6, 4, COPPER[1], 4, 1); px(6, 11, COPPER[1], 4, 1);
+  } else if (kind === 'upgradeStation') {
+    // Fabricator: anvil block under a violet focusing crystal.
+    px(3, 9, STEEL[4], 10, 3); px(5, 12, STEEL[3], 6, 1); px(6, 3, 0x7d5fa0, 4, 5); px(7, 2, 0xc7a6ff, 2, 6); px(7, 4, 0xf0e4ff, 1, 2); px(4, 8, BRASS[2], 8, 1);
+  } else if (kind === 'repairStation') {
+    // Repair post: teal cross on a white-edged plate.
+    px(3, 3, STEEL[1], 10, 10); px(4, 4, 0x12322c, 8, 8); px(7, 5, 0x78dec0, 2, 6); px(5, 7, 0x78dec0, 6, 2); px(7, 7, 0xe6fff6, 2, 2);
+  } else if (kind === 'radarTower') {
+    // Radar mast: ringed dish (the sweep line is drawn live).
+    for (let gy = -5; gy <= 5; gy++) for (let gx = -5; gx <= 5; gx++) { const d = Math.hypot(gx + 0.5, gy + 0.5); if (d < 1.4) px(8 + gx, 8 + gy, 0xe8f6ff); else if (d < 4 && d > 3) px(8 + gx, 8 + gy, 0x5f86a8); else if (d < 5.2 && d > 4.4) px(8 + gx, 8 + gy, gx + gy < 0 ? STEEL[4] : STEEL[2]); else if (d < 4.4) px(8 + gx, 8 + gy, 0x10202c); }
+  } else if (kind === 'droneHangar') {
+    // Hangar bay: dark opening with hazard chevrons and two launch rails.
+    px(3, 3, STEEL[0], 10, 10); px(3, 3, BRASS[1], 10, 1); px(3, 12, BRASS[0], 10, 1);
+    for (const gx of [4, 7, 10]) { px(gx, 4, 0xd9a441); px(gx + 1, 5, 0xd9a441); }
+    px(5, 7, STEEL[3], 1, 5); px(10, 7, STEEL[3], 1, 5); px(7, 8, 0x8fd08a, 2, 2); px(7, 10, COPPER[1], 2, 2);
+  } else if (kind === 'dockingStation') {
+    // Docking pad: lit landing square with corner guide lights.
+    px(3, 3, STEEL[1], 10, 10); px(4, 4, 0x16323c, 8, 8);
+    for (const [gx, gy] of [[4, 4], [11, 4], [4, 11], [11, 11]]) px(gx, gy, 0x7fd6f2);
+    px(7, 5, 0xbfeaff, 2, 6); px(5, 7, 0xbfeaff, 6, 2); px(7, 7, 0xffffff, 2, 2);
+  } else if (kind === 'storage') {
+    // Strapped cargo crate with a centre hatch.
+    px(3, 3, STEEL[3], 10, 10); px(3, 3, STEEL[4], 10, 1); px(3, 12, STEEL[0], 10, 1);
+    px(5, 3, BRASS[1], 1, 10); px(10, 3, BRASS[1], 1, 10); px(6, 6, 0x7d5fa0, 4, 4); px(6, 6, 0xc599e8, 4, 1); px(7, 8, BRASS[3], 2, 1);
+  }
+  // Level pips along the lower edge (levels 2-5).
+  for (let i = 1; i < level; i++) px(3 + (i - 1) * 3, 14, level >= 5 ? 0xffe9a8 : 0x9fd8ff, 2, 1);
+  // Wear: cracks and scorch marks accumulate with damage.
+  const random = seeded(id * 31 + 7);
+  for (let i = 0; i < damage * 4; i++) { const cx = 2 + Math.floor(random() * 12), cy = 2 + Math.floor(random() * 12); px(cx, cy, OUTLINE); px(cx + (random() < 0.5 ? 1 : 0), cy + 1, OUTLINE); if (damage >= 3 && i % 4 === 0) px(cx, cy, 0xff7a3c); }
+}
+/** Bakes a whole outpost into one canvas; redrawn only when the outpost's revision changes. Returns the canvas and the world position of its top-left corner. */
+export function paintOutpost(outpost: Outpost) {
+  const b = bounds(outpost), size = OUTPOST.cell, pad = 1, canvas = canvasOf((b.maxX - b.minX + 1) * size + pad * 2, (b.maxY - b.minY + 1) * size + pad * 2), ctx = canvas.getContext('2d')!;
+  for (const s of outpost.structures) paintBlock(ctx, pad + (s.cx - b.minX) * size, pad + (s.cy - b.minY) * size, s.kind, neighbourMask(outpost, s), wear(s), s.progress >= 1, s.id, s.level);
+  // One-pixel dark outline around the joined silhouette.
+  const { width, height } = canvas, image = ctx.getImageData(0, 0, width, height), data = image.data, solid = new Uint8Array(width * height);
+  for (let i = 0; i < solid.length; i++) solid[i] = data[i * 4 + 3] ? 1 : 0;
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const i = y * width + x;
+    if (solid[i] || !((x > 0 && solid[i - 1]) || (x < width - 1 && solid[i + 1]) || (y > 0 && solid[i - width]) || (y < height - 1 && solid[i + width]))) continue;
+    data[i * 4] = channel(OUTLINE, 16); data[i * 4 + 1] = channel(OUTLINE, 8); data[i * 4 + 2] = channel(OUTLINE, 0); data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(image, 0, 0);
+  return { canvas, x: b.minX * size - pad, y: b.minY * size - pad };
+}
+/** A single finished block with no neighbours, for the build catalogue and placement preview. */
+export function paintStructureIcon(kind: StructureKind) {
+  const canvas = canvasOf(OUTPOST.cell), ctx = canvas.getContext('2d')!;
+  paintBlock(ctx, 0, 0, kind, 0, 0, true, 1);
+  if (STRUCTURES[kind].turret) { const head = paintTurretHead(kind); ctx.drawImage(head, (OUTPOST.cell - head.width) / 2, (OUTPOST.cell - head.height) / 2); }
+  return canvas;
+}
+/** A mining drone, nose along +x: brass hull, copper thruster and a green mining lens. */
+export function paintDrone() {
+  const size = 14, c = size / 2, canvas = canvasOf(size), ctx = canvas.getContext('2d')!, px = (x: number, y: number, color: number, w = 1, h = 1) => dot(ctx, c + x, c + y, color, w, h);
+  px(-5, -3, OUTLINE, 10, 6); px(-4, -2, BRASS[1], 8, 4); px(-4, -2, BRASS[3], 8, 1); px(-4, 1, BRASS[0], 8, 1);
+  px(-6, -1, OUTLINE, 2, 2); px(-6, -1, COPPER[2], 1, 2); px(3, -1, OUTLINE, 3, 2); px(4, -1, 0x9dffb0, 2, 2); px(-1, -4, STEEL[3], 2, 1); px(-1, 3, STEEL[3], 2, 1); px(-2, -1, STEEL[0], 3, 2);
+  return canvas;
+}
+/** The rotating head of a turret, barrels along +x. Drawn over the baked mount and turned toward its target. */
+export function paintTurretHead(kind: StructureKind) {
+  const size = 30, c = size / 2, canvas = canvasOf(size), ctx = canvas.getContext('2d')!, px = (x: number, y: number, color: number, w = 1, h = 1) => dot(ctx, c + x, c + y, color, w, h);
+  const hub = (r: number, light: number, dark: number) => { for (let y = -r; y <= r; y++) for (let x = -r; x <= r; x++) { const d = Math.hypot(x + 0.5, y + 0.5); if (d < r - 1) px(x, y, x + y < 0 ? light : dark); else if (d < r) px(x, y, OUTLINE); } };
+  if (kind === 'autocannonTurret') {
+    for (const y of [-3, 1]) { px(1, y - 1, OUTLINE, 11, 4); px(1, y, STEEL[4], 10, 2); px(1, y, STEEL[3], 10, 1); px(10, y, BRASS[3], 1, 2); }
+    hub(5, BRASS[2], BRASS[0]); px(-1, -1, COPPER[2], 2, 2);
+  } else if (kind === 'missileTurret') {
+    px(-4, -6, OUTLINE, 13, 12); px(-3, -5, STEEL[3], 11, 10); px(-3, -5, STEEL[4], 11, 1); px(-3, 4, STEEL[1], 11, 1);
+    for (const y of [-4, 1]) for (const x of [1, 5]) { px(x, y, OUTLINE, 3, 3); px(x + 1, y + 1, 0xff9766); }
+    px(-3, -1, BRASS[2], 3, 2);
+  } else {
+    for (const y of [-3, 2]) { px(0, y - 1, OUTLINE, 14, 3); px(0, y, STEEL[4], 13, 1); px(12, y, 0xd8f2ff); }
+    px(2, -1, 0x7fd0ff, 9, 2); hub(5, STEEL[4], STEEL[2]); px(-2, -2, BRASS[2], 4, 4); px(-1, -1, 0xd8f2ff, 2, 2);
+  }
+  return canvas;
 }
