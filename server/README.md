@@ -60,6 +60,12 @@ ssh pi 'sudo install -m 644 /tmp/voidforge-relay.mjs /opt/voidforge/relay.mjs &&
 
 Restarting drops every connected pilot; clients show the disconnect and can reconnect.
 
+## Lobbies
+
+Lobbies are open (listed for everyone, the default from the Multiplayer panel) or private (code and invite link only). A client asks with `{t:'lobbies'}` and gets open lobbies with room, fullest first, with each host's progression score, plus the number of pilots online. The host switches with `{t:'open', open}`. Sending `hello` again renames the pilot.
+
+The relay checks message kinds, so a new `cast`/`direct` kind (such as `fx`, `world-req`, `world`) needs the relay redeployed before a game build that sends it goes live.
+
 ## Limits and load
 
 Per client: 30 messages/second with a burst of 60 (more is dropped; sustained flooding disconnects),
