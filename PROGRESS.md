@@ -32,6 +32,12 @@
 - Added a Settings modal that pauses gameplay, with master/music/effects sliders, mute, VFX toggle and full/reduced particle density. Preferences persist independently of game saves; N/V shortcuts remain supported.
 - Browser verified actual track playback/looping, independent volumes, mute/resume, VFX/density, Escape close and reload persistence, with no runtime errors. 67 tests/build pass.
 
+## Weapon-propelled asteroids
+- Projectile hits now transfer directional impulse to rocks; explosions push outward. Smaller rocks move more, repeated hits build momentum, and shot-induced speed is capped at 300 units/s.
+- Weapon material damage reduced from 15% to 10%; mining unchanged. Existing reduced resource recovery and conservation remain intact.
+- Moving rocks use existing polygon contacts to damage/kill enemies, play hit feedback and award loot once. No new physics objects or save format changes.
+- 70 tests pass, including weapon/enemy-shot impulse, mass response, movement, speed caps, rocket blast direction and an end-to-end shot → rock → enemy kill/loot check. Production build passes.
+
 ## Verification
 - 65 tests passing, including prior world/geometry/combat tests and new unlimited module combinations, exact tractor behavior, full cargo, no duplication, energy/heat/mass, weapon origins, EMP, Shift, pool cleanup and effect-disabled equivalence.
 - Production build passes; expected Phaser bundle warning only (~368 KB gzip).

@@ -307,7 +307,7 @@ test('projectiles collide with ore before enemies and recover less material than
   const m = fixtureModel(); m.player.x=5000;m.player.y=5000;
   const rock={id:9000,x:5100,y:5000,vx:0,vy:0,radius:35,ore:'iron' as const,amount:40,health:40};m.asteroids=[rock];
   m.enemies=[{id:9001,x:5200,y:5000,health:60,cooldown:100,angle:0}];
-  m.bullets=[{id:9002,x:5050,y:5000,vx:1400,vy:0,life:1,enemy:false,damage:20}];
+  m.bullets=[{id:9002,x:5050,y:5000,vx:1400,vy:0,life:1,enemy:false,damage:30}];
   m.update(.05,idle());assert.equal(m.bullets.length,0);assert.equal(m.enemies[0].health,60);
   assert.ok(rock.amount<40);const ore=m.drops.reduce((n,d)=>n+d.amount,0);assert.ok(ore>0&&ore<40-rock.amount);
   assert.equal(ore+rock.amount+(rock.wastedAmount??0),40);
@@ -329,4 +329,43 @@ test('holding mine auto-targets reachable ore; multiple upgraded beams mine diff
   m.update(.05,idle({mine:true,aim:{x:0,y:0}}));
   assert.equal(new Set(m.miningLinks.map(b=>b.targetId)).size,2);
   assert.ok(m.asteroids.every(a=>a.health<40));
+});
+
+
+test('weapon hits push ore in the shot direction with mass resistance and bounded speed',()=>{
+  const shot=(radius:number,enemy=false)=>{
+    const m=fixtureModel();m.player.x=5000;m.player.y=4800;m.enemies=[];
+    const rock={id:9100,x:5100,y:5000,vx:0,vy:0,radius,ore:'iron' as const,amount:1000,health:1000};m.asteroids=[rock];
+    m.bullets=[{id:9101,x:5000,y:5000,vx:2000,vy:0,life:1,enemy,damage:20}];m.update(.05,idle());
+    assert.equal(m.bullets.length,0);assert.ok(rock.vx>0);assert.equal(rock.vy,0);assert.equal(rock.amount,998);return {m,rock};
+  };
+  const small=shot(25),large=shot(45),hostile=shot(35,true);
+  assert.ok(small.rock.vx>large.rock.vx);assert.ok(hostile.rock.vx>0);
+  const x=small.rock.x;small.m.update(.05,idle());assert.ok(small.rock.x>x);
+  for(let i=0;i<20;i++){
+    small.m.bullets=[{id:9200+i,x:small.rock.x-80,y:small.rock.y,vx:2000,vy:0,life:1,enemy:false,damage:20}];small.m.update(.05,idle());
+    assert.ok(Math.hypot(small.rock.vx,small.rock.vy)<=300.0001);
+  }
+});
+
+test('a shot-propelled asteroid damages and kills an enemy, awarding loot once',()=>{
+  const m=fixtureModel();m.player.x=5000;m.player.y=4800;
+  const rock={id:9300,x:5100,y:5000,vx:0,vy:0,radius:35,ore:'iron' as const,amount:100,health:100};m.asteroids=[rock];
+  m.enemies=[{id:9301,kind:'scout',x:5160,y:5000,health:1,cooldown:100,angle:0,disabledFor:10}];
+  m.bullets=[{id:9302,x:5000,y:5000,vx:2000,vy:0,life:1,enemy:false,damage:20}];m.update(.05,idle());
+  assert.equal(m.enemies[0].health,1);assert.ok(rock.vx>40);
+  for(let i=0;i<15&&m.enemies.length;i++)m.update(.05,idle());
+  assert.equal(m.enemies.length,0);assert.equal(m.kills,1);assert.ok(m.drops.length>0);
+  const loot=m.drops.reduce((n,d)=>n+d.amount,0);m.update(.05,idle());assert.equal(m.kills,1);assert.equal(m.drops.reduce((n,d)=>n+d.amount,0),loot);
+});
+
+
+test('explosions push nearby asteroids outward without exceeding shot speed limits',()=>{
+  const m=fixtureModel();m.player.x=5000;m.player.y=4800;m.enemies=[];
+  m.asteroids=[{id:9400,x:5100,y:5000,vx:0,vy:0,radius:35,ore:'iron',amount:100,health:100},
+    {id:9401,x:5110,y:5070,vx:0,vy:0,radius:25,ore:'copper',amount:100,health:100}];
+  m.bullets=[{id:9402,x:5000,y:5000,vx:2000,vy:0,life:1,enemy:false,weapon:'rocket',rocket:true,splash:100,damage:65}];
+  m.update(.05,idle());assert.equal(m.bullets.length,0);
+  assert.ok(m.asteroids[0].vx>0);assert.ok(m.asteroids[1].vx>0&&m.asteroids[1].vy>0);
+  assert.ok(m.asteroids.every(a=>Math.hypot(a.vx,a.vy)<=300.0001));
 });

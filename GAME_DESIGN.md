@@ -46,3 +46,5 @@
 
 ## Next staged expansion
 The newer six enemy classes, tactical AI expansion, seeded danger regions and three bosses are queued after the outfitter stage. Current four classes/patrol AI remain in place; this update does not claim those later stages are complete.
+
+Shots push asteroids along projectile travel; explosive hits push outward. Impulse scales with damage and inversely with rock mass, capped at 300 units/s from gunfire. Weapons remove material at 10% of nominal damage and recover 35% of removed ore; mining remains efficient. Moving rocks can damage and kill enemies through normal impact contacts.

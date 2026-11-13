@@ -405,6 +405,7 @@ export class GameModel {
         const speed = collideAsteroid(body, rock, rock.geometry!, COLLISION.restitution);
         if (speed !== undefined && speed > COLLISION.safeSpeed && e.impactCooldown <= 0) {
           e.health -= Math.min(COLLISION.maxDamage, Math.ceil((speed - COLLISION.safeSpeed) * COLLISION.damagePerSpeed));
+          this.enemyHits++;
           e.impactCooldown = COLLISION.damageCooldown;
           this.addBlast({ x: e.x, y: e.y, radius: 16, life: 0.12 });
         }
@@ -449,7 +450,16 @@ export class GameModel {
     this.world.destroy(id);
     return true;
   }
-  private shootOre(asteroid: Asteroid, damage: number, point: Point, weapon?: WeaponKind) {
+  private pushOre(asteroid:Asteroid,damage:number,direction:Point){
+    const length=Math.hypot(direction.x,direction.y);
+    if(length<1e-8||damage<=0)return;
+    const mass=Math.max(1,(asteroid.radius/20)**2),impulse=damage*ORE_COMBAT.impulsePerDamage/mass;
+    asteroid.vx+=direction.x/length*impulse;asteroid.vy+=direction.y/length*impulse;
+    const speed=Math.hypot(asteroid.vx,asteroid.vy);
+    if(speed>ORE_COMBAT.maxShotSpeed){asteroid.vx*=ORE_COMBAT.maxShotSpeed/speed;asteroid.vy*=ORE_COMBAT.maxShotSpeed/speed;}
+  }
+  private shootOre(asteroid: Asteroid, damage: number, point: Point, weapon?: WeaponKind, direction?: Point) {
+    this.pushOre(asteroid,damage,direction??{x:asteroid.x-point.x,y:asteroid.y-point.y});
     const removed = mineMaterial(asteroid, damage * ORE_COMBAT.materialPerDamage, point);
     if (removed > 0) {
       const recovered = Math.floor((asteroid.shotYieldRemainder ?? 0) + removed * ORE_COMBAT.recovery + 1e-9);
@@ -466,7 +476,7 @@ export class GameModel {
     for (const e of this.enemies) if (e.health > 0 && dist(e, point) <= (bullet.splash ?? 65) + ENEMIES[e.kind ?? 'raider'].radius) {
       this.enemyHits++; e.health -= bullet.damage ?? 65; if (e.health <= 0) this.enemyDestroyed(e);
     }
-    for (const asteroid of [...this.asteroids]) if (dist(asteroid, point) < (bullet.splash ?? 65) + asteroid.radius) this.shootOre(asteroid, bullet.damage ?? 65, miningImpact(asteroid, point, asteroid),bullet.weapon);
+    for (const asteroid of [...this.asteroids]) if (dist(asteroid, point) < (bullet.splash ?? 65) + asteroid.radius) this.shootOre(asteroid, bullet.damage ?? 65, miningImpact(asteroid, point, asteroid),bullet.weapon,{x:asteroid.x-point.x,y:asteroid.y-point.y});
   }
   update(dt: number, input: Input) {
     this.blasts = this.blasts.filter(b => (b.life -= dt) > 0);
@@ -676,7 +686,7 @@ export class GameModel {
       }
       if (oreHit && oreHit.t <= targetT) {
         b.life = 0;
-        if ((b.splash ?? 0)>0) this.explodeRocket(b, oreHit.point); else this.shootOre(oreHit.asteroid, b.damage ?? (b.enemy ? WEAPONS.enemy.damage : WEAPONS.player.damage), oreHit.point,b.weapon);
+        if ((b.splash ?? 0)>0) this.explodeRocket(b, oreHit.point); else this.shootOre(oreHit.asteroid, b.damage ?? (b.enemy ? WEAPONS.enemy.damage : WEAPONS.player.damage), oreHit.point,b.weapon,{x:b.vx,y:b.vy});
       } else if (Number.isFinite(targetT)) {
         b.life = 0; const point = { x: start.x + (b.x - start.x) * targetT, y: start.y + (b.y - start.y) * targetT };
         if (b.enemy) this.damagePlayer(b.damage ?? WEAPONS.enemy.damage, point);

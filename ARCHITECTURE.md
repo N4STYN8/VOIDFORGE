@@ -46,3 +46,5 @@ World expansion keeps the original 16-column asteroid ID namespace inside the fo
 Module art remains centralized in drawModule: primitive beveled housings and equipment-specific hardware are baked into the existing texture cache and shared with editor icons/salvage. Tier bars are presentation only; module coordinates, collision and equipment definitions remain independent.
 
 GameAudio routes the supplied MP3 media element and procedural effects through separate music/effects gain buses, then master gain/limiter. Vite bundles the local track using an import.meta.url asset reference. GameSettings owns the native paused modal and local preferences; particle density changes only the cosmetic pool RNG, never the simulation.
+
+Weapon-to-ore impulse is applied in shootOre before deformation, using ORE_COMBAT tuning and existing asteroid velocity fields. Direct hits supply projectile direction; area hits supply outward blast direction. Existing contact resolution handles enemy damage and kill rewards without another physics system.
