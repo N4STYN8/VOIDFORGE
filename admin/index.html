@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>VOIDFORGE Admin</title>
+</head>
+<body>
+  <header class="top">
+    <h1>VOIDFORGE <span>ADMIN</span></h1>
+    <span id="status" class="status">Connecting…</span>
+    <span id="stats" class="stats"></span>
+    <span class="grow"></span>
+    <button id="fit" title="Show the whole universe">Fit universe</button>
+    <button id="broadcast" class="primary">Broadcast</button>
+    <form method="post" action="/admin/logout"><button>Sign out</button></form>
+  </header>
+  <main>
+    <section class="mapwrap">
+      <canvas id="map"></canvas>
+      <div id="follow" class="follow" hidden></div>
+      <div id="hint" class="hint" hidden></div>
+      <div class="legend">Drag to pan · wheel to zoom · click a pilot to follow · right-click pilots and sectors for actions</div>
+    </section>
+    <aside>
+      <nav>
+        <button data-tab="pilots" class="on">Pilots <span id="count-pilots">0</span></button>
+        <button data-tab="lobbies">Lobbies <span id="count-lobbies">0</span></button>
+        <button data-tab="bans">Bans <span id="count-bans">0</span></button>
+        <button data-tab="log">Log</button>
+      </nav>
+      <div class="tab" id="tab-pilots"><table><thead><tr><th>Pilot</th><th>Where</th><th class="num">Ping</th><th class="num">Power</th><th></th></tr></thead><tbody id="pilots"></tbody></table></div>
+      <div class="tab" id="tab-lobbies" hidden><div id="lobbies"></div></div>
+      <div class="tab" id="tab-bans" hidden><table><thead><tr><th>Address</th><th>Reason</th><th>Until</th><th></th></tr></thead><tbody id="bans"></tbody></table></div>
+      <div class="tab" id="tab-log" hidden><ul id="log" class="log"></ul></div>
+      <div id="inspector" class="inspector" hidden></div>
+    </aside>
+  </main>
+  <div id="menu" class="menu" hidden></div>
+  <div id="modal" class="modal" hidden></div>
+  <div id="toasts" class="toasts"></div>
+  <script type="module" src="../src/admin/main.ts"></script>
+</body>
+</html>

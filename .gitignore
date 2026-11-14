@@ -6,3 +6,6 @@ dist/
 asteroid-full.png
 asteroid-carved.png
 dist-relay/
+dist-admin/
+bans.json
+bans.json.tmp

@@ -1,5 +1,22 @@
 # Progress
 
+## Relay admin console (branch claude/gallant-tereshkova-aabb3e)
+- Built:
+  - Password-protected `/admin` served by the relay, with login lockout, IP bans file and audit log.
+  - Live pilot and lobby tables with IP, sector, lobby, authority, position, power, ping and message rate.
+  - Kick, ban, unban, rename, broadcast, lobby disband, remove and open, sector lock and evict.
+  - Universe map with follow and spectate, real generated asteroid fields, live ships with block layouts, enemies, shots and beams.
+  - In-game admin commands: teleport (point, own-grid cell, or visit another sector), spawn and clear enemies, evict, inspect, and edits to cargo, storage, stations and outposts.
+- Validation: 342 tests after merging main (PR #9 latency, PR #10 outpost sync; 22 new admin tests: adminProtocol 3, admin relay integration 13, adminControl 10), both builds and the Node 16 relay bundle. The admin map reads the new enemy format inside `fx`: partial `n` rows, `f` full lists and `x` removals.
+- Browser check against a local relay with `relay-bot --horde --fire` plus the real game on a fresh origin joined to its lobby:
+  - A wrong password was refused; login worked.
+  - Pilots showed with ping and rate. Following tracked the bot over the asteroid field with ship blocks at close zoom.
+  - Inspect returned the game's report, and +50 iron landed in the game's cargo.
+  - The broadcast showed as an `[Admin]` note, and teleport moved the ship. No console errors.
+- Found during the check: solo pilots send no enemy traffic, so their enemies are not visible to admins (follow-up).
+- Final review fixes: parallel-login lockout bypass, stalled admin sockets (backlog skip + keep-alive reaping), outpost destroy now moves its minerals to station storage, loopback addresses are never banned (warns when TRUST_PROXY is missing behind a proxy), oversized inspect acks keep their outcome, NUL asset paths return 400.
+- Not deployed. Deploying needs explicit approval: the relay restart on the Pi, plus a site deploy for the in-game handler. Pi setup is in server/README.md.
+
 ## Visual parity between pilots (local branch claude/visual-parity, uncommitted)
 - User request: other pilots should see what each pilot sees of their own ship, outposts and fights. Now shared, display only, with no relay change: explosions, debris, chain arcs and shield flashes (so followers see enemies blow up), EMP pulses and plasma fields, outpost turret shots and turret aim, engine flames, burst and phase-dash trails, and an explosion where another pilot is destroyed. Other pilots' shots now stop with a spark at the enemy or ship they reach (allies and safe rings let them pass, as in the shooter's game).
 - Found and fixed: effects caused by other pilots' data arrived between updates and were cleared before being drawn, so remote muzzle flashes never showed.

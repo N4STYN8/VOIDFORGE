@@ -6,6 +6,8 @@
  * forwards ship `state` only to the other clients in that same sector. Lobbies are separate: a lobby
  * is a party of up to NET.maxLobby pilots that share the host's world, joined with a short code.
  */
+import { ADMIN, readAdminCommand, type AdminCommand } from './adminProtocol.ts';
+
 export const NET = {
   version: 1,
   /** Ship state messages per second sent by each client. */
@@ -62,7 +64,9 @@ export type ClientMessage =
   /** Matchmaking (stage 5): this pilot's home sector seed and progression score. */
   | { t: 'profile'; home: string; power: number }
   /** Ask for an online pilot of similar progression to be the next sector, excluding homes already linked. */
-  | { t: 'match'; exclude: string[] };
+  | { t: 'match'; exclude: string[] }
+  /** Answer to an admin command (`ServerMessage` admin): whether it was carried out, and inspection data. */
+  | { t: 'admin-ack'; ref: number; ok: boolean; message?: string; data?: unknown };
 
 export type ServerMessage =
   | { t: 'welcome'; id: string }
@@ -83,7 +87,9 @@ export type ServerMessage =
   | { t: 'claims'; ok: number[]; denied: number[]; lease: number }
   /** A `direct` message whose recipient is not in the sender's room any more. */
   | { t: 'undelivered'; to: string; k: DirectKind }
-  | { t: 'match'; world: WorldRef | null; name?: string };
+  | { t: 'match'; world: WorldRef | null; name?: string }
+  /** A command from a relay admin, carried out by this client (src/adminControl.ts) and answered with admin-ack. */
+  | { t: 'admin'; ref: number; c: AdminCommand };
 /** Neighbours are matched only within this progression ratio (larger score / smaller score). */
 export const MATCH = { maxRatio: 1.75, wait: 1500 };
 /** `fx` batches a pilot's frame traffic (own shots, bumped and changed rocks, and the authority's enemy fire and clock) into one message. */
@@ -104,7 +110,7 @@ const text = (s: unknown, max: number): s is string => typeof s === 'string' && 
 export const cleanName = (name: string) => name.replace(/[^\p{L}\p{N} _.-]/gu, '').trim().slice(0, NET.maxName) || 'Pilot';
 export const normalizeCode = (code: string) => code.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, NET.codeLength);
 
-function readWorld(w: unknown): WorldRef | undefined {
+export function readWorld(w: unknown): WorldRef | undefined {
   const v = w as WorldRef;
   if (!v || !text(v.home, NET.maxSeed) || !text(v.seed, NET.maxSeed) || !Number.isSafeInteger(v.x) || !Number.isSafeInteger(v.y)) return;
   const world: WorldRef = { home: v.home, x: v.x, y: v.y, seed: v.seed };
@@ -158,6 +164,12 @@ export function parseClient(raw: string): ClientMessage | undefined {
     case 'direct': return typeof m.k === 'string' && DIRECTS.includes(m.k) && typeof m.to === 'string' && m.d !== undefined ? { t: 'direct', to: m.to, k: m.k as DirectKind, d: m.d } : undefined;
     case 'profile': return typeof m.home === 'string' && m.home.length > 0 && m.home.length <= NET.maxSeed && finite(m.power) && m.power >= 0 ? { t: 'profile', home: m.home, power: m.power } : undefined;
     case 'match': return Array.isArray(m.exclude) && m.exclude.length <= 64 && m.exclude.every(h => typeof h === 'string') ? { t: 'match', exclude: m.exclude as string[] } : undefined;
+    case 'admin-ack': {
+      if (!Number.isSafeInteger(m.ref) || typeof m.ok !== 'boolean' || (m.message !== undefined && typeof m.message !== 'string')) return;
+      // An oversized report keeps the outcome (the change was already applied) and drops only the data.
+      const data = m.data !== undefined && JSON.stringify(m.data).length > ADMIN.maxAck ? undefined : m.data;
+      return { t: 'admin-ack', ref: m.ref as number, ok: m.ok, message: typeof m.message === 'string' ? m.message.slice(0, ADMIN.maxText) : undefined, data };
+    }
     case 'claim': return Array.isArray(m.ids) && m.ids.length <= CLAIMS.batch && m.ids.every(id => Number.isSafeInteger(id)) ? { t: 'claim', ids: m.ids as number[] } : undefined;
   }
 }
@@ -168,6 +180,7 @@ export function parseServer(raw: string): ServerMessage | undefined {
   try { m = JSON.parse(raw); } catch { return; }
   if (!m || typeof m !== 'object') return;
   switch (m.t) {
+    case 'admin': { const c = Number.isSafeInteger(m.ref) ? readAdminCommand(m.c) : undefined; return c && { t: 'admin', ref: m.ref as number, c }; }
     case 'welcome': return typeof m.id === 'string' ? { t: 'welcome', id: m.id } : undefined;
     case 'gone': return typeof m.id === 'string' ? { t: 'gone', id: m.id } : undefined;
     case 'error': return typeof m.message === 'string' ? { t: 'error', message: m.message } : undefined;
