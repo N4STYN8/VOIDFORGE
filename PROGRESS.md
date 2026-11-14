@@ -527,3 +527,11 @@ Compact HUD release: user explicitly requested push live. Origin fetched; HEAD/m
 - Next: user review of eject interaction and scatter appearance before separately authorized publication.
 
 - User authorized publication ('push live'). Fetched origin and confirmed main remains 5b8ced8; reran all 389 tests and both production builds successfully. Publishing the reviewed recovery/cargo-ejection changes with a normal fast-forward push to main and the existing GitHub Pages workflow; no relay deployment or restart.
+
+## Eject clicks while moving — 2026-11-14
+- Reproduced a 400ms mouse press while coasting: flight HUD innerHTML replacement disconnected the eject button, so release opened no confirmation. Changed HUD refresh to patch matching DOM nodes/text/attributes in place, retaining live buttons and keyboard focus while position/speed/distance readings update. No simulation, cargo or confirmation-rule changes.
+- Clean start; fetched origin, safely pulled (already current at da03454), created codex/eject-moving-click. Files: src/hud.ts, src/main.ts and project docs.
+- Validation: reproduced failure before edit; browser now retains exact button identity across a moving 400ms press, opens confirmation on release, retains keyboard focus across refresh, and supports Enter/confirm. Existing cancel/Escape/per-type/storage/reload checks and 1446/1024/850 layouts pass; no browser errors, isolated context only. All 389 tests and game/admin builds pass; existing bundle warning. Diff checked, no conflicts. Local/uncommitted; nothing pushed or deployed.
+- Next: user review of moving clicks; publication requires a new explicit request.
+
+- User authorized publication ('push live'). Origin remains da03454; all 389 tests and game/admin builds pass again. Publishing only the reviewed moving-click fix and docs via normal fast-forward push to main / GitHub Pages. No relay changes.

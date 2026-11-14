@@ -305,3 +305,6 @@ CARGO_EJECTION in data.ts owns the bounded stack count, radial spread and outwar
   - `src/admin/ui/actions.ts`: shared actions, menus and pick mode.
 - **Watching.** The order is the open drawer's sector, then the followed pilot's, then sectors in view, still at most 3.
 - **`scripts/swarm.ts`** runs N headless GameModel bots, named `Sim NNN`, across worker processes. They fly, mine, fight, unload and form 3-pilot lobbies, but never fire at pilots or use matchmaking.
+
+## HUD interaction lifetime — 2026-11-14
+Flight HUD updates use updateFlightHud in hud.ts instead of replacing root.innerHTML. Matching nodes receive changed text/attributes in place; additions/removals still follow flightHud markup. This preserves eject button identity and focus through frequent changing speed/position/distance updates, allowing mouse-down and mouse-up to complete on the same control. Event delegation and confirmation behavior remain unchanged.
