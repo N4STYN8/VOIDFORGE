@@ -1,5 +1,15 @@
 # Tasks
 
+## Multiplayer latency — built, needs internet play
+- [x] Latency benchmark over a real relay with simulated delay (scripts/latencyBench.ts)
+- [x] Adaptive remote-ship interpolation with extrapolation and eased corrections
+- [x] Enemy velocities, dead reckoning, enemies in fx with partial/full lists and removals
+- [x] Enemy shots fast-forwarded by age + one-way delay; pilot shots launched from the drawn shooter
+- [x] Early fx/hit flushes inside a client-side send budget under the relay limit
+- [x] Ping readout (panel, command bar, other pilots) without a relay change
+- [ ] Play over a real internet link (20–80 ms) and tune INTERP / GHOST constants
+- [ ] With relay redeploy approval: `ping`/`pong` message, sender timestamps on ship state
+
 ## Space-station outposts — built, needs play
 - [x] Distinct module art for all sixteen block types, continuous hull walls, corridor tubes
 - [x] Same-kind squares up to 3x3 drawn as one large module

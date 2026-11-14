@@ -7,7 +7,7 @@ import { sharedSector, encodeEnemies, decodeEnemies } from '../src/shared.ts';
  *   node --experimental-strip-types scripts/perfBench.ts [frames=900] [horde=4]
  * Each scenario puts the ship in open space, brings a horde of the given level (1–4) in, fires at the
  * nearest enemy and steps the model at 60 fps. Shared scenarios add two remote pilots: the authority
- * hunts them too; the follower mirrors the authority's enemies (applyEnemies at 4/s) instead.
+ * hunts them too; the follower mirrors the authority's enemies (applyEnemies at 4/s here; live followers get nearby enemies in every fx) instead.
  * Prints per-frame update cost (mean, p95, p99, worst) in milliseconds, plus garbage-collection pauses
  * (count, total and longest) and heap allocated per frame, since GC pauses show up as hitches.
  */

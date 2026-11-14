@@ -6,7 +6,7 @@ import { SHARE_RATES } from '../src/sharedLink.ts';
 
 /**
  * Relay load test: many headless pilots in sector rooms, each sending ship state at NET.stateHz, room
- * authorities casting a 20-enemy list at SHARE_RATES.enemies, a quarter of rooms in lobbies. Starts its own relay as a child
+ * authorities casting a 20-enemy list at SHARE_RATES.fx (enemy rows ride in every fx when pilots are near them), a quarter of rooms in lobbies. Starts its own relay as a child
  * process (so the relay's CPU is measured on its own) unless a URL is given.
  *   node --experimental-strip-types scripts/loadTest.ts [clients=1000] [roomSize=4] [seconds=20] [ws://host:port]
  * Reports relay CPU, memory, frames and bytes per second, skipped (backed-up) updates and end-to-end latency.
@@ -52,7 +52,7 @@ for (const p of pilots) if (!p.lead) { const lead = pilots[p.room * roomSize]; i
 
 const before = await statsOf(url), startWall = Date.now(); let lastEnemies = 0;
 const timer = setInterval(() => {
-  const now = clock(), sendMs = Math.round(performance.now() % 1e5 * 10) / 10, castEnemies = now - lastEnemies >= 1 / SHARE_RATES.enemies;
+  const now = clock(), sendMs = Math.round(performance.now() % 1e5 * 10) / 10, castEnemies = now - lastEnemies >= 1 / SHARE_RATES.fx - 0.01;
   if (castEnemies) lastEnemies = now;
   for (const p of pilots) {
     p.x += Math.cos(now + p.room) * 3; p.y += Math.sin(now + p.room) * 3;

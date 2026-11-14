@@ -15,7 +15,8 @@ export type SharedTarget = { id: string; x: number; y: number; vx: number; vy: n
 export type PvpHit = { to: string; damage: number };
 export type SharedHit = { enemyId: number; damage: number; pierce?: boolean };
 export type SharedLoot = { to: string; drops: { ore: Resource; amount: number; x: number; y: number }[] };
-export type SharedShot = { x: number; y: number; vx: number; vy: number; life: number; damage: number; weapon?: string; homing?: number; rocket?: boolean; splash?: number }
+/** `a` is how many seconds the shot had already flown when it was sent; receivers fast-forward it by that plus the network delay. */
+export type SharedShot = { x: number; y: number; vx: number; vy: number; life: number; damage: number; weapon?: string; homing?: number; rocket?: boolean; splash?: number; a?: number }
   | { beam: true; x: number; y: number; ex: number; ey: number; damage: number };
 /** Hooks a GameModel uses while sharing a sector. Undefined in single-player, which then behaves exactly as before. */
 export type SharedSector = {
@@ -57,15 +58,32 @@ export function decodeRocks(d: unknown): RockState[] {
   return d.slice(0, 64).filter((r): r is RockState => r && Number.isSafeInteger(r.id) && (r.gone === true || [r.x, r.y, r.vx, r.vy, r.amount, r.health, r.radius].every(num) && r.amount >= 0));
 }
 
-/** Compact enemy row: id, kind, x, y, angle, health, maxHealth, shield, state, parent. */
-export type EnemyRow = [number, string, number, number, number, number, number, number, string, number];
-export function encodeEnemies(enemies: { id: number; kind?: EnemyKind; x: number; y: number; angle: number; health: number; maxHealth?: number; shield?: number; state?: string; parent?: number }[]): EnemyRow[] {
-  // Whole units and centiradians: enemies are eased between updates, so finer values only cost bandwidth.
-  return enemies.filter(e => e.health > 0).slice(0, 96).map(e => [e.id, e.kind ?? 'raider', Math.round(e.x), Math.round(e.y), round(e.angle, 2), Math.ceil(e.health), Math.round(e.maxHealth ?? ENEMIES[e.kind ?? 'raider'].health), Math.round(e.shield ?? 0), e.state ?? 'patrol', e.parent ?? -1]);
+/**
+ * Compact enemy row: id, kind, x, y, angle, health, maxHealth, shield, state, parent, vx, vy. Followers carry
+ * each enemy forward on its velocity between updates (dead reckoning). Rows from older clients have no velocity
+ * (10 entries) and decode with vx = vy = 0.
+ */
+export type EnemyRow = [number, string, number, number, number, number, number, number, string, number, number, number];
+export function encodeEnemies(enemies: { id: number; kind?: EnemyKind; x: number; y: number; angle: number; health: number; maxHealth?: number; shield?: number; state?: string; parent?: number; vx?: number; vy?: number }[]): EnemyRow[] {
+  // Whole units and centiradians: enemies are carried forward between updates, so finer values only cost bandwidth.
+  return enemies.filter(e => e.health > 0).slice(0, 96).map(e => [e.id, e.kind ?? 'raider', Math.round(e.x), Math.round(e.y), round(e.angle, 2), Math.ceil(e.health), Math.round(e.maxHealth ?? ENEMIES[e.kind ?? 'raider'].health), Math.round(e.shield ?? 0), e.state ?? 'patrol', e.parent ?? -1, Math.round(e.vx ?? 0), Math.round(e.vy ?? 0)]);
 }
 export function decodeEnemies(d: unknown): EnemyRow[] {
   if (!Array.isArray(d)) return [];
-  return d.slice(0, 96).filter((r): r is EnemyRow => Array.isArray(r) && r.length === 10 && Number.isSafeInteger(r[0]) && typeof r[1] === 'string' && r[1] in ENEMIES && [r[2], r[3], r[4], r[5], r[6], r[7], r[9]].every(num) && typeof r[8] === 'string');
+  return d.slice(0, 96).filter(r => Array.isArray(r) && (r.length === 10 || r.length === 12) && Number.isSafeInteger(r[0]) && typeof r[1] === 'string' && r[1] in ENEMIES && [r[2], r[3], r[4], r[5], r[6], r[7], r[9]].every(num) && typeof r[8] === 'string' && (r.length === 10 || [r[10], r[11]].every(v => num(v) && Math.abs(v) < 5000)))
+    .map(r => (r.length === 12 ? r : [...r, 0, 0]) as EnemyRow);
+}
+/** Enemy ids the authority removed (destroyed or despawned) since its last message: followers drop them at once. */
+export function decodeIds(d: unknown): number[] {
+  return Array.isArray(d) ? d.slice(0, 128).filter(id => Number.isSafeInteger(id)) : [];
+}
+/**
+ * Seconds to carry something received forward: how old it already was when sent plus the one-way network
+ * delay, never more than `max` (so a stalled connection does not throw things far ahead).
+ */
+export function leadTime(age: number | undefined, oneWay: number, max = 0.3) {
+  const lead = (Number.isFinite(age) ? age as number : 0) + (Number.isFinite(oneWay) ? oneWay : 0);
+  return Math.max(0, Math.min(max, lead));
 }
 
 /** A rock's motion after a bump: id, x, y, vx, vy. */
@@ -75,14 +93,26 @@ export function decodeBumps(d: unknown): BumpRow[] {
   if (!Array.isArray(d)) return [];
   return d.slice(0, 64).filter((r): r is BumpRow => Array.isArray(r) && r.length === 5 && Number.isSafeInteger(r[0]) && r.slice(1).every(num) && Math.abs(r[3]) < 2000 && Math.abs(r[4]) < 2000);
 }
-/** Another pilot's own shot: drawn and stopped by rocks here, but it never damages anything in this simulation (the shooter's own simulation decides hits). */
-export type PilotShot = { x: number; y: number; vx: number; vy: number; life: number; weapon?: string; level?: number; rocket?: boolean };
-export function encodePilotShot(b: PilotShot): PilotShot {
-  return { x: round(b.x), y: round(b.y), vx: round(b.vx), vy: round(b.vy), life: round(b.life, 2), weapon: b.weapon, level: b.level, rocket: b.rocket || undefined };
+/**
+ * Another pilot's own shot: drawn and stopped by rocks here, but it never damages anything in this simulation (the
+ * shooter's own simulation decides hits). `o` is where it was relative to the shooter's ship when picked up, so a
+ * receiver can launch it from where it draws that ship: the shot then leaves the visible gun at once instead of
+ * appearing ahead of a ship that is drawn slightly in the past.
+ */
+export type PilotShot = { x: number; y: number; vx: number; vy: number; life: number; weapon?: string; level?: number; rocket?: boolean; o?: [number, number] };
+export function encodePilotShot(b: PilotShot, ship?: { x: number; y: number }): PilotShot {
+  const shot: PilotShot = { x: round(b.x), y: round(b.y), vx: round(b.vx), vy: round(b.vy), life: round(b.life, 2), weapon: b.weapon, level: b.level, rocket: b.rocket || undefined };
+  if (ship) shot.o = [round(b.x - ship.x), round(b.y - ship.y)];
+  return shot;
 }
 export function decodePilotShots(d: unknown): PilotShot[] {
   if (!Array.isArray(d)) return [];
-  return d.slice(0, 64).filter((s): s is PilotShot => s && [s.x, s.y, s.vx, s.vy, s.life].every(num) && s.life > 0 && s.life < 20 && (s.weapon === undefined || typeof s.weapon === 'string') && (s.level === undefined || Number.isInteger(s.level)));
+  return d.slice(0, 64).filter((s): s is PilotShot => s && [s.x, s.y, s.vx, s.vy, s.life].every(num) && s.life > 0 && s.life < 20 && (s.weapon === undefined || typeof s.weapon === 'string') && (s.level === undefined || Number.isInteger(s.level)))
+    .map(s => {
+      const shot: PilotShot = { x: s.x, y: s.y, vx: s.vx, vy: s.vy, life: s.life, weapon: s.weapon, level: s.level, rocket: s.rocket === true || undefined };
+      if (Array.isArray(s.o) && s.o.length === 2 && s.o.every(num) && Math.abs(s.o[0]) < 600 && Math.abs(s.o[1]) < 600) shot.o = [s.o[0], s.o[1]];
+      return shot;
+    });
 }
 
 /**
@@ -114,7 +144,11 @@ export function decodeLook(d: unknown): PilotLook | undefined {
 export function decodeShots(d: unknown): SharedShot[] {
   if (!Array.isArray(d)) return [];
   return d.slice(0, 64).filter((s): s is SharedShot => s && (s.beam === true ? [s.x, s.y, s.ex, s.ey, s.damage].every(num) : [s.x, s.y, s.vx, s.vy, s.life, s.damage].every(num) && s.life > 0 && s.life < 20))
-    .map(s => ({ ...s, damage: Math.max(0, Math.min(400, s.damage)) }));
+    .map(s => {
+      const shot = { ...s, damage: Math.max(0, Math.min(400, s.damage)) };
+      if ('a' in shot) { if (num(shot.a) && shot.a >= 0) shot.a = Math.min(1, shot.a); else delete shot.a; }
+      return shot;
+    });
 }
 export function decodeHits(d: unknown): SharedHit[] {
   if (!Array.isArray(d)) return [];
