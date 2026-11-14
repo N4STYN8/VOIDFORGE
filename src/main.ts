@@ -701,7 +701,21 @@ class SpaceScene extends Phaser.Scene {
     const view = this.cameras.main.worldView, cell = BUILD_GRID.cellSize;
     for (const pose of this.peerPoses) {
       if (pose.dead || pose.x < view.x - 500 || pose.y < view.y - 500 || pose.x > view.right + 500 || pose.y > view.bottom + 500) continue;
-      const look = this.link.look(pose.id); if (!look) continue;
+      const look = this.link.look(pose.id);
+      // Engine flames while they thrust (longer during a burst), and the phase-dash trail, as on this pilot's own ship.
+      if (pose.thrust || look?.b) {
+        const now = this.effects.time, cos = Math.cos(pose.angle), sin = Math.sin(pose.angle);
+        for (const [kind, bx, by, level] of pose.blocks) {
+          if (kind !== 'engine') continue;
+          const x = pose.x + (bx * cos - by * sin) * cell, y = pose.y + (bx * sin + by * cos) * cell;
+          const length = (5 + level * 1.5) * (look?.b ? 2.1 : 1) + Math.sin(now * 40 + bx * 3 + by) * 1.5;
+          g.save(); g.translateCanvas(x, y); g.rotateCanvas(pose.angle + Math.PI);
+          g.fillStyle(0xff7a3c, .85); g.fillRect(8, -3, length, 6); g.fillStyle(0xffc46b, .95); g.fillRect(8, -2, length * .65, 4); g.fillStyle(0xfff3d0); g.fillRect(8, -1, length * .35, 2);
+          g.restore();
+        }
+      }
+      if (!look) continue;
+      if (look.d && this.effects.enabled) { g.lineStyle(1, 0x94ddff, .6); g.strokeCircle(pose.x - pose.vx * .07, pose.y - pose.vy * .07, 18); g.strokeCircle(pose.x - pose.vx * .14, pose.y - pose.vy * .14, 14); }
       if (look.s) {
         const radius = Math.max(24, ...pose.blocks.map(b => Math.hypot(b[1], b[2]) * cell + 12)), charge = look.s[0] / look.s[1];
         g.fillStyle(0x71e1ff, 0.035); g.fillCircle(pose.x, pose.y, radius);
@@ -902,7 +916,8 @@ class SpaceScene extends Phaser.Scene {
       // Blinking navigation beacons on the outermost blocks, alternating red and green.
       layout.beacons.forEach((s, i) => { if (s.progress < 1 || Math.sin(now * 3 + i * 1.7) < 0.55) return; const bx = (s.cx + 0.5) * size, by = (s.cy + 0.5) * size; g.fillStyle(i % 2 ? 0x5dff9a : 0xff4d6d, 0.25); g.fillCircle(bx, by, 3.5); g.fillStyle(i % 2 ? 0xc8ffd8 : 0xffc2cc, 1); g.fillRect(bx - 0.75, by - 0.75, 1.5, 1.5); });
     }
-    for (const outpost of this.model.outposts) for (const d of outpost.drones ?? []) {
+    // Own drones, and other pilots' drones in flight on their outposts here (drawn only; they never mine for this pilot).
+    for (const outpost of [...this.model.outposts, ...this.model.visitorOutposts]) for (const d of outpost.drones ?? []) {
       // Mining drones: pooled sprites, hidden while parked in the hangar, with a thin beam while cutting.
       if (d.state === 'idle' || d.x < view.x - 30 || d.x > view.right + 30 || d.y < view.y - 30 || d.y > view.bottom + 30) continue;
       const sprite = this.droneSprites[this.droneIndex] ?? this.add.image(0, 0, 'mining-drone').setDepth(0.5);
@@ -1100,6 +1115,8 @@ class SpaceScene extends Phaser.Scene {
     });
     for (const bullet of this.model.bullets) if(visible(bullet)) drawProjectile(g,bullet,this.effects.enabled,this.effects.time);
     for (const pulse of this.model.empPulses) if(visible(pulse)) drawEmp(g,pulse,this.effects.enabled,this.effects.time);
+    // Other pilots' EMP pulses, drawn the same (display only).
+    for (const pulse of this.model.remotePulses) if(visible(pulse)) drawEmp(g,pulse,this.effects.enabled,this.effects.time);
     for(const hazard of this.model.enemyHazards){g.lineStyle(2,hazard.active?0xff7755:0xc99bff,hazard.active?.9:.25+hazard.progress*.5);g.strokeCircle(hazard.x,hazard.y,hazard.radius);if(hazard.active){g.fillStyle(0xae76ee,.18);g.fillCircle(hazard.x,hazard.y,hazard.radius);}}
     for(const beam of this.model.enemyBeams){g.lineStyle(4,0xffa54a,beam.life/.22);g.lineBetween(beam.start.x,beam.start.y,beam.end.x,beam.end.y);}
     let enemyIndex=0;
@@ -1205,7 +1222,7 @@ class SpaceScene extends Phaser.Scene {
         g.restore();
       }
     }else {this.shipImage?.setVisible(false);for(const sprite of this.shipSprites)sprite.setVisible(false);}
-    for(const field of this.model.novaFields)if(visible(field)){
+    for(const field of [...this.model.novaFields,...this.model.remoteFields])if(visible(field)){
       g.fillStyle(0x99ff80,this.effects.enabled?.09:.025);g.fillCircle(field.x,field.y,field.radius);
       g.lineStyle(1,0xb1ff91,this.effects.enabled?.5:.2);g.strokeCircle(field.x,field.y,field.radius);
     }

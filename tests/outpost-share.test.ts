@@ -4,7 +4,7 @@ import { GameModel } from '../src/model.ts';
 import { NetClient } from '../src/net.ts';
 import { SharedLink } from '../src/sharedLink.ts';
 import { worldRef } from '../src/sectors.ts';
-import { encodeOutpost, decodeOutpostPart, outpostFromParts, OUTPOST_PART } from '../src/shared.ts';
+import { encodeOutpost, decodeOutpostPart, outpostFromParts, OUTPOST_PART, encodeDrones, decodeDrones } from '../src/shared.ts';
 import { startRelay } from '../server/relay.ts';
 import type { Outpost, Structure } from '../src/outposts.ts';
 
@@ -64,5 +64,55 @@ test('over the relay: each pilot sees the other\'s outposts as they are built, c
     b.net.disconnect();
     assert.ok(await until(() => a.model.visitorOutposts.length === 0, a, { ...b, net: b.net } as Pilot), 'a departed pilot\'s outposts go');
     a.net.disconnect();
+  } finally { await relay.close(); }
+});
+
+test('drone rows: only drones in flight near another pilot, with the beam point while cutting', () => {
+  const outposts = [{ id: 4, drones: [
+    { id: 1, x: 100.4, y: 200.6, angle: 1.2345, state: 'mining', beam: { x: 130, y: 210 } },
+    { id: 2, x: 0, y: 0, angle: 0, state: 'idle' },
+    { id: 3, x: 9000, y: 9000, angle: 0, state: 'outbound' },
+  ] }];
+  const rows = encodeDrones(outposts, (x, y) => Math.hypot(x, y) < 1000);
+  assert.deepEqual(rows, [[4, 1, 100, 201, 1.23, 130, 210]]);
+  assert.deepEqual(decodeDrones(JSON.parse(JSON.stringify(rows))), rows);
+  assert.equal(decodeDrones([[4, 1, 0, 0, 0, 5000, 0]]).length, 0, 'a beam far from its drone is rejected');
+  assert.equal(decodeDrones([[4, 1, 'x', 0, 0]]).length, 0);
+});
+
+test("over the relay: another pilot's drones fly on their outpost here, without mining anything for this pilot", async () => {
+  const relay = await startRelay({ port: 0, host: '127.0.0.1' }), url = `ws://127.0.0.1:${relay.port}`, clock = () => performance.now() / 1000;
+  const pilot = (name: string) => { const model = new GameModel('drone-share'); model.asteroids = []; model.enemies = []; const net = new NetClient(), link = new SharedLink(net, () => model); net.connect(url, name); return { model, net, link }; };
+  type Pilot = ReturnType<typeof pilot>;
+  const step = (p: Pilot, owner: boolean) => {
+    const m = p.model, now = clock(); m.asteroids = []; m.enemies = [];
+    m.update(1 / 60, { x: 0, y: 0, aim: { x: m.player.x, y: m.player.y - 100 }, fire: false, mine: false, dock: false });
+    p.net.setSector(worldRef(m), owner);
+    p.net.sendState(now, { x: m.player.x, y: m.player.y, vx: 0, vy: 0, angle: 0, health: 1, maxHealth: 1, paint: 0, blocks: [['core', 0, 0, 1]] });
+    p.link.frame(m, now);
+  };
+  try {
+    const a = pilot('A'), b = pilot('B');
+    Object.assign(a.model.player, { x: 30000, y: 30000 }); Object.assign(b.model.player, { x: 30200, y: 30000 });
+    // A's outpost far from A's ship, so A's own model leaves its drones alone (not simulated); the test flies them.
+    const home = outpost(1, 5, 1300, 1300);
+    home.drones = [{ id: 7, hangar: 2, x: 30100, y: 30100, angle: 0, state: 'outbound', load: 0, timer: 0 }];
+    a.model.outposts = [home];
+    const cargo = JSON.stringify(b.model.cargo), stored = JSON.stringify(b.model.stored);
+    let drawn: { x: number; y: number } | undefined;
+    for (let i = 0; i < 400; i++) {
+      home.drones![0].x += 1; step(a, true); step(b, false);
+      drawn = b.model.visitorOutposts[0]?.drones?.[0];
+      if (drawn && Math.abs(drawn.x - home.drones![0].x) < 25 && i > 60) break;
+      await new Promise(r => setTimeout(r, 10));
+    }
+    assert.ok(drawn, "the drone appears on the other pilot's copy of the outpost");
+    assert.ok(Math.abs(drawn!.x - home.drones![0].x) < 25, "and follows its owner's drone");
+    home.drones![0].state = 'idle';
+    let gone = false;
+    for (let i = 0; i < 200 && !gone; i++) { step(a, true); step(b, false); gone = !b.model.visitorOutposts[0]?.drones?.length; await new Promise(r => setTimeout(r, 10)); }
+    assert.ok(gone, 'a landed drone disappears');
+    assert.equal(JSON.stringify(b.model.cargo), cargo); assert.equal(JSON.stringify(b.model.stored), stored, 'nothing mined or delivered for the viewer');
+    a.net.disconnect(); b.net.disconnect();
   } finally { await relay.close(); }
 });
