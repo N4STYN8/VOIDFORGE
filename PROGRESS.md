@@ -369,3 +369,17 @@ Compact HUD release: user explicitly requested push live. Origin fetched; HEAD/m
 - Files: src/audio.ts, src/model.ts, src/main.ts, src/effectEvents.ts, new src/soundVisibility.ts and tests/soundVisibility.test.ts; project docs and AUDIO_AUDIT.md. Earlier shipImage files remain local. No conflicts; all changes uncommitted, nothing pushed or deployed. Next: user listening pass and zoom visual check.
 
 - Publication authorized by user ('push live'): fetched origin, confirmed HEAD equals origin/main 5c827ff and no collaborator commits to integrate. Re-ran all 280 tests; build and diff checks pass. Publishing only the reviewed audio/visibility and ship-zoom fixes via a normal fast-forward push; Pages workflow handles deployment. No relay restart.
+
+## Enemy retaliation — 2026-11-13
+- Fetched origin; clean HEAD matched origin/main 464c3df, so no pull/integration needed. Created local codex/enemy-retaliation; no upstream selected.
+- Damaging hits now start/refresh a configured 10-second pursuit, following the shooter beyond detection. Authority prefers the remote attacker over nearer pilots. Visibility still gates fire; safe zones cancel pursuit, guard leashes/tactical retreats remain. Collision damage does not provoke. Existing memory handles searching after timeout.
+- Files: src/model.ts, src/enemyAI.ts, src/data.ts, tests/enemies.test.ts, new tests/retaliation.test.ts and project docs. Validation: 284 tests pass, production build passes (existing bundle warning), diff checks clean. Updated old out-of-sight hit regression to expect chase; it exercises actual projectile damage.
+- No conflicts or pre-existing local edits; changes remain local/uncommitted. Nothing pushed or deployed. Next: playtest pursuit/disengagement duration.
+
+## Destructible enemy missiles — 2026-11-13
+- Continued the requested changes on codex/enemy-retaliation, preserving known uncommitted pursuit work after user steering. Fetched origin; HEAD still matches origin/main 464c3df. No upstream selected or pull needed.
+- Enemy missiles now have 90 durability, cumulative shot damage, impact feedback and a visual/audio explosion when destroyed. Defensive interception disarms the warhead without splash damage or rewards. Relative sweeps and nearest-contact priority preserve asteroid cover. Existing pooled bullets clear health on reuse; legacy shots default health lazily. Remote visual-only shots cannot damage missiles; network protocol unchanged.
+- Files added/changed for this feature: src/model.ts, src/data.ts, tests/missileDefense.test.ts and project docs. Validation: 288 full-suite tests pass; build passes with existing bundle-size warning; diff checks pass. Prior pursuit changes remain intact.
+- No conflicts, commits, push or deployment. Next: playtest missile durability/hit radius and pursuit timing.
+
+- User authorized live publication. Fetched origin and verified unchanged main 464c3df; reran 288 tests and production build successfully. Publishing pursuit/interception changes via normal fast-forward push and the existing Pages workflow; no relay changes.

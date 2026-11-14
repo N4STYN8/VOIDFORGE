@@ -14,7 +14,7 @@ import type { EffectEvent } from './effectEvents.ts';
 import { edgeDirection, sectorKey, sectorLabel, type SectorDirection } from './sectorGrid.ts';
 import type { SharedSector, SharedShot, SharedTarget, RockState, EnemyRow, BumpRow, PilotShot } from './shared.ts';
 import { collideAsteroid, collide, type Body } from './collisions.ts';
-import { LOBBY_SHARE, PVP, SECTOR, WORLD, SHIP, WEAPONS, ENEMIES, ENEMY_AI, ENEMY_SPAWN, HORDE, FLEET, WAYPOINTS, OUTPOST, STRUCTURES, STRUCTURE_SPECIAL, DRONES, type StructureKind, DANGER, BOSS, HEARING, type EnemyDefinition, type EnemyWeapon, COLLISION, ORE_COMBAT, PATROL, MODULE_DURABILITY, REPAIR, MODULES, BUILD_GRID, BASES, BASE_RADIUS, EXPLORATION, RESOURCES, type EnemyKind, CORE, ROCKET, WEAPON_TYPES, SHIP_SYSTEMS, VFX, type WeaponKind, equipment, upgradeCost, type EquipmentStats, type EquipmentKind, type ModuleKind, type Resource } from './data.ts';
+import { LOBBY_SHARE, PVP, SECTOR, WORLD, SHIP, MISSILE_DEFENSE, WEAPONS, ENEMIES, ENEMY_AI, ENEMY_SPAWN, HORDE, FLEET, WAYPOINTS, OUTPOST, STRUCTURES, STRUCTURE_SPECIAL, DRONES, type StructureKind, DANGER, BOSS, HEARING, type EnemyDefinition, type EnemyWeapon, COLLISION, ORE_COMBAT, PATROL, MODULE_DURABILITY, REPAIR, MODULES, BUILD_GRID, BASES, BASE_RADIUS, EXPLORATION, RESOURCES, type EnemyKind, CORE, ROCKET, WEAPON_TYPES, SHIP_SYSTEMS, VFX, type WeaponKind, equipment, upgradeCost, type EquipmentStats, type EquipmentKind, type ModuleKind, type Resource } from './data.ts';
 export type ShipModule = { invested?:Minerals; x: number; y: number; kind: ModuleKind; level: number; cooldown: number; integrity: number; ability?:AbilityState; targetIds?: number[]; boostRemaining?:number; boostCooldown?:number };
 export type Point = { x: number; y: number };
 /** A ship that is not being flown: everything that belongs to the hull rather than to the pilot. */
@@ -38,9 +38,9 @@ export type Galaxy = { home: string; x: number; y: number; sectors: Record<strin
 export const paintIndex = (value: unknown) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value < FLEET.paints.length ? value : 0;
 export const starterModules = (): ShipModule[] => [{ x: 1, y: 0, kind: 'cannon', level: 1, cooldown: 0, integrity: 45 }, { x: 0, y: -1, kind: 'miner', level: 1, cooldown: 0, integrity: 40 }];
 export type Input = { x: number; y: number; aim: Point; fire: boolean; mine: boolean; dock: boolean; boost?:boolean; overclock?:boolean; view?: { x: number; y: number; width: number; height: number } };
-export type Enemy = Point & { /** Shared sector: id of the remote pilot whose hit landed last (authority only, not saved meaningfully). */ lastHitBy?: string; /** Outpost raid target and party membership. */ raid?:number;raidParty?:boolean; armor?:number;accuracyScale?:number;maxHealth?:number;damageScale?:number;rewardScale?:number;meltdown?:number; meltdownDone?:boolean; faction?: import("./data.ts").FactionKind; cargo?: Partial<Record<Resource,number>>; industryClock?:number; horde?: boolean; populationExempt?: boolean; mount?: Point; phase2?: boolean; phase3?: boolean; cooldown3?: number; surge?: number; surgeTimer?: number; empTimer?: number; empCharge?: number; state?: EnemyState; lastSeen?: Point; memory?: number; clock?: number; retreat?: number; retreated?: boolean; reposition?: number; sidestep?: number; stuck?: number; px?: number; py?: number; shield?: number; shieldDelay?: number; cooldown2?: number; charge?: { t: number; angle: number; weapon: number }; sx?: number; sy?: number; parent?: number; home?: Point; populationRegion?:string;populationClass?:'normal'|'elite';populationPatrol?:Point & {id:number;angle:number};rewarded?:boolean; empRecovery?:number;disabledFor?: number; vx?: number; vy?: number; impactCooldown?: number; kind?: EnemyKind; squad?: number; slot?: number; patrolAngle?: number; id: number; health: number; cooldown: number; angle: number };
+export type Enemy = Point & { /** Shared sector: id of the remote pilot whose hit landed last (authority only, not saved meaningfully). */ lastHitBy?: string; retaliation?: number; /** Outpost raid target and party membership. */ raid?:number;raidParty?:boolean; armor?:number;accuracyScale?:number;maxHealth?:number;damageScale?:number;rewardScale?:number;meltdown?:number; meltdownDone?:boolean; faction?: import("./data.ts").FactionKind; cargo?: Partial<Record<Resource,number>>; industryClock?:number; horde?: boolean; populationExempt?: boolean; mount?: Point; phase2?: boolean; phase3?: boolean; cooldown3?: number; surge?: number; surgeTimer?: number; empTimer?: number; empCharge?: number; state?: EnemyState; lastSeen?: Point; memory?: number; clock?: number; retreat?: number; retreated?: boolean; reposition?: number; sidestep?: number; stuck?: number; px?: number; py?: number; shield?: number; shieldDelay?: number; cooldown2?: number; charge?: { t: number; angle: number; weapon: number }; sx?: number; sy?: number; parent?: number; home?: Point; populationRegion?:string;populationClass?:'normal'|'elite';populationPatrol?:Point & {id:number;angle:number};rewarded?:boolean; empRecovery?:number;disabledFor?: number; vx?: number; vy?: number; impactCooldown?: number; kind?: EnemyKind; squad?: number; slot?: number; patrolAngle?: number; id: number; health: number; cooldown: number; angle: number };
 export type Drop = Point & {vx?:number;vy?:number; id: number; ore: Resource; amount: number };
-export type Bullet = Point & { id: number; vx: number; vy: number; life: number; enemy: boolean; damage?: number; homing?: number; rocket?: boolean; splash?: number; weapon?: WeaponKind; level?: number; attackerId?:number; penetrating?:number; hitIds?:number[]; enhanced?:boolean; guided?:boolean; ultimate?:boolean;armorPiercing?:boolean;pierceFalloff?:number;fragment?:boolean; age?:number; /** Fired by an outpost turret: survives off screen like hostile fire. */ turret?:boolean; /** Another pilot's shot, shown here only: rocks stop it, it never damages anything in this simulation. */ remote?:boolean };
+export type Bullet = Point & { id: number; vx: number; vy: number; life: number; enemy: boolean; missileHealth?:number; damage?: number; homing?: number; rocket?: boolean; splash?: number; weapon?: WeaponKind; level?: number; attackerId?:number; penetrating?:number; hitIds?:number[]; enhanced?:boolean; guided?:boolean; ultimate?:boolean;armorPiercing?:boolean;pierceFalloff?:number;fragment?:boolean; age?:number; /** Fired by an outpost turret: survives off screen like hostile fire. */ turret?:boolean; /** Another pilot's shot, shown here only: rocks stop it, it never damages anything in this simulation. */ remote?:boolean };
 const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 export class GameModel {
@@ -1110,7 +1110,7 @@ export class GameModel {
     const absorbed = Math.min(e.shield ?? 0, amount);
     // Being hit points the enemy at the attacker even without a line of sight.
     const attacker = (e.lastHitBy && this.shared?.targets.find(t => t.id === e.lastHitBy)) || (this.atStation ? undefined : this.player);
-    if (alert && amount > 0 && attacker) { e.lastSeen = { x: attacker.x, y: attacker.y }; e.memory = ENEMY_AI.memory; }
+    if (alert && amount > 0 && attacker) { e.lastSeen = { x: attacker.x, y: attacker.y }; e.memory = ENEMY_AI.memory; e.retaliation = ENEMY_AI.retaliation; }
     if (absorbed > 0) { e.shield = (e.shield ?? 0) - absorbed; this.effect({ type: 'shield', x: e.x, y: e.y, radius: def.radius + 6, color: def.color }); }
     if (amount > 0) e.shieldDelay = def.shieldDelay;
     const aura=this.enemies.find(other=>other!==e&&other.health>0&&ENEMIES[other.kind??'raider'].aura&& (other.faction??ENEMIES[other.kind??'raider'].faction)===(e.faction??def.faction)&&dist(other,e)<ENEMIES[other.kind??'raider'].aura!.range);
@@ -1138,7 +1138,7 @@ export class GameModel {
     const available=Math.max(0,256-this.bullets.filter(b=>b.enemy&&b.life>0).length);
     for (let i = 0; i < Math.min(count,available); i++) {
       const t = count > 1 ? i / (count - 1) - 0.5 : 0, heading = angle + t * (w.spread ?? 0)/(e.accuracyScale??1), side = t * 2 * (w.offset ?? 0);
-      const bullet: Bullet = Object.assign(this.enemyBulletPool.pop()??({} as Bullet),{homing:undefined,rocket:false,age:0, id: this.id++, x: e.x + Math.cos(angle) * reach - Math.sin(angle) * side, y: e.y + Math.sin(angle) * reach + Math.cos(angle) * side, vx: Math.cos(heading) * w.speed, vy: Math.sin(heading) * w.speed, life: w.lifetime, enemy: true, damage: w.damage*(e.damageScale??1), splash:w.splash, weapon: w.type, attackerId:e.id });
+      const bullet: Bullet = Object.assign(this.enemyBulletPool.pop()??({} as Bullet),{missileHealth:undefined,homing:undefined,rocket:false,age:0, id: this.id++, x: e.x + Math.cos(angle) * reach - Math.sin(angle) * side, y: e.y + Math.sin(angle) * reach + Math.cos(angle) * side, vx: Math.cos(heading) * w.speed, vy: Math.sin(heading) * w.speed, life: w.lifetime, enemy: true, damage: w.damage*(e.damageScale??1), splash:w.splash, weapon: w.type, attackerId:e.id });
       if (w.type === 'rocket') bullet.rocket = true;
       if (w.homing) bullet.homing = w.homing;
       this.bullets.push(bullet);
@@ -1198,7 +1198,8 @@ export class GameModel {
       const options: { t: Point & { vx: number; vy: number }; seen: boolean; d: number }[] = remote.map(t => { const d = dist(e, t); return { t, d, seen: d <= def.detection && clearLineOfSight(e, t, this.asteroids) }; });
       if (!safe && !this.dead) options.push({ t: this.player, d: dist(e, this.player), seen: visible.has(e.id) });
       options.sort((a, b) => Number(b.seen) - Number(a.seen) || a.d - b.d);
-      const best = options[0]; if (!best) continue;
+      const attacker = (e.retaliation ?? 0) > 0 ? options.find(o => e.lastHitBy ? 'id' in o.t && o.t.id === e.lastHitBy : o.t === this.player) : undefined;
+      const best = attacker ?? options[0]; if (!best) continue;
       choice.set(e.id, best.t);
       if (best.seen) visible.add(e.id); else visible.delete(e.id);
     }
@@ -1749,6 +1750,7 @@ export class GameModel {
       // Each enemy hunts its own target: this pilot, or (as the sector authority) another pilot here.
       const p = targetOf?.get(e.id) ?? this.player, safe = p === this.player ? stationSafe : false;
       if(e.health<=0)continue;
+      e.retaliation = safe || this.dead && p === this.player ? 0 : Math.max(0, (e.retaliation ?? 0) - dt);
       e.empRecovery=Math.max(0,(e.empRecovery??0)-dt);
       if ((e.disabledFor ?? 0) > 0) { e.disabledFor=Math.max(0,e.disabledFor!-dt);e.vx=0;e.vy=0;continue; }
       if(e.meltdown!==undefined&&!e.meltdownDone){e.meltdown-=dt;const blast=ENEMIES[e.kind??'raider'].boss!.meltdown!;e.empCharge=e.meltdown;if(e.meltdown<=0){e.meltdownDone=true;e.health=0;if(!stationSafe&&dist(e,this.player)<blast.radius)this.damagePlayer(blast.damage);this.enemyDestroyed(e);}continue;}
@@ -1826,7 +1828,8 @@ export class GameModel {
       }
       // Memory: the last place the player was seen, shared across an alerted squad, fades after ENEMY_AI.memory seconds.
       const shared = !safe && e.squad !== undefined && alertedSquads.has(e.squad) && distance < def.detection * PATROL.sharedDetectionMultiplier;
-      if (visible || shared) { e.lastSeen = { x: p.x, y: p.y }; e.memory = ENEMY_AI.memory; }
+      const provoked = !safe && (e.retaliation ?? 0) > 0;
+      if (provoked || visible || shared) { e.lastSeen = { x: p.x, y: p.y }; e.memory = ENEMY_AI.memory; }
       else if (e.lastSeen) { e.memory = (e.memory ?? 0) - dt; if (safe || e.memory <= 0 || dist(e, e.lastSeen) < ENEMY_AI.arrive) e.lastSeen = undefined; }
       e.clock = (e.clock ?? 0) + dt; e.retreat = Math.max(0, (e.retreat ?? 0) - dt); e.reposition = Math.max(0, (e.reposition ?? 0) - dt);
       // Guards give up the chase once the player leaves their territory.
@@ -1838,7 +1841,7 @@ export class GameModel {
       const ally=def.support?this.enemies.filter(other=>other!==e&&other.health>0&&(other.faction??ENEMIES[other.kind??'raider'].faction)===(e.faction??def.faction)&&!ENEMIES[other.kind??'raider'].part&&(ENEMIES[other.kind??'raider'].boss||ENEMIES[other.kind??'raider'].radius>def.radius)&&dist(other,e)<1000).sort((a,b)=>dist(a,e)-dist(b,e))[0]:undefined;
       const post = ally?{x:ally.x-Math.cos(ally.angle)*150,y:ally.y-Math.sin(ally.angle)*150}:squad ? { x: squad.x + Math.cos(squad.angle) * slotForward - Math.sin(squad.angle) * slotSide, y: squad.y + Math.sin(squad.angle) * slotForward + Math.cos(squad.angle) * slotSide } : e.home;
       const reloading = def.behavior === 'reload' && e.cooldown > 1;
-      const previousState = e.state, state = e.state = nextEnemyState({ visible, remembers: e.lastSeen !== undefined, inRange: distance < def.range, leashed, awayFromPost: post !== undefined && dist(e, post) > ENEMY_AI.postRadius,
+      const previousState = e.state, state = e.state = nextEnemyState({ visible, provoked, remembers: e.lastSeen !== undefined, inRange: distance < def.range, leashed, awayFromPost: post !== undefined && dist(e, post) > ENEMY_AI.postRadius,
         guard: def.behavior === 'guard', strafes: ENEMY_AI.strafe[def.behavior] >= 0.45, reloading, retreating: e.retreat > 0, repositioning: e.reposition > 0 });
       if (visible && !def.part && (previousState === undefined || previousState === 'patrol' || previousState === 'return' || previousState === 'investigate') && state !== 'patrol' && state !== 'return' && state !== 'investigate') this.cue('alert', e, def.radius);
       const engaged = state !== 'patrol' && state !== 'return';
@@ -1934,7 +1937,9 @@ export class GameModel {
       this.hitEnemy(e,damage);
     }
     this.novaFields=this.novaFields.filter(field=>(field.life-=dt)>0);
-    for (const b of [...this.bullets]) {
+    // Resolve defensive shots before hostile impacts; retain frame-start missile paths for swept tests.
+    const missilePaths = this.bullets.filter(b=>b.enemy&&b.rocket&&b.life>0).map(b=>({b,x:b.x,y:b.y}));
+    for (const b of [...this.bullets].sort((a,b)=>Number(a.enemy)-Number(b.enemy))) {
       if (b.life <= 0) continue;
       if (b.remote) { this.updateRemoteBullet(b, dt); continue; }
       if(b.guided||b.fragment){b.age=(b.age??0)+dt;if(b.age>(b.guided?SPECIAL.rocket.lifetime:SPECIAL.flak.lifetime)){b.life=0;continue;}}
@@ -1982,11 +1987,24 @@ export class GameModel {
         const t = segmentCircleHit(start, b, other, (other.radius ?? SHIP.radius) + 4);
         if (t !== undefined && t < targetT) { pilot = other; target = undefined; targetT = t; }
       }
+      let missile:Bullet|undefined;
+      if(!b.enemy)for(const path of missilePaths){
+        if(path.b.life<=0)continue;
+        // Relative sweep catches fast shots crossing moving missiles between frames.
+        const t=segmentCircleHit({x:start.x-path.x,y:start.y-path.y},{x:b.x-path.x-path.b.vx*dt,y:b.y-path.y-path.b.vy*dt},{x:0,y:0},MISSILE_DEFENSE.radius+(b.rocket?7:4));
+        if(t!==undefined&&t<targetT){missile=path.b;targetT=t;target=undefined;pilot=undefined;}
+      }
       if (oreHit && oreHit.t <= targetT) {
         b.life = 0;this.fragment(b,oreHit.point);
         if(b.enemy&&(b.splash??0)>0)this.enemyExplosion(b,oreHit.point);else if ((b.splash ?? 0)>0) this.explodeRocket(b, oreHit.point); else this.shootOre(oreHit.asteroid, b.damage ?? (b.enemy ? WEAPONS.enemy.damage : WEAPONS.player.damage), oreHit.point,b.weapon,{x:b.vx,y:b.vy});
       } else if (Number.isFinite(targetT)) {
         b.life = 0; const point = { x: start.x + (b.x - start.x) * targetT, y: start.y + (b.y - start.y) * targetT };
+        if(missile){
+          missile.missileHealth=(missile.missileHealth??MISSILE_DEFENSE.health)-Math.max(0,b.damage??WEAPONS.player.damage);
+          if(missile.missileHealth<=0){missile.life=0;this.effect({type:'explosion',...point,radius:MISSILE_DEFENSE.explosionRadius,weapon:'rocket',color:0xffb070});this.cue('explosion',point);}
+          else {this.effect({type:'impact',...point,radius:12,color:0xffb070});this.cue('impact',point);}
+          break;
+        }
         this.fragment(b,point);
         if (b.enemy) {if((b.splash??0)>0)this.enemyExplosion(b,point);else this.damagePlayer(b.damage ?? WEAPONS.enemy.damage, point,b.attackerId);}
         else if (pilot) { this.shared!.pvpHits.push({ to: pilot.id, damage: b.damage ?? WEAPONS.player.damage }); if ((b.splash ?? 0) > 0) this.explodeRocket(b, point); else this.addBlast({ ...point, radius: 12, life: 0.1 }, b.weapon); }

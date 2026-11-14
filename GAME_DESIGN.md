@@ -120,3 +120,7 @@ All seven weapon identities remain, with deeper levels and a paid-ultimate disch
 Ship zoom: the player's modular layout now renders from a single cached hull image so wheel zoom samples adjacent blocks together. Module art, ship dimensions and collision behavior are unchanged; moving/upgrading/repainting a block refreshes the image.
 
 World sound follows visible event origins: off-screen weapon fire, ore/enemy hits, destruction and tool targets are silent. Menu/inventory confirmations remain audible. Mechanical effects have stronger metallic texture and temporarily duck music; existing player volume controls remain authoritative.
+
+Damaging an enemy provokes 10 seconds of pursuit of the shooter beyond normal detection, refreshed by further hits. Firing still requires visibility. Safe zones cancel pursuit; guard leashes and tactical retreats remain. After pursuit expires, normal last-known-position memory applies.
+
+Enemy missiles can be shot down. MISSILE_DEFENSE gives 90 durability (eight L1 autocannon hits) and a 10-unit hit radius. Interception consumes the defensive shot; survivors spark, destroyed missiles create a 38-unit visual explosion and positioned sound, with no loot or damaging splash. Ordinary hostile bullets remain uninterceptable.

@@ -248,3 +248,15 @@ Choices: own Node + WebSocket relay; sector grid; owners keep changes to their s
 - [x] Strengthen effects, add metallic impact texture and music ducking with bounded output/source costs
 - [x] Verify viewport boundaries, real browser playback and offline mix/source cleanup
 - [ ] Human listening pass on headphones/speakers
+
+## Enemy retaliation
+- [x] Pursue a damaging shooter beyond detection, including remote shooters
+- [x] Preserve visibility-gated firing, safe zones, retreat and guard leash
+- [x] Regression-test pursuit, timeout, collisions and multiplayer targeting
+- [ ] Playtest pursuit duration and disengagement balance
+
+## Missile interception
+- [x] Tough hostile missiles with cumulative damage and explosion/sound on destruction
+- [x] Swept collision, cover priority, pooled health reset and legacy defaults
+- [x] Test multiple hits, interception, cover and visual-only shot exclusion
+- [ ] Playtest missile durability and hit radius

@@ -26,6 +26,8 @@ export type EnemyState = 'mine'|'collect'|'escort'|'patrol' | 'investigate' | 'c
 export type EnemySituation = {
   /** Player is inside detection range with a clear line of sight. */
   visible: boolean;
+  /** Recently damaged by this target; pursue beyond normal detection. */
+  provoked?: boolean;
   /** A last-known player position is still remembered. */
   remembers: boolean;
   inRange: boolean;
@@ -53,6 +55,7 @@ export function nextEnemyState(s: EnemySituation): EnemyState {
     if (s.guard) return 'defend';
     return s.strafes ? 'strafe' : 'attack';
   }
+  if (s.provoked) return 'chase';
   if (s.remembers) return 'investigate';
   return s.awayFromPost ? 'return' : 'patrol';
 }
