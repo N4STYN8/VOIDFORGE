@@ -18,6 +18,8 @@ import { leadTime, type SharedSector, type SharedShot, type SharedTarget, type R
  * the remaining error closes at `correct` per second, heading at `turn` per second; beyond `snap` units it jumps.
  */
 export const GHOST = { extrapolate: 0.5, correct: 8, turn: 12, snap: 400 };
+/** Effect kinds a pilot's game sends to the others in a shared sector (muzzles and impacts are recreated there from the shots themselves). */
+export const SHARED_EFFECTS: ReadonlySet<EffectEvent['type']> = new Set(['explosion', 'debris', 'arc', 'shield']);
 import { collideAsteroid, collide, type Body } from './collisions.ts';
 import { LOBBY_SHARE, PVP, SECTOR, WORLD, SHIP, MISSILE_DEFENSE, WEAPONS, ENEMIES, ENEMY_AI, ENEMY_SPAWN, HORDE, FLEET, WAYPOINTS, OUTPOST, STRUCTURES, STRUCTURE_SPECIAL, DRONES, type StructureKind, DANGER, BOSS, HEARING, type EnemyDefinition, type EnemyWeapon, COLLISION, ORE_COMBAT, PATROL, MODULE_DURABILITY, REPAIR, MODULES, BUILD_GRID, BASES, BASE_RADIUS, EXPLORATION, RESOURCES, type EnemyKind, CORE, ROCKET, WEAPON_TYPES, SHIP_SYSTEMS, VFX, type WeaponKind, equipment, upgradeCost, type EquipmentStats, type EquipmentKind, type ModuleKind, type Resource } from './data.ts';
 export type ShipModule = { invested?:Minerals; x: number; y: number; kind: ModuleKind; level: number; cooldown: number; integrity: number; ability?:AbilityState; targetIds?: number[]; boostRemaining?:number; boostCooldown?:number };
@@ -45,7 +47,7 @@ export const starterModules = (): ShipModule[] => [{ x: 1, y: 0, kind: 'cannon',
 export type Input = { x: number; y: number; aim: Point; fire: boolean; mine: boolean; dock: boolean; boost?:boolean; overclock?:boolean; view?: { x: number; y: number; width: number; height: number } };
 export type Enemy = Point & { /** Shared sector: id of the remote pilot whose hit landed last (authority only, not saved meaningfully). */ lastHitBy?: string; retaliation?: number; /** Outpost raid target and party membership. */ raid?:number;raidParty?:boolean; armor?:number;accuracyScale?:number;maxHealth?:number;damageScale?:number;rewardScale?:number;meltdown?:number; meltdownDone?:boolean; faction?: import("./data.ts").FactionKind; cargo?: Partial<Record<Resource,number>>; industryClock?:number; horde?: boolean; populationExempt?: boolean; mount?: Point; phase2?: boolean; phase3?: boolean; cooldown3?: number; surge?: number; surgeTimer?: number; empTimer?: number; empCharge?: number; state?: EnemyState; lastSeen?: Point; memory?: number; clock?: number; retreat?: number; retreated?: boolean; reposition?: number; sidestep?: number; stuck?: number; px?: number; py?: number; shield?: number; shieldDelay?: number; cooldown2?: number; charge?: { t: number; angle: number; weapon: number }; sx?: number; sy?: number; parent?: number; home?: Point; populationRegion?:string;populationClass?:'normal'|'elite';populationPatrol?:Point & {id:number;angle:number};rewarded?:boolean; empRecovery?:number;disabledFor?: number; vx?: number; vy?: number; impactCooldown?: number; kind?: EnemyKind; squad?: number; slot?: number; patrolAngle?: number; id: number; health: number; cooldown: number; angle: number };
 export type Drop = Point & {vx?:number;vy?:number; id: number; ore: Resource; amount: number };
-export type Bullet = Point & { id: number; vx: number; vy: number; life: number; enemy: boolean; missileHealth?:number; damage?: number; homing?: number; rocket?: boolean; splash?: number; weapon?: WeaponKind; level?: number; attackerId?:number; penetrating?:number; hitIds?:number[]; enhanced?:boolean; guided?:boolean; ultimate?:boolean;armorPiercing?:boolean;pierceFalloff?:number;fragment?:boolean; age?:number; /** Fired by an outpost turret: survives off screen like hostile fire. */ turret?:boolean; /** Another pilot's shot, shown here only: rocks stop it, it never damages anything in this simulation. */ remote?:boolean };
+export type Bullet = Point & { id: number; vx: number; vy: number; life: number; enemy: boolean; missileHealth?:number; damage?: number; homing?: number; rocket?: boolean; splash?: number; weapon?: WeaponKind; level?: number; attackerId?:number; penetrating?:number; hitIds?:number[]; enhanced?:boolean; guided?:boolean; ultimate?:boolean;armorPiercing?:boolean;pierceFalloff?:number;fragment?:boolean; age?:number; /** Fired by an outpost turret: survives off screen like hostile fire. */ turret?:boolean; /** Another pilot's shot, shown here only: rocks stop it, it never damages anything in this simulation. */ remote?:boolean; /** Relay id of the pilot who fired a remote shot. */ owner?:string };
 /** Cell size of the per-frame rock lookup grid. */
 const ROCK_CELL = 160;
 /** Seconds an enemy's line-of-sight answer is reused before it is checked again. */
@@ -147,6 +149,14 @@ export class GameModel {
   private engineRatio = 1;
   empPulses: (Point & { radius:number; maxRadius:number; damage:number; stun:number; hits:number[];cascade?:boolean;secondary?:number })[] = [];
   effects: EffectEvent[] = [];
+  /**
+   * How many effects the last update produced (the scene shows them right after it). Effects raised after that,
+   * between updates (other pilots' data arrives then), stay for the next update instead of being cleared unseen.
+   */
+  private effectsShown = 0;
+  /** Other pilots' EMP pulses and plasma fields: drawn like this pilot's own, but they never touch anything here. */
+  remotePulses: (Point & { radius: number; maxRadius: number })[] = [];
+  remoteFields: (Point & { radius: number; life: number })[] = [];
   shield = 0;
   private shieldDelay = 0;
   coreLevel = 1;
@@ -810,6 +820,8 @@ export class GameModel {
     if (volume > 0 && this.effects.length < VFX.maxEvents) this.effects.push({ type: 'cue', cue, x: at.x, y: at.y, volume: Math.min(1, volume * 1.4), pitch: Math.max(0.55, Math.min(1.35, Math.sqrt(17 / size))) });
   }
   private effect(event: EffectEvent) {
+    // Shared sector: this pilot's own explosions, debris, arcs and shield flashes go to the others too (wherever they are).
+    if(this.shared&&!event.remote&&SHARED_EFFECTS.has(event.type)&&this.shared.effects.length<64)this.shared.effects.push(event);
     const v=this.effectView,margin=VFX.visibleMargin;
     if(v&&(event.x<v.x-margin||event.y<v.y-margin||event.x>v.x+v.width+margin||event.y>v.y+v.height+margin))return;
     if(this.effects.length<VFX.maxEvents)this.effects.push(event);
@@ -1371,28 +1383,40 @@ export class GameModel {
    * this pilot draws the shooter's ship) a shot that carries its offset from the ship leaves from that drawn ship,
    * so it comes out of the visible gun the moment it arrives.
    */
-  applyPilotShots(shots: PilotShot[], from?: Point) {
+  applyPilotShots(shots: PilotShot[], from?: Point, owner?: string) {
     let remote = 0; for (const b of this.bullets) if (b.remote) remote++;
     for (const shot of shots) {
       if (remote >= 192) break;
       remote++;
       const weapon = shot.weapon && shot.weapon in WEAPON_TYPES ? shot.weapon as WeaponKind : undefined;
       const x = from && shot.o ? from.x + shot.o[0] : shot.x, y = from && shot.o ? from.y + shot.o[1] : shot.y;
-      this.bullets.push({ id: this.id++, x, y, vx: shot.vx, vy: shot.vy, life: shot.life, enemy: false, remote: true, weapon, level: shot.level, rocket: shot.rocket });
+      this.bullets.push({ id: this.id++, x, y, vx: shot.vx, vy: shot.vy, life: shot.life, enemy: false, remote: true, owner, weapon, level: shot.level, rocket: shot.rocket });
       const angle = Math.atan2(shot.vy, shot.vx), near = dist({ x, y }, this.player) < 900;
-      this.effect({ type: 'muzzle', x, y, angle, weapon, level: shot.level, color: weapon ? WEAPON_TYPES[weapon].color : 0xfff1a8, silent: !near });
+      this.effect({ type: 'muzzle', x, y, angle, weapon, level: shot.level, color: weapon ? WEAPON_TYPES[weapon].color : 0xfff1a8, silent: !near, remote: true });
     }
   }
+  /**
+   * Another pilot's shot, shown only. Like in its shooter's game it stops at the first rock, enemy or other pilot's
+   * ship it reaches (allies and ships inside station rings let it pass, rails go through enemies), with a spark; it
+   * never damages anything here, since the shooter's own simulation decides hits.
+   */
   private updateRemoteBullet(b: Bullet, dt: number) {
     const start = { x: b.x, y: b.y }; b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt;
+    let hit: Point | undefined, t = Infinity;
     for (const asteroid of this.asteroids) {
       if (segmentCircleHit(start, b, asteroid, asteroid.radius + 4) === undefined) continue;
       const local = segmentPolygonHit(ensureAsteroidGeometry(asteroid), asteroidLocal(asteroid, start), asteroidLocal(asteroid, b));
-      if (!local) continue;
-      const point = asteroidWorld(asteroid, local);
-      b.life = 0; this.effect({ type: 'impact', ...point, radius: b.rocket ? 22 : 10, weapon: b.weapon, color: b.weapon ? WEAPON_TYPES[b.weapon].color : 0xfff1a8 });
-      return;
+      if (local && local.t < t) { t = local.t; hit = asteroidWorld(asteroid, local); }
     }
+    const consider = (centre: Point, radius: number) => { const at = segmentCircleHit(start, b, centre, radius); if (at !== undefined && at < t) { t = at; hit = { x: start.x + (b.x - start.x) * at, y: start.y + (b.y - start.y) * at }; } };
+    if (b.weapon !== 'rail') for (const e of this.enemies) if (e.health > 0) consider(e, ENEMIES[e.kind ?? 'raider'].radius);
+    const shared = this.shared, allied = (id: string | undefined) => Boolean(id && shared?.allies.has(id));
+    if (shared) {
+      for (const pilot of shared.targets) if (pilot.id !== b.owner && !pilot.dead && !(allied(pilot.id) && allied(b.owner)) && !this.safeAt(pilot)) consider(pilot, pilot.radius ?? SHIP.radius);
+      if (!this.dead && !this.atStation && !(allied(shared.selfId) && allied(b.owner))) consider(this.player, pilotRadius(this.modules.map(m => [m.x, m.y])));
+    }
+    if (!hit) return;
+    b.life = 0; this.effect({ type: 'impact', ...hit, remote: true, radius: b.rocket ? 22 : 10, weapon: b.weapon, color: b.weapon ? WEAPON_TYPES[b.weapon].color : 0xfff1a8 });
   }
   /** Rocks another pilot's ship knocked: their motion, so the rock moves the same way here. */
   applyBumps(rows: BumpRow[]) {
@@ -1718,10 +1742,32 @@ export class GameModel {
     for (const asteroid of [...this.asteroids]) if (dist(asteroid, point) < (bullet.splash ?? 65) + asteroid.radius) this.shootOre(asteroid, bullet.damage ?? 65, miningImpact(asteroid, point, asteroid),bullet.weapon,{x:asteroid.x-point.x,y:asteroid.y-point.y});
   }
   update(dt: number, input: Input) {
+    this.effects.splice(0, this.effectsShown);
+    try {
+      const step = Math.min(dt, 0.05);
+      for (const pulse of this.remotePulses) pulse.radius = Math.min(pulse.maxRadius, pulse.radius + WEAPON_TYPES.emp.speed * step);
+      this.remotePulses = this.remotePulses.filter(pulse => pulse.radius < pulse.maxRadius);
+      this.remoteFields = this.remoteFields.filter(field => (field.life -= step) > 0);
+      this.simulate(dt, input);
+    } finally { this.effectsShown = this.effects.length; }
+  }
+  /**
+   * Shows other pilots' visual effects here (display only): explosions, debris, arcs and shield flashes as effects,
+   * EMP pulses and plasma fields in their own visual lists. Nothing here damages, stuns or changes anything.
+   */
+  applyRemoteVisuals(events: (EffectEvent | { type: 'emp'; x: number; y: number; radius: number } | { type: 'nova'; x: number; y: number; radius: number; life: number })[]) {
+    for (const event of events) {
+      if (event.type === 'emp') { if (this.remotePulses.length < 16) this.remotePulses.push({ x: event.x, y: event.y, radius: 0, maxRadius: event.radius }); continue; }
+      if (event.type === 'nova') { if (this.remoteFields.length < 16) this.remoteFields.push({ x: event.x, y: event.y, radius: event.radius, life: event.life }); continue; }
+      this.effect({ ...event, remote: true });
+      if (event.type === 'explosion') this.cue('explosion', event, Math.max(12, Math.min(60, (event.radius ?? 30) / 2)));
+    }
+  }
+  private simulate(dt: number, input: Input) {
     this.blasts = this.blasts.filter(b => (b.life -= dt) > 0);
     for (const block of this.detachedModules) { block.x += block.vx * Math.min(dt, 0.05); block.y += block.vy * Math.min(dt, 0.05); block.life -= dt; }
     this.detachedModules = this.detachedModules.filter(block => block.life > 0);
-    this.effects.length = 0;this.effectView=input.view;
+    this.effectView=input.view;
     this.tractorLinks = []; this.miningLinks = [];
     this.minedTarget = undefined; this.miningPoint = undefined;
     if (this.dead) return;

@@ -1,4 +1,4 @@
-import { ENEMIES, RESOURCES, STRUCTURES, type EnemyKind, type Resource } from './data.ts';
+import { ENEMIES, RESOURCES, STRUCTURES, WEAPON_TYPES, type EnemyKind, type Resource, type WeaponKind } from './data.ts';
 import type { Asteroid } from './mining.ts';
 import { CLAIMS } from './netProtocol.ts';
 
@@ -38,9 +38,13 @@ export type SharedSector = {
   pvpLoot?: { to: string; cargo: Partial<Record<Resource, number>>; sent?: boolean; returned?: boolean };
   /** Rocks this pilot's ship knocked (motion only): sent so others see the rock move. No claim needed, no ore changes. */
   bumpedRocks: Set<number>;
+  /** This pilot's relay id (set by the link), so other pilots' shots can tell allies apart. */
+  selfId?: string;
+  /** Visual effects this pilot's own simulation made this frame (explosions, debris, arcs, shield flashes), sent so others see them too. */
+  effects: import('./effectEvents.ts').EffectEvent[];
 };
 export function sharedSector(role: SharedSector['role'], mayChangeRock: (id: number) => boolean): SharedSector {
-  return { role, targets: [], mayChangeRock, changedRocks: new Set(), shots: [], hits: [], loot: [], allies: new Set(), pvpHits: [], bumpedRocks: new Set() };
+  return { role, targets: [], mayChangeRock, changedRocks: new Set(), shots: [], hits: [], loot: [], allies: new Set(), pvpHits: [], bumpedRocks: new Set(), effects: [] };
 }
 
 const num = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
@@ -121,15 +125,18 @@ export function decodePilotShots(d: unknown): PilotShot[] {
  * receivers draw it from their interpolated view of that ship, so the beam stays attached to it.
  */
 export type BeamRow = [dx: number, dy: number, tx: number, ty: number, level: number, target: number];
-export type PilotLook = { s?: [shield: number, max: number]; m?: BeamRow[]; t?: BeamRow[] };
+/** `b` engine burst active, `d` phase dash active: drawn as longer flames and a dash trail on that ship. */
+export type PilotLook = { s?: [shield: number, max: number]; m?: BeamRow[]; t?: BeamRow[]; b?: 1; d?: 1 };
 type Link = { from: { x: number; y: number }; to: { x: number; y: number }; level: number; targetId: number };
-export function encodeLook(ship: { x: number; y: number }, shield: number, maxShield: number, mining: Link[], tractor: Link[]): PilotLook | undefined {
+export function encodeLook(ship: { x: number; y: number }, shield: number, maxShield: number, mining: Link[], tractor: Link[], burst = false, dash = false): PilotLook | undefined {
   const row = (l: Link): BeamRow => [round(l.from.x - ship.x), round(l.from.y - ship.y), round(l.to.x), round(l.to.y), l.level, l.targetId];
   const look: PilotLook = {};
   if (maxShield > 0 && shield > 0) look.s = [Math.round(shield), Math.round(maxShield)];
   if (mining.length) look.m = mining.slice(0, 12).map(row);
   if (tractor.length) look.t = tractor.slice(0, 12).map(row);
-  return look.s || look.m || look.t ? look : undefined;
+  if (burst) look.b = 1;
+  if (dash) look.d = 1;
+  return look.s || look.m || look.t || look.b || look.d ? look : undefined;
 }
 export function decodeLook(d: unknown): PilotLook | undefined {
   if (!d || typeof d !== 'object') return;
@@ -138,6 +145,7 @@ export function decodeLook(d: unknown): PilotLook | undefined {
   if (Array.isArray(v.s) && v.s.length === 2 && v.s.every(num) && (v.s[1] as number) > 0) look.s = [Math.max(0, Math.min(v.s[0] as number, v.s[1] as number)), v.s[1] as number];
   const m = beams(v.m), t = beams(v.t);
   if (m?.length) look.m = m; if (t?.length) look.t = t;
+  if (v.b === 1) look.b = 1; if (v.d === 1) look.d = 1;
   return look;
 }
 
@@ -229,4 +237,76 @@ export function outpostFromParts(parts: OutpostPart[], id: number) {
   const structures = parts.flatMap(part => part.s.map(([kind, dx, dy, rot, level, health, progress]) => ({ kind: part.k[kind] as keyof typeof STRUCTURES, cx: first.c[0] + dx, cy: first.c[1] + dy, rot, level, health, progress: progress / 100 })))
     .map((s, n) => ({ id: n + 1, ...s }));
   return { id, name: first.n, cx: first.c[0], cy: first.c[1], structures, revision: first.v, energy: 0, drones: [], shield: first.sh };
+}
+
+/**
+ * An outpost drone in flight, as its owner sends it (visual only): outpost id, drone id, x, y, angle, and the
+ * point its mining beam touches while cutting. Parked drones are not sent. Receivers only draw these: a drone
+ * never mines, carries or delivers anything outside its owner's simulation.
+ */
+export type DroneRow = [outpost: number, drone: number, x: number, y: number, angle: number, beamX?: number, beamY?: number];
+export function encodeDrones(outposts: { id: number; drones?: { id: number; x: number; y: number; angle: number; state: string; beam?: { x: number; y: number } }[] }[], near: (x: number, y: number) => boolean, max = 48): DroneRow[] {
+  const rows: DroneRow[] = [];
+  for (const o of outposts) for (const d of o.drones ?? []) {
+    if (d.state === 'idle' || !near(d.x, d.y) || rows.length >= max) continue;
+    const row: DroneRow = [o.id, d.id, Math.round(d.x), Math.round(d.y), round(d.angle, 2)];
+    if (d.beam) row.push(Math.round(d.beam.x), Math.round(d.beam.y));
+    rows.push(row);
+  }
+  return rows;
+}
+export function decodeDrones(d: unknown): DroneRow[] {
+  if (!Array.isArray(d)) return [];
+  return d.slice(0, 64).filter((r): r is DroneRow => Array.isArray(r) && (r.length === 5 || r.length === 7) && Number.isSafeInteger(r[0]) && Number.isSafeInteger(r[1]) && r.slice(2).every(num) && Math.abs(r[2]) < 1e7 && Math.abs(r[3]) < 1e7 && (r.length === 5 || Math.hypot(r[5] - r[2], r[6] - r[3]) < 600));
+}
+
+/**
+ * A visual effect from another pilot's game, display only: e explosion, b debris, a arc (to tx, ty), s shield
+ * flash, p EMP pulse (r = its full radius), n plasma field (r radius, f seconds left). Colours, weapon and level
+ * travel so it looks the same; nothing in it can damage, stun or change anything.
+ */
+export type VisualRow = { k: 'e' | 'b' | 'a' | 's' | 'p' | 'n'; x: number; y: number; r?: number; c?: number; tx?: number; ty?: number; w?: string; l?: number; g?: number; n?: number; f?: number };
+export type RemoteVisual = { type: 'explosion' | 'debris' | 'arc' | 'shield'; x: number; y: number; radius?: number; color?: number; toX?: number; toY?: number; weapon?: WeaponKind; level?: number; angle?: number; count?: number }
+  | { type: 'emp'; x: number; y: number; radius: number } | { type: 'nova'; x: number; y: number; radius: number; life: number };
+const VISUAL_KINDS = { explosion: 'e', debris: 'b', arc: 'a', shield: 's', emp: 'p', nova: 'n' } as const;
+const VISUAL_TYPES: Record<VisualRow['k'], RemoteVisual['type']> = { e: 'explosion', b: 'debris', a: 'arc', s: 'shield', p: 'emp', n: 'nova' };
+export function encodeVisual(v: RemoteVisual): VisualRow {
+  const row: VisualRow = { k: VISUAL_KINDS[v.type], x: Math.round(v.x), y: Math.round(v.y) };
+  if ('radius' in v && v.radius !== undefined) row.r = round(v.radius);
+  if (v.type === 'nova') row.f = round(v.life, 2);
+  if (v.type !== 'emp' && v.type !== 'nova') {
+    if (v.color !== undefined) row.c = v.color;
+    if (v.toX !== undefined && v.toY !== undefined) { row.tx = Math.round(v.toX); row.ty = Math.round(v.toY); }
+    if (v.weapon) row.w = v.weapon;
+    if (v.level !== undefined) row.l = v.level;
+    if (v.angle !== undefined) row.g = round(v.angle, 2);
+    if (v.count !== undefined) row.n = v.count;
+  }
+  return row;
+}
+export function decodeVisuals(d: unknown): RemoteVisual[] {
+  if (!Array.isArray(d)) return [];
+  const out: RemoteVisual[] = [];
+  for (const v of d.slice(0, 48) as VisualRow[]) {
+    if (!v || typeof v !== 'object' || !(v.k in VISUAL_TYPES) || !num(v.x) || !num(v.y) || Math.abs(v.x) > 1e7 || Math.abs(v.y) > 1e7) continue;
+    const type = VISUAL_TYPES[v.k], radius = num(v.r) ? Math.max(0, Math.min(2000, v.r)) : undefined;
+    if (type === 'emp') { if (radius) out.push({ type, x: v.x, y: v.y, radius }); continue; }
+    if (type === 'nova') { if (radius && num(v.f) && v.f > 0) out.push({ type, x: v.x, y: v.y, radius, life: Math.min(30, v.f) }); continue; }
+    const e: RemoteVisual = { type, x: v.x, y: v.y };
+    if (radius !== undefined) e.radius = radius;
+    if (Number.isInteger(v.c) && (v.c as number) >= 0 && (v.c as number) <= 0xffffff) e.color = v.c;
+    if (num(v.tx) && num(v.ty) && Math.hypot(v.tx - v.x, v.ty - v.y) < 2000) { e.toX = v.tx; e.toY = v.ty; }
+    if (typeof v.w === 'string' && v.w in WEAPON_TYPES) e.weapon = v.w as WeaponKind;
+    if (Number.isInteger(v.l) && (v.l as number) >= 1 && (v.l as number) <= 5) e.level = v.l;
+    if (num(v.g)) e.angle = v.g;
+    if (Number.isInteger(v.n) && (v.n as number) > 0) e.count = Math.min(8, v.n as number);
+    out.push(e);
+  }
+  return out;
+}
+/** Turret head angles on a pilot's outposts: outpost id, block index (in the order sent with the outpost), angle. */
+export type TurretRow = [outpost: number, index: number, angle: number];
+export function decodeTurrets(d: unknown): TurretRow[] {
+  if (!Array.isArray(d)) return [];
+  return d.slice(0, 96).filter((r): r is TurretRow => Array.isArray(r) && r.length === 3 && Number.isSafeInteger(r[0]) && Number.isInteger(r[1]) && r[1] >= 0 && r[1] < 4000 && num(r[2]));
 }

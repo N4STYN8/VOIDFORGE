@@ -50,7 +50,7 @@ export function drawProjectile(g:Phaser.GameObjects.Graphics,b:Bullet,enabled:bo
     if(enabled&&kind==='pulse'){g.lineStyle(1,0xf4ffff);g.lineBetween(b.x,b.y,b.x-ux*8,b.y-uy*8);}
   }
 }
-export function drawEmp(g:Phaser.GameObjects.Graphics,pulse:GameModel['empPulses'][number],enabled:boolean,time:number){
+export function drawEmp(g:Phaser.GameObjects.Graphics,pulse:{x:number;y:number;radius:number;maxRadius:number},enabled:boolean,time:number){
   const alpha=1-pulse.radius/pulse.maxRadius;
   if(enabled){g.fillStyle(WEAPON_TYPES.emp.color,.03+alpha*.045);g.fillCircle(pulse.x,pulse.y,pulse.radius);}
   g.lineStyle(enabled?3:1,WEAPON_TYPES.emp.color,.3+alpha*.6);g.strokeCircle(pulse.x,pulse.y,pulse.radius);

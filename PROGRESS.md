@@ -1,5 +1,14 @@
 # Progress
 
+## Visual parity between pilots (local branch claude/visual-parity, uncommitted)
+- User request: other pilots should see what each pilot sees of their own ship, outposts and fights. Now shared, display only, with no relay change: explosions, debris, chain arcs and shield flashes (so followers see enemies blow up), EMP pulses and plasma fields, outpost turret shots and turret aim, engine flames, burst and phase-dash trails, and an explosion where another pilot is destroyed. Other pilots' shots now stop with a spark at the enemy or ship they reach (allies and safe rings let them pass, as in the shooter's game).
+- Found and fixed: effects caused by other pilots' data arrived between updates and were cleared before being drawn, so remote muzzle flashes never showed.
+- Validation: 323 tests (5 new in tests/visual-parity.test.ts, including an over-the-relay check of explosions, EMP pulses, turret aim and a pilot's destruction) and build pass. latencyBench during a horde fight: authority 23 msg/s, follower 19 msg/s, under the relay's 30. Browser (hidden pane): the bot's outpost, drone and enemy fire showed with no console errors. The hidden pane takes no keyboard input, so engine flames and explosions were not watched live; tests cover them.
+
+## Other pilots' outpost drones (local branch claude/visual-parity, uncommitted)
+- Fixed: mining drones from another pilot's outposts did not show. Each pilot now sends its drones in flight (position, heading, mining beam) in its regular fx while another pilot is near; receivers draw them easing between updates on that pilot's outpost. Visual only: they never mine, carry or deliver minerals for the viewer. No relay change.
+- Validation: 318 tests (2 new in tests/outpost-share.test.ts: drone codec, and over a real relay a drone appearing, following its owner's and disappearing when it lands, with the viewer's cargo and storage unchanged) and build pass. Browser: `relayBot --outpost` now circles a drone around its outpost; it showed circling on the browser client. A first try showed it in only half the frames in the hidden, throttled pane, because reports were stamped with the last frame's time; they are now stamped on arrival.
+
 ## Shared outposts in multiplayer (local branch claude/outpost-sync, uncommitted)
 - Fixed: outposts built with Build Mode (F) in a shared sector did not appear for the other pilot. Each pilot now shares its own outposts live with everyone in the sector (new blocks, construction progress, damage, shield, losses), display only, with nothing stored in them sent. No relay change.
 - Validation: 312 tests (2 new in tests/outpost-share.test.ts: codec with multi-part outposts, and two pilots over a real relay seeing each other's outposts built, extended, progressing and lost, and a departed pilot's outposts removed) and build pass. Browser: joined a local `relayBot --outpost` lobby and the bot's outpost was drawn on the browser client; no console errors.
