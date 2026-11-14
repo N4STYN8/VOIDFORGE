@@ -36,6 +36,9 @@ export class WebSocketPeer {
   closed = false;
   /** Set when a pong (or any frame) arrives; the keep-alive timer clears it before each ping. */
   alive = true;
+  /** Keep-alive round trip in milliseconds, measured from the last ping to its pong. */
+  rtt?: number;
+  private pingSent = 0;
   private buffer = Buffer.alloc(0);
   private socket: Duplex;
   private maxMessage: number;
@@ -50,7 +53,7 @@ export class WebSocketPeer {
   sendFrame(frame: Buffer) { if (!this.closed) this.socket.write(frame); }
   /** Bytes queued but not yet written to the network: a slow or stalled client shows up here. */
   get backlog() { return this.socket.writableLength ?? 0; }
-  ping() { if (!this.closed) this.socket.write(this.header(0x9, 0)); }
+  ping() { if (!this.closed) { this.pingSent = Date.now(); this.socket.write(this.header(0x9, 0)); } }
   close(code = 1000) {
     if (this.closed) return;
     const body = Buffer.alloc(2); body.writeUInt16BE(code);
@@ -79,7 +82,7 @@ export class WebSocketPeer {
       this.alive = true;
       if (opcode === 0x8) return this.close(1000);
       if (opcode === 0x9) { this.socket.write(Buffer.concat([this.header(0xA, payload.length), payload])); continue; }
-      if (opcode === 0xA) continue;
+      if (opcode === 0xA) { if (this.pingSent) { this.rtt = Date.now() - this.pingSent; this.pingSent = 0; } continue; }
       if (opcode !== 0x1 || !fin) return this.close(1003);
       this.onmessage(payload.toString('utf8'));
     }

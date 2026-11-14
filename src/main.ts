@@ -22,6 +22,7 @@ import './compactHud.css';
 import './outfitter.css';
 import './map.css';
 import { hashSeed } from './world.ts';
+import { applyAdminCommand } from './adminControl.ts';
 import { travel, enterWorld, returnHome, worldRef, rebuildAtHome, ownsSector, progressionScore, linkedHomes, adoptWorld } from './sectors.ts';
 import { SECTOR_STEPS } from './sectorGrid.ts';
 import { NetClient, relayUrl, inviteLink, type PeerPose } from './net.ts';
@@ -585,6 +586,15 @@ class SpaceScene extends Phaser.Scene {
         const spot = world.spot ? { x: world.spot[0], y: world.spot[1] } : undefined;
         this.switchModel(enterWorld(this.model, world, spot)); if(!this.menuNetworkTransition)saveGame(this.model, this.saveFailed);
       } catch (error) { this.model.message = `Could not join the lobby world: ${(error as Error).message}`; }
+    };
+    // Relay admin commands run on this pilot's own game (src/adminControl.ts) and are answered once done.
+    this.net.onAdmin = (ref, command) => {
+      try {
+        const r = applyAdminCommand(this.model, command, { authority: this.net.room?.authority === this.net.id });
+        if (r.model) { this.switchModel(r.model); if (!this.menuNetworkTransition) saveGame(this.model, this.saveFailed); }
+        if (r.rename) { name.value = r.rename; store('voidforge.pilot', r.rename); this.net.rename(r.rename); }
+        this.net.adminAck(ref, r.ok, r.message, r.data);
+      } catch (error) { this.net.adminAck(ref, false, (error as Error).message); }
     };
     this.netConnect = connect;
     this.renderNetPanel(true);

@@ -1,5 +1,15 @@
 # Tasks
 
+## Relay admin console — built locally, not deployed
+- [x] Auth, sessions, lockout, bans, audit log (server/admin.ts, server/bans.ts)
+- [x] Pilot/lobby management and sector lock/evict through RelayHooks
+- [x] Bounded observer taps and the admin universe map with follow/spectate
+- [x] In-game command handler (src/adminControl.ts) with tests
+- [ ] Review the uncommitted change, then commit, PR and merge on request
+- [ ] Deploy (needs approval and coordination): `npm run relay-bundle` and copy `dist-admin/` to the Pi; set ADMIN_PASSWORD/TRUST_PROXY/BANS_FILE; check nginx forwards Host, X-Forwarded-For and X-Forwarded-Proto; restart the relay; deploy the site so clients run admin commands
+- [ ] Follow-up after PR #9 merges: let a watched solo pilot share enemies/shots/look with admins (sharedLink.ts), and confirm the page's `fx.n` enemy decoding against the new format
+- [ ] Optional: show outpost blocks on the spectator map; reproduce belt motion and population-field rocks
+
 ## Space-station outposts — built, needs play
 - [x] Distinct module art for all sixteen block types, continuous hull walls, corridor tubes
 - [x] Same-kind squares up to 3x3 drawn as one large module

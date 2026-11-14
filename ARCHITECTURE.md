@@ -215,3 +215,27 @@ Wheel heading stability: zoomAimLock captures pointer screen position and ship h
 Build module unlock stays centralized in OUTPOST.coreLevel (now 2), consumed by install validation and Build Mode messaging. MODULES.builder description matches this requirement; no new unlock/save state.
 
 Dynamic music: musicState.ts owns priority, activity timers, shuffle bags and fade math; musicTracks.ts maps exact local MP3 filenames using Vite URLs; musicEngine.ts owns bounded streaming elements/overlapping gain automation. GameAudio owns that one engine on its existing music bus. main.ts supplies station/mining/encounter state, model.musicEvents carries only confirmed local combat (transient, not saved), and musicSignals.ts filters actual active encounters. No network protocol change, no audio-buffer bank. Full asset/verification/limitation list: MUSIC_AUDIT.md.
+
+## Relay admin console (2026-11-13)
+- User decisions:
+  - Public URL with a password (`/admin` on the relay host, through nginx).
+  - Actions: kick, broadcast, lobby control, rename, bans and full map control (teleport, spawn/clear enemies, lock/evict sectors, edit cargo, storage, stations and outposts).
+  - No notice to players. Real asteroid fields in the spectator view. Everything built at once.
+  - Lock bounces newcomers and evicts non-owners. Evicting or teleporting a guest out of the host's sector removes them from the lobby. Renames and own-grid teleports persist.
+- Server:
+  - `server/admin.ts` owns the login, sessions, static admin page, `/admin/ws`, dispatch and the audit log. `server/bans.ts` owns the IP bans file.
+  - The relay exposes state only through `RelayHooks`; the admin never touches relay internals.
+  - No password means every `/admin` path is a 404.
+  - Auth: constant-time SHA-256 digest compare; HttpOnly SameSite=Strict cookie on Path=/admin (Secure on https); 5 failures lock an IP for 15 min; 12 h sessions kept in memory.
+  - The admin socket checks its own origin (`Origin` must equal the request's host), never the player `ORIGINS` list.
+- Protocol: `src/adminProtocol.ts` holds `AdminRequest` (page to relay, `parseAdmin`), `AdminServerMessage` and `AdminCommand` (relay to game, `readAdminCommand`). Game clients answer `{t:'admin'}` with `admin-ack`. The relay accepts an ack only from the pilot that holds that pending ref and resolves silence as `no response` after 5 s.
+- Observer taps: admins `watch` up to 3 sector seeds; the relay copies that room's state (unfiltered by interest), casts, `room` and `gone` as `obs`. This traffic is replaceable: it is skipped on a backed-up admin socket, and casts are capped at 96 KB/s per watched room (`obsDropped` in admin stats). With nobody watching it costs one map lookup per message. At most 4 admin sockets, each limited to 20 msgs/s.
+- Game side: `src/adminControl.ts` (pure) applies commands to the model, and `src/main.ts` wires `net.onAdmin`, switches models and saves.
+  - `moveToSector` and `goHome` in `src/sectors.ts` make own-grid teleports and evictions real moves.
+  - Spawn and clear run only on the sector authority. Spawned enemies are populationExempt; clear keeps bosses and their parts. The first station cannot be locked.
+  - Admin mineral edits are the one logged exception to "minerals are only moved".
+- Kick also blocks the IP for 2 minutes, because the game reconnects by itself within seconds.
+- Limitation: a pilot alone in a sector sends no enemy/shot/look traffic (the game shares those only with other pilots), so spectating a solo pilot shows their ship (pose, blocks, hull) but not their enemies. Fixing it needs a small `sharedLink.ts` change after PR #9 merges.
+- Admin page: a second Vite entry (`admin/`, `vite.admin.config.ts` → `dist-admin/`) drawn with Canvas 2D.
+  - One cluster per home grid on a stable spiral; a single camera zooms from the universe to rocks and ship blocks.
+  - Rocks come from `createWorld` plus `generateChunk` for visible chunks (built a few per frame and cached), with live rock changes overlaid. Population-field arrivals and belt motion poses are not reproduced.

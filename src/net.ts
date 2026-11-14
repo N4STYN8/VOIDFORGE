@@ -1,4 +1,5 @@
 import { NET, MATCH, packState, parseServer, roomTag, type CastKind, type ClientMessage, type DirectKind, type LobbySummary, type Member, type PartyKind, type ShipBlock, type ShipState, type WorldRef } from './netProtocol.ts';
+import type { AdminCommand } from './adminProtocol.ts';
 import { ClaimBook } from './shared.ts';
 
 /**
@@ -33,6 +34,8 @@ export class NetClient {
   /** Lobby-wide messages (resource sharing), from members in any sector. */
   onParty: (from: string, kind: PartyKind, data: unknown) => void = () => {};
   onPartyUndelivered: (to: string, kind: PartyKind) => void = () => {};
+  /** A relay admin's command (src/adminControl.ts); answer it with `adminAck`. */
+  onAdmin: (ref: number, command: AdminCommand) => void = () => {};
   /** Who runs enemies in this sector and how many pilots are here; undefined until the relay says. */
   room?: { authority: string; members: number };
   /** Rock claim leases held from the relay. */
@@ -97,6 +100,8 @@ export class NetClient {
   /** Sends to one lobby member, or (no `to`) all the others. Returns false when not in a lobby. */
   party(to: string | undefined, kind: PartyKind, data: unknown) { if (!this.connected || !this.lobby) return false; this.raw({ t: 'party', to, k: kind, d: data }); return true; }
   join(code: string) { this.send({ t: 'join', code }); }
+  /** Answers a relay admin command (broadcast notices use ref 0 and need no answer). */
+  adminAck(ref: number, ok: boolean, message?: string, data?: unknown) { if (ref && this.connected) this.raw({ t: 'admin-ack', ref, ok, message, data }); }
   leave() { if (this.lobby) this.send({ t: 'leave' }); }
 
   /** Which sector world the ship is in (`owner` when it is the pilot's own sector). Changing it clears the previous room's ships, claims and authority. */
@@ -172,6 +177,7 @@ export class NetClient {
       case 'undelivered': this.onUndelivered(m.to, m.k); return;
       case 'party': this.onParty(m.from, m.k, m.d); return;
       case 'party-undelivered': this.onPartyUndelivered(m.to, m.k); return;
+      case 'admin': this.onAdmin(m.ref, m.c); return;
       case 'match': this.matchWaiting?.(m.world ? { world: m.world, name: m.name } : null); return;
       case 'cast': if (this.sector && m.r === roomTag(this.sector.seed)) this.onCast(m.from, m.k, m.d); return;
       case 'direct': if (this.sector && m.r === roomTag(this.sector.seed)) this.onDirect(m.from, m.k, m.d); return;

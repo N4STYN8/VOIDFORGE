@@ -1,5 +1,22 @@
 # Progress
 
+## Relay admin console (branch claude/gallant-tereshkova-aabb3e, uncommitted)
+- Built:
+  - Password-protected `/admin` served by the relay, with login lockout, IP bans file and audit log.
+  - Live pilot and lobby tables with IP, sector, lobby, authority, position, power, ping and message rate.
+  - Kick, ban, unban, rename, broadcast, lobby disband, remove and open, sector lock and evict.
+  - Universe map with follow and spectate, real generated asteroid fields, live ships with block layouts, enemies, shots and beams.
+  - In-game admin commands: teleport (point, own-grid cell, or visit another sector), spawn and clear enemies, evict, inspect, and edits to cargo, storage, stations and outposts.
+- Validation: 324 tests (new: adminProtocol 3, admin relay integration 13, adminControl 10) and both builds, plus the Node 16 relay bundle.
+- Browser check against a local relay with `relay-bot --horde --fire` plus the real game on a fresh origin joined to its lobby:
+  - A wrong password was refused; login worked.
+  - Pilots showed with ping and rate. Following tracked the bot over the asteroid field with ship blocks at close zoom.
+  - Inspect returned the game's report, and +50 iron landed in the game's cargo.
+  - The broadcast showed as an `[Admin]` note, and teleport moved the ship. No console errors.
+- Found during the check: solo pilots send no enemy traffic, so their enemies are not visible to admins (follow-up).
+- Final review fixes: parallel-login lockout bypass, stalled admin sockets (backlog skip + keep-alive reaping), outpost destroy now moves its minerals to station storage, loopback addresses are never banned (warns when TRUST_PROXY is missing behind a proxy), oversized inspect acks keep their outcome, NUL asset paths return 400.
+- Not deployed. Deploying needs explicit approval: the relay restart on the Pi, plus a site deploy for the in-game handler. Pi setup is in server/README.md.
+
 ## Shared space stage 6 — scaling (local branch claude/mmo-sectors, uncommitted)
 - Interest management, encode-once broadcast, backlog skipping, packed state, `/stats`, `npm run load-test`.
 - Load test, 1,000 pilots in 250 sectors for 20 s: relay 30% of one core, 111 MB, no skipped frames, latency p50 22 ms, p95 33 ms, p99 38 ms (generator on the same PC), 9,354 messages/s in, 28,062 frames/s and 40.7 Mbit/s out. Before the wire-format work it was 57 Mbit/s. Bandwidth, not CPU, is the Pi's likely limit.

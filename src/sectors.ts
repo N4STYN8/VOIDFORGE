@@ -113,6 +113,29 @@ export function enterWorld(model: GameModel, world: WorldRef, near?: Point): Gam
   return next;
 }
 
+/**
+ * Moves the pilot to a cell of their own grid (an admin teleport): a real move, kept across reloads, unlike a
+ * visit with `enterWorld`. The sector being left is stored as on any edge crossing, so nothing is created or
+ * lost; the ship arrives at rest at `at`, or by the target sector's home station.
+ */
+export function moveToSector(model: GameModel, x: number, y: number, at?: Point): GameModel {
+  const save = model.toSave(), galaxy = structuredClone(model.galaxy);
+  stash(galaxy, save);
+  delete galaxy.away;
+  const key = sectorKey(x, y), link = galaxy.links?.[key];
+  const target = galaxy.sectors[key] ?? generated(link?.seed ?? sectorSeed(galaxy.home, x, y));
+  delete galaxy.sectors[key];
+  const next = arrive(save, target, { ...galaxy, x, y }, at ?? startPoint(target));
+  next.message = `Moved to ${next.sectorName}.`;
+  return next;
+}
+/** Sends the pilot home: back from a visit, or from another pilot's linked cell to their own home sector. Undefined when already in a sector of their own. */
+export function goHome(model: GameModel): GameModel | undefined {
+  if (model.galaxy.away) return returnHome(model);
+  if (ownsSector(model)) return;
+  return moveToSector(model, 0, 0);
+}
+
 /** Leaves a lobby host's world and flies the pilot back to where they left their own sector. */
 export function returnHome(model: GameModel): GameModel {
   const away = model.galaxy.away; if (!away) return model;
