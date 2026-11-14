@@ -41,6 +41,10 @@ export type Input = { x: number; y: number; aim: Point; fire: boolean; mine: boo
 export type Enemy = Point & { /** Shared sector: id of the remote pilot whose hit landed last (authority only, not saved meaningfully). */ lastHitBy?: string; /** Outpost raid target and party membership. */ raid?:number;raidParty?:boolean; armor?:number;accuracyScale?:number;maxHealth?:number;damageScale?:number;rewardScale?:number;meltdown?:number; meltdownDone?:boolean; faction?: import("./data.ts").FactionKind; cargo?: Partial<Record<Resource,number>>; industryClock?:number; horde?: boolean; populationExempt?: boolean; mount?: Point; phase2?: boolean; phase3?: boolean; cooldown3?: number; surge?: number; surgeTimer?: number; empTimer?: number; empCharge?: number; state?: EnemyState; lastSeen?: Point; memory?: number; clock?: number; retreat?: number; retreated?: boolean; reposition?: number; sidestep?: number; stuck?: number; px?: number; py?: number; shield?: number; shieldDelay?: number; cooldown2?: number; charge?: { t: number; angle: number; weapon: number }; sx?: number; sy?: number; parent?: number; home?: Point; populationRegion?:string;populationClass?:'normal'|'elite';populationPatrol?:Point & {id:number;angle:number};rewarded?:boolean; empRecovery?:number;disabledFor?: number; vx?: number; vy?: number; impactCooldown?: number; kind?: EnemyKind; squad?: number; slot?: number; patrolAngle?: number; id: number; health: number; cooldown: number; angle: number };
 export type Drop = Point & {vx?:number;vy?:number; id: number; ore: Resource; amount: number };
 export type Bullet = Point & { id: number; vx: number; vy: number; life: number; enemy: boolean; damage?: number; homing?: number; rocket?: boolean; splash?: number; weapon?: WeaponKind; level?: number; attackerId?:number; penetrating?:number; hitIds?:number[]; enhanced?:boolean; guided?:boolean; ultimate?:boolean;armorPiercing?:boolean;pierceFalloff?:number;fragment?:boolean; age?:number; /** Fired by an outpost turret: survives off screen like hostile fire. */ turret?:boolean; /** Another pilot's shot, shown here only: rocks stop it, it never damages anything in this simulation. */ remote?:boolean };
+/** Cell size of the per-frame rock lookup grid. */
+const ROCK_CELL = 160;
+/** Seconds an enemy's line-of-sight answer is reused before it is checked again. */
+const SIGHT_REFRESH = 0.1;
 const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 export class GameModel {
@@ -72,6 +76,46 @@ export class GameModel {
   private attackers = new Map<string, { name: string; at: number; window: number; taken: number }>();
   /** Follower only: the authority's latest enemy positions, eased toward each update. */
   private ghostGoals = new Map<number, { x: number; y: number; angle: number }>();
+  /** Reused collision bodies for nearby rocks (resolveContacts), so contact checks allocate nothing per rock. */
+  private rockBodies: (Body & { id: number; geometry: Asteroid['geometry'] })[] = [];
+  /**
+   * A lookup grid of the rocks in `asteroids` (cell ROCK_CELL), rebuilt where a loop needs it, so per-enemy and
+   * per-shot rock checks visit only nearby cells. Candidates come back in `asteroids` order, so results match a
+   * full scan exactly.
+   */
+  private rockGrid = { cells: new Map<number, number[]>(), largest: 0, rocks: [] as Asteroid[] };
+  private buildRockGrid() {
+    const cells = this.rockGrid.cells; cells.clear(); let largest = 0; this.rockGrid.rocks = this.asteroids;
+    this.asteroids.forEach((a, i) => { largest = Math.max(largest, a.radius); const k = Math.floor(a.x / ROCK_CELL) * 65536 + Math.floor(a.y / ROCK_CELL), list = cells.get(k); if (list) list.push(i); else cells.set(k, [i]); });
+    this.rockGrid.largest = largest;
+  }
+  /** Indices (into `rockGrid.rocks`, the array the grid was built from) of rocks that may be within `reach` (beyond their own radius) of the box x0..x1, y0..y1, in order. */
+  private rocksNear(x0: number, y0: number, x1: number, y1: number, reach: number, out: number[]) {
+    out.length = 0; const pad = reach + this.rockGrid.largest, cells = this.rockGrid.cells;
+    const cx0 = Math.floor((x0 - pad) / ROCK_CELL), cx1 = Math.floor((x1 + pad) / ROCK_CELL), cy0 = Math.floor((y0 - pad) / ROCK_CELL), cy1 = Math.floor((y1 + pad) / ROCK_CELL);
+    for (let cx = cx0; cx <= cx1; cx++) for (let cy = cy0; cy <= cy1; cy++) { const list = cells.get(cx * 65536 + cy); if (list) for (const i of list) out.push(i); }
+    if (out.length > 1) out.sort((a, b) => a - b);
+    return out;
+  }
+  /**
+   * Line-of-sight answers per enemy and target ('p' for this pilot, else a remote pilot's id), refreshed every
+   * SIGHT_REFRESH seconds of game time: sight changes slowly, and checking every enemy against every rock each
+   * frame was a large share of the authority's work. Not saved (enemies are keys of a WeakMap).
+   */
+  private sight = new WeakMap<Enemy, Map<string, { due: number; clear: boolean }>>();
+  /** The rock list the cached answers were made with: a new list (rocks destroyed, streamed in or replaced) clears them. */
+  private sightRocks: Asteroid[] = [];
+  private canSee(e: Enemy, target: Point, key: string) {
+    if (this.sightRocks !== this.asteroids) { this.sightRocks = this.asteroids; this.sight = new WeakMap(); }
+    let byTarget = this.sight.get(e); if (!byTarget) this.sight.set(e, byTarget = new Map());
+    const now = this.world.time, cached = byTarget.get(key);
+    if (cached && now < cached.due) return cached.clear;
+    const clear = clearLineOfSight(e, target, this.asteroids);
+    byTarget.set(key, { due: now + SIGHT_REFRESH, clear });
+    return clear;
+  }
+  /** Rocks that move this frame (the only ones enemy steering dodges). */
+  private movingRocks: Asteroid[] = [];
   squads: (Point & { id: number; angle: number })[] = [];
   bases = BASES.map((base, i) => ({ ...base, unlocked: i === 0 }));
   explored = new Set<string>();
@@ -1135,7 +1179,8 @@ export class GameModel {
     }
     this.effect({ type: 'muzzle', x: e.x, y: e.y, angle, color: 0xff7770, weapon: w.type, silent: true });
     this.cue(w.type === 'cannon' ? 'fire' : w.type, e, def.radius);
-    const available=Math.max(0,256-this.bullets.filter(b=>b.enemy&&b.life>0).length);
+    let live=0;for(const b of this.bullets)if(b.enemy&&b.life>0)live++;
+    const available=Math.max(0,256-live);
     for (let i = 0; i < Math.min(count,available); i++) {
       const t = count > 1 ? i / (count - 1) - 0.5 : 0, heading = angle + t * (w.spread ?? 0)/(e.accuracyScale??1), side = t * 2 * (w.offset ?? 0);
       const bullet: Bullet = Object.assign(this.enemyBulletPool.pop()??({} as Bullet),{homing:undefined,rocket:false,age:0, id: this.id++, x: e.x + Math.cos(angle) * reach - Math.sin(angle) * side, y: e.y + Math.sin(angle) * reach + Math.cos(angle) * side, vx: Math.cos(heading) * w.speed, vy: Math.sin(heading) * w.speed, life: w.lifetime, enemy: true, damage: w.damage*(e.damageScale??1), splash:w.splash, weapon: w.type, attackerId:e.id });
@@ -1195,12 +1240,14 @@ export class GameModel {
     for (const e of this.enemies) {
       if (e.health <= 0) continue;
       const def = ENEMIES[e.kind ?? 'raider'];
-      const options: { t: Point & { vx: number; vy: number }; seen: boolean; d: number }[] = remote.map(t => { const d = dist(e, t); return { t, d, seen: d <= def.detection && clearLineOfSight(e, t, this.asteroids) }; });
-      if (!safe && !this.dead) options.push({ t: this.player, d: dist(e, this.player), seen: visible.has(e.id) });
-      options.sort((a, b) => Number(b.seen) - Number(a.seen) || a.d - b.d);
-      const best = options[0]; if (!best) continue;
-      choice.set(e.id, best.t);
-      if (best.seen) visible.add(e.id); else visible.delete(e.id);
+      // Prefer a pilot this enemy can see, then the nearest (same rule as before, without per-enemy lists).
+      let best: (Point & { vx: number; vy: number }) | undefined, bestSeen = false, bestD = Infinity;
+      const consider = (t: Point & { vx: number; vy: number }, d: number, seen: boolean) => { if (!best || (seen && !bestSeen) || (seen === bestSeen && d < bestD)) { best = t; bestSeen = seen; bestD = d; } };
+      for (const t of remote) { const d = dist(e, t); consider(t, d, d <= def.detection && this.canSee(e, t, t.id)); }
+      if (!safe && !this.dead) consider(this.player, dist(e, this.player), visible.has(e.id));
+      if (!best) continue;
+      choice.set(e.id, best);
+      if (bestSeen) visible.add(e.id); else visible.delete(e.id);
     }
     return choice;
   }
@@ -1230,6 +1277,7 @@ export class GameModel {
   }
   /** Follower: enemy fire from the authority. Bullets fly here and hit this ship if they reach it. */
   applyShots(shots: SharedShot[]) {
+    let hostile = 0; for (const b of this.bullets) if (b.enemy) hostile++;
     for (const shot of shots) {
       if ('beam' in shot) {
         if (!this.atStation && segmentCircleHit({ x: shot.x, y: shot.y }, { x: shot.ex, y: shot.ey }, this.player, SHIP.radius + 5) !== undefined) this.damagePlayer(shot.damage);
@@ -1237,14 +1285,17 @@ export class GameModel {
         this.enemyBeams.push({ start: { x: shot.x, y: shot.y }, end: { x: shot.ex, y: shot.ey }, life: .22 });
         continue;
       }
-      if (this.bullets.filter(b => b.enemy).length >= 256) break;
+      if (hostile >= 256) break;
+      hostile++;
       this.bullets.push({ id: this.id++, x: shot.x, y: shot.y, vx: shot.vx, vy: shot.vy, life: shot.life, enemy: true, damage: shot.damage, weapon: shot.weapon as WeaponKind | undefined, homing: shot.homing, rocket: shot.rocket, splash: shot.splash });
     }
   }
   /** Other pilots' own shots: drawn flying here and stopped by rocks, without damaging anything. */
   applyPilotShots(shots: PilotShot[]) {
+    let remote = 0; for (const b of this.bullets) if (b.remote) remote++;
     for (const shot of shots) {
-      if (this.bullets.filter(b => b.remote).length >= 192) break;
+      if (remote >= 192) break;
+      remote++;
       const weapon = shot.weapon && shot.weapon in WEAPON_TYPES ? shot.weapon as WeaponKind : undefined;
       this.bullets.push({ id: this.id++, x: shot.x, y: shot.y, vx: shot.vx, vy: shot.vy, life: shot.life, enemy: false, remote: true, weapon, level: shot.level, rocket: shot.rocket });
       const angle = Math.atan2(shot.vy, shot.vx), near = dist(shot, this.player) < 900;
@@ -1374,14 +1425,30 @@ export class GameModel {
   private resolveContacts(dt: number) {
     const p = this.player;
     const playerBody: Body = { ...p, radius: SHIP.radius, mass: this.shipMass / SHIP_SYSTEMS.referenceMass };
-    const moving = this.asteroids.filter(a => a.motion || Math.abs(a.vx) + Math.abs(a.vy) > 0.1);
-    const movingCells=new Set(moving.map(a=>`${Math.floor(a.x/128)},${Math.floor(a.y/128)}`));
-    const nearMoving=(a:Asteroid)=>{const x=Math.floor(a.x/128),y=Math.floor(a.y/128);for(let dx=-1;dx<=1;dx++)for(let dy=-1;dy<=1;dy++)if(movingCells.has(`${x+dx},${y+dy}`))return true;return false;};
-    // Spatial buckets keep ambient drift from introducing an all-pairs contact scan.
-    const active = this.asteroids.filter(a => (Math.abs(a.x - p.x) < 500 && Math.abs(a.y - p.y) < 500) || this.enemies.some(e => Math.abs(a.x - e.x) < 140 && Math.abs(a.y - e.y) < 140) || nearMoving(a));
-    const rocks = active.map(a => {
+    // Spatial buckets (numeric cell keys, no per-frame strings) keep ambient drift and enemies from
+    // introducing all-pairs scans. CELL is the rock grid; enemies use a coarser grid sized to their reach test.
+    const CELL = 128, ENEMY_CELL = 140, key = (x: number, y: number) => x * 65536 + y;
+    const movingCells = new Set<number>();
+    for (const a of this.asteroids) if (a.motion || Math.abs(a.vx) + Math.abs(a.vy) > 0.1) movingCells.add(key(Math.floor(a.x / CELL), Math.floor(a.y / CELL)));
+    const nearMoving = (a: Asteroid) => { if (!movingCells.size) return false; const x = Math.floor(a.x / CELL), y = Math.floor(a.y / CELL); for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) if (movingCells.has(key(x + dx, y + dy))) return true; return false; };
+    const enemyCells = new Map<number, Enemy[]>();
+    for (const e of this.enemies) { const k = key(Math.floor(e.x / ENEMY_CELL), Math.floor(e.y / ENEMY_CELL)), list = enemyCells.get(k); if (list) list.push(e); else enemyCells.set(k, [e]); }
+    const nearEnemy = (a: Asteroid) => {
+      if (!enemyCells.size) return false;
+      const x = Math.floor(a.x / ENEMY_CELL), y = Math.floor(a.y / ENEMY_CELL);
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (const e of enemyCells.get(key(x + dx, y + dy)) ?? []) if (Math.abs(a.x - e.x) < 140 && Math.abs(a.y - e.y) < 140) return true;
+      return false;
+    };
+    const active = this.asteroids.filter(a => (Math.abs(a.x - p.x) < 500 && Math.abs(a.y - p.y) < 500) || nearEnemy(a) || nearMoving(a));
+    // Collision bodies are small pooled objects (not copies of whole rocks), refreshed from each rock every frame.
+    const pool = this.rockBodies, bodyOf = (a: Asteroid, i: number) => {
+      const b = pool[i] ??= { id: 0, x: 0, y: 0, vx: 0, vy: 0, radius: 0, mass: 1, rotation: 0, geometry: undefined };
+      b.id = a.id; b.x = a.x; b.y = a.y; b.vx = a.vx; b.vy = a.vy; b.radius = a.radius; b.mass = Math.max(1, (a.radius / 20) ** 2); b.rotation = a.rotation ?? 0; b.geometry = a.geometry;
+      return b;
+    };
+    const rocks = active.map((a, i) => {
       ensureAsteroidGeometry(a);
-      if(advanceBelt(a,this.world.spec,this.world.time,dt))return {...a,mass:Math.max(1,(a.radius/20)**2)};
+      if(advanceBelt(a,this.world.spec,this.world.time,dt))return bodyOf(a, i);
       const decay = Math.exp(-COLLISION.asteroidDrag * dt);
       let dx=a.driftX??0,dy=a.driftY??0;
       if(Math.hypot(dx,dy)>0){
@@ -1393,26 +1460,36 @@ export class GameModel {
       a.x += dx*dt+(a.vx-dx)*(1-decay)/COLLISION.asteroidDrag;
       a.y += dy*dt+(a.vy-dy)*(1-decay)/COLLISION.asteroidDrag;
       a.vx=dx+(a.vx-dx)*decay;a.vy=dy+(a.vy-dy)*decay;
-      return { ...a, mass: Math.max(1, (a.radius / 20) ** 2) };
+      return bodyOf(a, i);
     });
     for (const rock of rocks) {
       const speed = collideAsteroid(playerBody, rock, rock.geometry!, COLLISION.restitution);
-      if (speed !== undefined) { this.impact(speed, 'Asteroid', miningImpact(rock, playerBody, rock)); this.shared?.bumpedRocks.add(rock.id); }
+      if (speed !== undefined) { this.impact(speed, 'Asteroid', miningImpact(rock as unknown as Asteroid, playerBody, rock)); this.shared?.bumpedRocks.add(rock.id); }
     }
     // Moving ore can push other deposits rather than passing through them.
-    const buckets = new Map<string, number[]>();
+    const buckets = new Map<number, number[]>();
+    let largestRock = 0;
     for (let i = 0; i < rocks.length; i++) {
-      const rock = rocks[i], bx = Math.floor(rock.x / 128), by = Math.floor(rock.y / 128);
+      const rock = rocks[i], bx = Math.floor(rock.x / CELL), by = Math.floor(rock.y / CELL);
+      largestRock = Math.max(largestRock, rock.radius);
       for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
-        for (const j of buckets.get(`${bx + dx},${by + dy}`) ?? []) collide(rocks[j], rock, COLLISION.restitution);
+        for (const j of buckets.get(key(bx + dx, by + dy)) ?? []) collide(rocks[j], rock, COLLISION.restitution);
       }
-      const key = `${bx},${by}`;
-      const bucket = buckets.get(key) ?? []; bucket.push(i); buckets.set(key, bucket);
+      const k = key(bx, by), bucket = buckets.get(k);
+      if (bucket) bucket.push(i); else buckets.set(k, [i]);
     }
+    // Enemies only test rocks in the cells their reach covers, in the same rock order as before.
+    const body: Body = { x: 0, y: 0, vx: 0, vy: 0, radius: 0, mass: 1 }, near: number[] = [];
     for (const e of this.enemies) {
-      const body: Body = { ...e, vx: e.vx ?? 0, vy: e.vy ?? 0, radius: ENEMIES[e.kind ?? 'raider'].radius, mass: ENEMIES[e.kind ?? 'raider'].mass };
+      const def = ENEMIES[e.kind ?? 'raider'];
+      body.x = e.x; body.y = e.y; body.vx = e.vx ?? 0; body.vy = e.vy ?? 0; body.radius = def.radius; body.mass = def.mass;
       e.impactCooldown = Math.max(0, (e.impactCooldown ?? 0) - dt);
-      for (const rock of rocks) {
+      const reach = Math.ceil((def.radius + largestRock) / CELL), ex = Math.floor(e.x / CELL), ey = Math.floor(e.y / CELL);
+      near.length = 0;
+      for (let dx = -reach; dx <= reach; dx++) for (let dy = -reach; dy <= reach; dy++) for (const j of buckets.get(key(ex + dx, ey + dy)) ?? []) near.push(j);
+      near.sort((a, b) => a - b);
+      for (const j of near) {
+        const rock = rocks[j];
         const speed = collideAsteroid(body, rock, rock.geometry!, COLLISION.restitution);
         if (speed !== undefined && speed > COLLISION.safeSpeed && e.impactCooldown <= 0) {
           this.damageEnemy(e, Math.min(COLLISION.maxDamage, Math.ceil((speed - COLLISION.safeSpeed) * COLLISION.damagePerSpeed)), false);
@@ -1733,13 +1810,26 @@ export class GameModel {
     this.updateHorde(dt, danger, safe);
     for(const site of this.bossSites)if(dist(p,site)>BOSS.wake+300)this.population.leaveTerritory(site.kind);
     for (const site of this.bossSites) if (this.population.canSpawnBoss(site.kind,this.world.time) && !site.defeated && dist(p, site) < BOSS.wake && !this.enemies.some(e => e.kind === site.kind)) this.spawnBoss(site);
-    const visibleEnemies = new Set(this.enemies.filter(e => !safe && dist(e, p) <= ENEMIES[e.kind ?? 'raider'].detection && clearLineOfSight(e, p, this.asteroids)).map(e => e.id));
+    const visibleEnemies = new Set(this.enemies.filter(e => !safe && dist(e, p) <= ENEMIES[e.kind ?? 'raider'].detection && this.canSee(e, p, 'p')).map(e => e.id));
     const stationSafe = safe, targetOf = this.chooseTargets(visibleEnemies, safe);
     const alertedSquads = new Set(this.enemies.filter(e => e.squad !== undefined && visibleEnemies.has(e.id)).map(e => e.squad));
     this.squads = this.squads.filter(squad => this.enemies.some(e => e.squad === squad.id));
+    this.buildRockGrid(); this.movingRocks = this.asteroids.filter(rock => rock.motion || Math.hypot(rock.vx, rock.vy) >= .2);
+    const nearby: number[] = [];
+    // Enemy spacing: a grid of enemies (cell = spacing) so each enemy only checks its neighbours, in list order.
+    const crowd = this.enemies, crowdSize = crowd.length, crowdCells = new Map<number, number[]>(), crowdNear: number[] = [], crowdOut: Enemy[] = [];
+    crowd.forEach((other, i) => { const k = Math.floor(other.x / ENEMY_AI.spacing) * 65536 + Math.floor(other.y / ENEMY_AI.spacing), list = crowdCells.get(k); if (list) list.push(i); else crowdCells.set(k, [i]); });
+    const neighbours = (e: Enemy) => {
+      if (this.enemies !== crowd || crowd.length !== crowdSize) return this.enemies; // Changed mid-loop: check everyone, as before.
+      crowdNear.length = 0; const cx = Math.floor(e.x / ENEMY_AI.spacing), cy = Math.floor(e.y / ENEMY_AI.spacing);
+      for (let dx = -2; dx <= 2; dx++) for (let dy = -2; dy <= 2; dy++) { const list = crowdCells.get((cx + dx) * 65536 + cy + dy); if (list) for (const i of list) crowdNear.push(i); }
+      crowdNear.sort((a, b) => a - b);
+      crowdOut.length = 0; for (const i of crowdNear) crowdOut.push(crowd[i]);
+      return crowdOut;
+    };
     for (const squad of this.squads) {
       if (alertedSquads.has(squad.id)) continue;
-      squad.angle += PATROL.turnRate * dt;const avoidance=avoidMovingOre(squad,squad.angle,this.asteroids,65)-squad.angle;squad.angle+=avoidance*dt;
+      squad.angle += PATROL.turnRate * dt;const avoidance=avoidMovingOre(squad,squad.angle,this.movingRocks,65)-squad.angle;squad.angle+=avoidance*dt;
       squad.x += Math.cos(squad.angle) * PATROL.speed * dt; squad.y += Math.sin(squad.angle) * PATROL.speed * dt;
       if (squad.x < 250 || squad.y < 250 || squad.x > WORLD.width - 250 || squad.y > WORLD.height - 250) { squad.angle += Math.PI / 2; squad.x = clamp(squad.x, 250, WORLD.width - 250); squad.y = clamp(squad.y, 250, WORLD.height - 250); }
       if (this.bases.some(base => base.unlocked && dist(squad, base) < BASE_RADIUS + 180)) squad.angle += dt * 2;
@@ -1863,11 +1953,12 @@ export class GameModel {
           const away = dist(e, e.home);
           if (away > def.leash * 0.6) { mx += (e.home.x - e.x) / away * 1.2; my += (e.home.y - e.y) / away * 1.2; }
         }
-        for (const other of this.enemies) {
+        for (const other of neighbours(e)) {
           const gap = other === e || def.boss || other.parent === e.id || ENEMIES[other.kind ?? 'raider'].part ? 0 : dist(e, other);
           if (gap > 0 && gap < ENEMY_AI.spacing) { const push = (1 - gap / ENEMY_AI.spacing) * 1.5; mx += (e.x - other.x) / gap * push; my += (e.y - other.y) / gap * push; }
         }
-        for (const rock of this.asteroids) {
+        for (const index of this.rocksNear(e.x, e.y, e.x, e.y, def.radius + ENEMY_AI.avoid, nearby)) {
+          const rock = this.rockGrid.rocks[index]; if (rock.amount <= 0) continue;
           const clear = rock.radius + def.radius + ENEMY_AI.avoid, gap = Math.abs(rock.x - e.x) < clear && Math.abs(rock.y - e.y) < clear ? dist(e, rock) : 0;
           if (gap > 0 && gap < clear) {
             // Push away from the rock and slide around it on whichever side is already closer to the goal.
@@ -1891,7 +1982,7 @@ export class GameModel {
         const forward = e.slot === 0 ? 0 : -PATROL.spacing, side = e.slot === 0 ? 0 : (e.slot === 1 ? -1 : 1) * PATROL.spacing;
         const target = { x: squad.x + Math.cos(squad.angle) * forward - Math.sin(squad.angle) * side, y: squad.y + Math.sin(squad.angle) * forward + Math.cos(squad.angle) * side };
         const distance = dist(e, target), step = Math.min(distance, def.speed * 0.8 * dt);
-        if (distance > 0) { const travel=avoidMovingOre(e,Math.atan2(target.y-e.y,target.x-e.x),this.asteroids,def.radius);e.x+=Math.cos(travel)*step;e.y+=Math.sin(travel)*step; }
+        if (distance > 0) { const travel=avoidMovingOre(e,Math.atan2(target.y-e.y,target.x-e.x),this.movingRocks,def.radius);e.x+=Math.cos(travel)*step;e.y+=Math.sin(travel)*step; }
         e.angle = squad.angle;
       } else {
         e.patrolAngle = e.home && dist(e, e.home) > 220 ? Math.atan2(e.home.y - e.y, e.home.x - e.x) : (e.patrolAngle ?? e.angle) + dt * 0.2; e.angle = e.patrolAngle;
@@ -1933,6 +2024,9 @@ export class GameModel {
       this.hitEnemy(e,damage);
     }
     this.novaFields=this.novaFields.filter(field=>(field.life-=dt)>0);
+    // Where this ship's modules are this frame: hostile shots test these instead of rebuilding them per shot.
+    const moduleSpots = this.atStation ? [] : (Object.keys(MODULES) as ModuleKind[]).flatMap(kind => this.modulePositions(kind)).map(m => ({ x: m.x, y: m.y }));
+    this.buildRockGrid(); const shotRocks = this.rockGrid.rocks, shotNear: number[] = [];
     for (const b of [...this.bullets]) {
       if (b.life <= 0) continue;
       if (b.remote) { this.updateRemoteBullet(b, dt); continue; }
@@ -1958,8 +2052,11 @@ export class GameModel {
       const penetrationBudget=b.enhanced?Math.min(8,b.penetrating??SPECIAL.rail.targets):1;
       for(let hit=0;hit<penetrationBudget;hit++){
       let oreHit: { asteroid: Asteroid; point: Point; t: number } | undefined;
-      for (const asteroid of this.asteroids) {
-        if (segmentCircleHit(start, b, asteroid, asteroid.radius + 4) === undefined) continue;
+      for (const index of this.rocksNear(Math.min(start.x, b.x), Math.min(start.y, b.y), Math.max(start.x, b.x), Math.max(start.y, b.y), 4, shotNear)) {
+        const asteroid = shotRocks[index]; if (asteroid.amount <= 0) continue;
+        const reach = asteroid.radius + 4;
+        if (asteroid.x + reach < Math.min(start.x, b.x) || asteroid.x - reach > Math.max(start.x, b.x) || asteroid.y + reach < Math.min(start.y, b.y) || asteroid.y - reach > Math.max(start.y, b.y)) continue;
+        if (segmentCircleHit(start, b, asteroid, reach) === undefined) continue;
         const shape = ensureAsteroidGeometry(asteroid);
         const local = segmentPolygonHit(shape, asteroidLocal(asteroid,start),asteroidLocal(asteroid,b));
         if (local && (!oreHit || local.t < oreHit.t)) oreHit = { asteroid, point: asteroidWorld(asteroid,local), t: local.t };
@@ -1968,7 +2065,7 @@ export class GameModel {
       if (b.enemy) {
         if (!this.atStation) {
           targetT = segmentCircleHit(start, b, p, SHIP.radius + 4) ?? Infinity;
-          for (const kind of Object.keys(MODULES) as ModuleKind[]) for (const block of this.modulePositions(kind)) targetT = Math.min(targetT, segmentCircleHit(start, b, block, 12) ?? Infinity);
+          for (const block of moduleSpots) targetT = Math.min(targetT, segmentCircleHit(start, b, block, 12) ?? Infinity);
         }
       } else for (const e of this.enemies) if (e.health > 0&&!b.hitIds?.includes(e.id)) {
         const t = segmentCircleHit(start, b, e, ENEMIES[e.kind ?? 'raider'].radius + (b.rocket ? 7 : 4));
