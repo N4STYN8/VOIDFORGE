@@ -301,3 +301,11 @@ Choices: own Node + WebSocket relay; sector grid; owners keep changes to their s
 - [x] Preserve controls/unlock/SFX; test states, interruptions, playback and production build
 - [ ] Human listening pass for soundtrack/SFX balance
 - [ ] Optional future follower boss targeting metadata (requires separate relay scope)
+
+## Combat music trigger refinement
+- [x] Six visible living NPC ships to start; latch until zero
+- [x] Ignore individual NPC hits and offscreen/dead/component counts
+- [x] Single confirmed hostile player triggers PvP; 3s inactivity ends it
+- [x] Resume peaceful song/position after long fights with 2s return fades
+- [x] Test threshold sequence, viewport filtering, real playback, rapid returns, priority and PvP events
+- [ ] Human playtest combat/peaceful transition balance
