@@ -135,34 +135,90 @@ To see in-game commands work, open the game against the local relay and join the
 `http://127.0.0.1:5199/?relay=ws://127.0.0.1:8787&join=CODE`. Using a spare port gives the game fresh
 browser storage, so no real save is touched.
 
-### Raspberry Pi setup (when a deployment is approved)
+### Raspberry Pi setup — deployed 2026-11-13
 
-1. Build both parts:
-   ```bash
-   npm run relay-bundle
-   npm run admin-build
-   ```
-2. Copy `dist-relay/relay.mjs` to `/opt/voidforge/relay.mjs`, and `dist-admin/` to `/opt/voidforge/admin/`,
-   both owned by root and readable by `voidforge`.
-3. Create a bans directory writable by the service: `sudo install -d -o voidforge -g voidforge /var/lib/voidforge`.
-4. Put the secrets in a root-only systemd drop-in, `sudo systemctl edit voidforge-relay`:
-   ```ini
-   [Service]
-   Environment=ADMIN_PASSWORD=<long random password>
-   Environment=ADMIN_DIR=/opt/voidforge/admin
-   Environment=BANS_FILE=/var/lib/voidforge/bans.json
-   Environment=TRUST_PROXY=1
-   ```
-5. In the nginx `location` for the relay, make sure these headers are set (the WebSocket upgrade headers
-   are already there):
-   ```nginx
-   proxy_set_header Host $host;
-   proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-   proxy_set_header X-Forwarded-Proto $scheme;
-   ```
-6. Run `sudo systemctl daemon-reload && sudo systemctl restart voidforge-relay`, then open
-   `https://voidforge.2dq.us/admin/`.
+Live at `https://voidforge.2dq.us/admin/` since PR #11, and updated with PR #13. This is the setup as it
+stands on the Pi:
 
-The in-game commands need the matching game build on the live site as well (a GitHub Pages deploy). Both
-deployments need explicit approval and a word with the other developer first.
+| What | Where |
+|---|---|
+| Relay bundle | `/opt/voidforge/relay.mjs` (root-owned, mode 644). The previous build is kept beside it as `relay.mjs.prev-<hash>`. |
+| Admin page | `/opt/voidforge/admin/` (a copy of `dist-admin/`, root-owned, readable by `voidforge`) |
+| Admin password | `/etc/voidforge/admin.env`, holding `ADMIN_PASSWORD=…`. Owned by root with mode 600; it was generated on the Pi and never leaves it. |
+| Bans file | `/var/lib/voidforge/bans.json`, created by the relay on the first ban |
+| systemd drop-in | `/etc/systemd/system/voidforge-relay.service.d/admin.conf` |
+| nginx site | `/etc/nginx/sites-available/voidforge` |
 
+The drop-in:
+
+```ini
+[Service]
+EnvironmentFile=/etc/voidforge/admin.env
+Environment=ADMIN_DIR=/opt/voidforge/admin
+Environment=BANS_FILE=/var/lib/voidforge/bans.json
+Environment=TRUST_PROXY=1
+StateDirectory=voidforge
+```
+
+Two details matter here:
+
+- **The password lives in an `EnvironmentFile`, not an `Environment=` line.** Root reads the file when the
+  service starts, so it stays mode 600, and it never appears in `systemctl cat` or the unit files.
+- **`StateDirectory=voidforge` is required.** The base unit runs with `ProtectSystem=strict`, which makes
+  the whole filesystem read-only for the service. `StateDirectory` creates `/var/lib/voidforge`, owned by
+  the `voidforge` user, and leaves it writable. Without it, saving a ban fails, and the relay only logs a
+  warning.
+
+nginx forwards these headers on the relay's `location /`:
+
+```nginx
+proxy_set_header Upgrade $http_upgrade;
+proxy_set_header Connection "upgrade";
+proxy_set_header Host $host;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto $scheme;
+```
+
+Each header has a job:
+
+- **`Host`:** the admin socket's origin check compares the browser's `Origin` against
+  `https://<Host>`. Without this header nginx sends the upstream's address, and every admin socket is
+  refused.
+- **`X-Forwarded-For`:** with `TRUST_PROXY=1`, gives each player's real address for bans, the login
+  lockout and the pilot table. If it is missing, everyone shows as 127.0.0.1, the relay refuses bans, and it
+  logs a warning.
+- **`X-Forwarded-Proto`:** marks the session cookie `Secure` and makes the expected origin `https://`.
+
+#### First-time setup (for a new host)
+
+1. Create the password file: `sudo install -d -m 700 /etc/voidforge`. Then write
+   `ADMIN_PASSWORD=<long random password>` to `/etc/voidforge/admin.env` and run
+   `sudo chmod 600 /etc/voidforge/admin.env`.
+2. Copy the admin page: `sudo mkdir -p /opt/voidforge/admin`, then copy `dist-admin/` into it.
+3. Create the drop-in above with `sudo systemctl edit voidforge-relay`, and add the nginx headers above.
+4. Run `sudo nginx -t && sudo systemctl reload nginx`, then
+   `sudo systemctl daemon-reload && sudo systemctl restart voidforge-relay`.
+
+#### Updating
+
+This is a deployment: agree with the other developer first, and check `curl -s https://voidforge.2dq.us/`
+for pilots online, because a restart drops them all.
+
+```bash
+npm run relay-bundle
+scp dist-relay/relay.mjs pi:/tmp/voidforge-relay.mjs
+ssh pi 'sudo cp /opt/voidforge/relay.mjs /opt/voidforge/relay.mjs.prev && sudo install -m 644 /tmp/voidforge-relay.mjs /opt/voidforge/relay.mjs && sudo systemctl restart voidforge-relay'
+```
+
+When the admin page changed, also run `npm run admin-build` and copy `dist-admin/` to `/opt/voidforge/admin/`.
+The page is served from disk, so that needs no restart.
+
+Check afterwards:
+
+- `sudo journalctl -u voidforge-relay -n 5` should show "Admin console enabled at /admin".
+- `https://voidforge.2dq.us/admin/` should redirect to the login page.
+- A game client should still connect.
+
+To roll back, copy the `.prev` file back over `relay.mjs` and restart the service.
+
+The in-game commands also need the matching game build on the live site, which a merge to `main` deploys.
