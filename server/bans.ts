@@ -22,17 +22,24 @@ export class Bans {
     }
   }
   private prune() { const now = this.now(), before = this.entries.length; this.entries = this.entries.filter(b => b.until > now); return before !== this.entries.length; }
+  /** How many times the file was written (tests check that bulk actions write once). */
+  saves = 0;
   private save() {
+    this.saves++;
     if (!this.file) return;
     try { const tmp = `${this.file}.tmp`; writeFileSync(tmp, JSON.stringify(this.entries, null, 1)); renameSync(tmp, this.file); }
     catch (error) { console.warn(`[admin] Could not save bans to ${this.file}: ${(error as Error).message}`); }
   }
-  add(ip: string, minutes: number, reason: string, name: string) {
+  add(ip: string, minutes: number, reason: string, name: string) { return this.addMany([{ ip, minutes, reason, name }])[0]; }
+  /** Adds several bans with a single file write (a bulk kick or ban must not write once per address). */
+  addMany(list: { ip: string; minutes: number; reason: string; name: string }[]): BanEntry[] {
+    if (!list.length) return [];
     this.prune();
-    this.entries = this.entries.filter(b => b.ip !== ip);
-    const entry: BanEntry = { ip, until: this.now() + minutes * 60000, reason, name, at: this.now() };
-    this.entries.push(entry); this.save();
-    return entry;
+    const ips = new Set(list.map(b => b.ip)), at = this.now();
+    this.entries = this.entries.filter(b => !ips.has(b.ip));
+    const added = list.map(b => ({ ip: b.ip, until: at + b.minutes * 60000, reason: b.reason, name: b.name, at }));
+    this.entries.push(...added); this.save();
+    return added;
   }
   remove(ip: string) { const before = this.entries.length; this.entries = this.entries.filter(b => b.ip !== ip); if (this.entries.length !== before) { this.save(); return true; } return false; }
   isBanned(ip: string) { if (this.prune()) this.save(); return this.entries.some(b => b.ip === ip); }

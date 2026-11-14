@@ -10,8 +10,14 @@
   <header class="top">
     <h1>VOIDFORGE <span>ADMIN</span></h1>
     <span id="status" class="status">Connecting…</span>
-    <span id="stats" class="stats"></span>
+    <div class="stats">
+      <div class="stat"><b id="stat-online">0</b><span id="stat-online-sub">players</span></div>
+      <div class="stat"><b id="stat-sectors">0</b><span>sectors</span></div>
+      <div class="stat"><b id="stat-lobbies">0</b><span>lobbies</span></div>
+      <div class="stat"><b id="stat-relay">–</b><span id="stat-relay-sub">relay</span></div>
+    </div>
     <span class="grow"></span>
+    <button id="alerts" class="alerts" title="Show alerts">No alerts</button>
     <button id="fit" title="Show the whole universe">Fit universe</button>
     <button id="broadcast" class="primary">Broadcast</button>
     <form method="post" action="/admin/logout"><button>Sign out</button></form>
@@ -21,20 +27,49 @@
       <canvas id="map"></canvas>
       <div id="follow" class="follow" hidden></div>
       <div id="hint" class="hint" hidden></div>
-      <div class="legend">Drag to pan · wheel to zoom · click a pilot to follow · right-click pilots and sectors for actions</div>
+      <div class="legend">Drag to pan · wheel to zoom · click a pilot · right-click for actions · <kbd>/</kbd> search <kbd>F</kbd> follow <kbd>I</kbd> inspect <kbd>Esc</kbd> close</div>
     </section>
-    <aside>
-      <nav>
-        <button data-tab="pilots" class="on">Pilots <span id="count-pilots">0</span></button>
+    <div id="divider" class="divider" title="Drag to resize"></div>
+    <aside id="side">
+      <nav class="tabs">
+        <button data-tab="roster" class="on">Pilots <span id="count-roster">0</span></button>
         <button data-tab="lobbies">Lobbies <span id="count-lobbies">0</span></button>
+        <button data-tab="activity">Activity</button>
         <button data-tab="bans">Bans <span id="count-bans">0</span></button>
         <button data-tab="log">Log</button>
       </nav>
-      <div class="tab" id="tab-pilots"><table><thead><tr><th>Pilot</th><th>Where</th><th class="num">Ping</th><th class="num">Power</th><th></th></tr></thead><tbody id="pilots"></tbody></table></div>
+      <div class="tab roster" id="tab-roster">
+        <div class="tools">
+          <input id="search" type="search" placeholder="Search name, IP, id or lobby   ( / )" autocomplete="off">
+          <div id="chips" class="chips"></div>
+          <div class="sub" id="roster-count"></div>
+        </div>
+        <div id="roster-head" class="prow head">
+          <input type="checkbox" aria-label="Select all matching">
+          <div data-sort="name">Pilot</div><div data-sort="where">Where</div><div class="num" data-sort="ping">Ping</div><div class="num" data-sort="power">Power</div><div></div>
+        </div>
+        <div id="roster-scroll" class="scroll"><div id="roster-spacer" class="spacer"><div id="roster-rows"></div></div></div>
+        <div id="bulkbar" class="bulkbar" hidden>
+          <b id="bulk-count">0 selected</b><span class="grow"></span>
+          <button data-bulk="message">Message</button><button data-bulk="teleport">Teleport</button><button data-bulk="evict-pilot">Send home</button>
+          <button class="danger" data-bulk="kick">Kick</button><button class="danger" data-bulk="ban">Ban</button><button class="icon" data-bulk="clear" title="Clear selection">✕</button>
+        </div>
+      </div>
       <div class="tab" id="tab-lobbies" hidden><div id="lobbies"></div></div>
+      <div class="tab activitytab" id="tab-activity" hidden>
+        <div class="tools row"><div id="activity-groups" class="chips"></div><span class="grow"></span><button id="dismiss-alerts">Dismiss alerts</button></div>
+        <ul id="activity" class="feed scroll"></ul>
+      </div>
       <div class="tab" id="tab-bans" hidden><table><thead><tr><th>Address</th><th>Reason</th><th>Until</th><th></th></tr></thead><tbody id="bans"></tbody></table></div>
       <div class="tab" id="tab-log" hidden><ul id="log" class="log"></ul></div>
-      <div id="inspector" class="inspector" hidden></div>
+      <section id="drawer" class="drawer" hidden>
+        <header id="drawer-head" class="drawer-head"></header>
+        <div class="minimap"><canvas id="minimap"></canvas><div class="zoom"><button class="icon" data-zoom="in" title="Zoom in">＋</button><button class="icon" data-zoom="out" title="Zoom out">－</button></div></div>
+        <div class="drawer-mid"><canvas id="shippreview"></canvas><div id="drawer-stats" class="statgrid"></div></div>
+        <div id="drawer-actions" class="row actions"></div>
+        <div id="drawer-tabs" class="subtabs"><button data-tab="activity" class="on">Activity</button><button data-tab="inspector">Bases &amp; cargo (I)</button></div>
+        <div id="drawer-tab" class="drawer-tab"></div>
+      </section>
     </aside>
   </main>
   <div id="menu" class="menu" hidden></div>

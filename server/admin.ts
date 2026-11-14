@@ -6,7 +6,7 @@ import type { Duplex } from 'node:stream';
 import { upgrade, textFrame, type WebSocketPeer } from './websocket.ts';
 import { Bans } from './bans.ts';
 import { NET } from '../src/netProtocol.ts';
-import { ADMIN, parseAdmin, type AdminCommand, type AdminLobby, type AdminPilot, type AdminRequest, type AdminRoom, type AdminServerMessage, type AuditEntry, type BroadcastTarget } from '../src/adminProtocol.ts';
+import { ADMIN, parseAdmin, type AdminEvent, type BulkAction, type AdminCommand, type AdminLobby, type AdminPilot, type AdminRequest, type AdminRoom, type AdminServerMessage, type AuditEntry, type BroadcastTarget } from '../src/adminProtocol.ts';
 
 /**
  * Relay admin console: password login, the built admin page (ADMIN_DIR), the admin socket at /admin/ws,
@@ -37,6 +37,8 @@ export type RelayHooks = {
   evict(seed: string, reason: string): Promise<number>;
   watch(socket: AdminSocket, seeds: string[]): void;
   release(socket: AdminSocket): void;
+  /** The last block layout and paint the relay saw from this pilot, for the drawer's ship preview. */
+  pilotDetail(id: string): { blocks?: import('../src/netProtocol.ts').ShipBlock[]; paint?: number } | undefined;
 };
 export type Admin = {
   enabled: boolean;
@@ -45,6 +47,8 @@ export type Admin = {
   handleUpgrade(request: IncomingMessage, socket: Duplex): boolean;
   log(action: string, target: string, detail?: string): void;
   sockets: Set<AdminSocket>;
+  /** Records an activity event (kept in a ring of ADMIN.maxEvents) and sends it to every admin socket. */
+  event(e: Omit<AdminEvent, 'at'>): void;
   close(): void;
 };
 
@@ -76,7 +80,7 @@ export function createAdmin(options: AdminOptions, hooks: RelayHooks): Admin {
   const dir = resolve(options.dir ?? 'dist-admin');
   const bans = new Bans(options.bansFile, now);
   const sessions = new Map<string, number>(), failures = new Map<string, { count: number; until: number }>();
-  const sockets = new Set<AdminSocket>(), entries: AuditEntry[] = [];
+  const sockets = new Set<AdminSocket>(), entries: AuditEntry[] = [], events: AdminEvent[] = [], alerts: AdminEvent[] = [];
 
   const secure = (request: IncomingMessage) => Boolean((request.socket as { encrypted?: boolean }).encrypted) || trustProxy && loopback(request.socket.remoteAddress) && request.headers['x-forwarded-proto'] === 'https';
   const session = (request: IncomingMessage) => {
@@ -102,6 +106,7 @@ export function createAdmin(options: AdminOptions, hooks: RelayHooks): Admin {
     entries.push(entry); if (entries.length > ADMIN.logSize) entries.shift();
     console.log(`[admin] ${new Date(entry.at).toISOString()} ${action} ${target}${detail ? ` ${detail}` : ''}`);
     for (const s of sockets) send(s, { t: 'log', entries: [entry] });
+    if (action !== 'login' && action !== 'login-failed') event({ kind: 'admin', name: target, detail: `${action}${detail ? ` ${detail}` : ''}` });
   };
 
   function login(request: IncomingMessage, response: ServerResponse) {
@@ -133,7 +138,7 @@ export function createAdmin(options: AdminOptions, hooks: RelayHooks): Admin {
   function serveFile(request: IncomingMessage, response: ServerResponse, path: string) {
     let rel: string;
     try { rel = decodeURIComponent(path.replace(/^\/admin\/?/, '')) || 'index.html'; } catch { response.writeHead(400); response.end(); return; }
-    if (rel.includes(' ')) { response.writeHead(400, headers(request, 'text/plain')); response.end('Bad request'); return; }
+    if (rel.includes('\0')) { response.writeHead(400, headers(request, 'text/plain')); response.end('Bad request'); return; }
     const file = resolve(dir, rel);
     if (file !== dir && !file.startsWith(dir + sep)) { response.writeHead(403, headers(request, 'text/plain')); response.end('Forbidden'); return; }
     readFile(file, (error, data) => {
@@ -175,6 +180,47 @@ export function createAdmin(options: AdminOptions, hooks: RelayHooks): Admin {
   };
   const name = (id: string) => hooks.pilot(id)?.name ?? id;
 
+  function event(e: Omit<AdminEvent, 'at'>) {
+    const entry: AdminEvent = { at: now(), ...e };
+    events.push(entry); if (events.length > ADMIN.maxEvents) events.splice(0, events.length - ADMIN.maxEvents);
+    // Alerts also go in a small ring of their own, so ordinary churn can never push them out of an admin's history.
+    if (entry.alert) { alerts.push(entry); if (alerts.length > 100) alerts.shift(); }
+    if (sockets.size) { const frame = textFrame(JSON.stringify({ t: 'events', entries: [entry] } satisfies AdminServerMessage)); for (const s of sockets) if (s.peer.backlog <= NET.backlog) s.peer.sendFrame(frame); }
+  }
+  const BULK_LABEL: Record<BulkAction, string> = { message: 'Message', kick: 'Kick', ban: 'Ban', 'evict-pilot': 'Evict', teleport: 'Teleport' };
+  /** One action for many pilots: per-pilot outcomes are counted into a single result and one audit entry. */
+  async function bulk(s: AdminSocket, r: Extract<AdminRequest, { t: 'bulk' }>) {
+    const counts = { done: 0, 'not online': 0, 'no response': 0, refused: 0 }, label = BULK_LABEL[r.action];
+    const online = r.ids.filter(id => hooks.pilot(id)); counts['not online'] = r.ids.length - online.length;
+    let extra = '';
+    if (r.action === 'message') for (const id of online) { if (hooks.broadcast({ pilot: id }, r.text!)) counts.done++; else counts['not online']++; }
+    else if (r.action === 'kick') {
+      const blocks: { ip: string; minutes: number; reason: string; name: string }[] = [];
+      for (const id of online) {
+        const target = hooks.pilot(id), error = hooks.kick(id, r.reason ?? 'Disconnected by an admin.');
+        if (error) { counts['not online']++; continue; }
+        counts.done++;
+        if (target && !loopback(target.ip) && target.ip !== '127.0.0.1') blocks.push({ ip: target.ip, minutes: ADMIN.kickMinutes, reason: `Kicked${r.reason ? `: ${r.reason}` : ''}`, name: target.name });
+      }
+      bans.addMany(blocks);
+    }
+    else if (r.action === 'ban') {
+      const ips = new Map<string, string>(); let local = 0;
+      for (const id of online) { const t = hooks.pilot(id)!; if (loopback(t.ip) || t.ip === '127.0.0.1') local++; else ips.set(t.ip, t.name); }
+      bans.addMany([...ips].map(([ip, name]) => ({ ip, minutes: r.minutes!, reason: r.reason ?? '', name })));
+      for (const ip of ips.keys()) hooks.dropIp(ip, r.reason ? `Banned: ${r.reason}` : 'Banned by an admin.');
+      counts.done = online.length - local; counts.refused = local;
+      extra = ` (${ips.size} address${ips.size === 1 ? '' : 'es'}${local ? `, ${local} local skipped` : ''})`;
+    } else {
+      const cmd: AdminCommand = r.action === 'teleport' ? { op: 'teleport', x: r.x!, y: r.y!, world: r.world } : { op: 'evict', reason: r.reason ?? 'An admin sent you home.' };
+      const answers = await Promise.all(online.map(id => hooks.command(id, cmd)));
+      for (const a of answers) counts[a.ok ? 'done' : a.message === 'no response' ? 'no response' : a.message === 'That pilot is not online.' || a.message === 'The pilot disconnected.' ? 'not online' : 'refused']++;
+    }
+    const summary = `${label}: ${(Object.entries(counts) as [string, number][]).filter(([, n]) => n).map(([k, n]) => `${n} ${k}`).join(', ') || 'nothing to do'}${extra}`;
+    log(`bulk-${r.action}`, `${r.ids.length} pilots`, summary + (r.text ? ` "${r.text}"` : r.reason ? ` (${r.reason})` : ''));
+    result(s, r.ref, counts.done > 0, summary);
+  }
+
   function dispatch(s: AdminSocket, r: AdminRequest) {
     switch (r.t) {
       case 'watch':
@@ -214,6 +260,8 @@ export function createAdmin(options: AdminOptions, hooks: RelayHooks): Admin {
       case 'inspect': forward(s, r, hooks.pilot(r.id) ? r.id : undefined, { op: 'inspect' }, 'inspect', name(r.id)); return;
       case 'cargo': forward(s, r, hooks.pilot(r.id) ? r.id : undefined, { op: 'cargo', target: r.target, delta: r.delta }, 'edit-minerals', name(r.id), `${typeof r.target === 'string' ? r.target : `outpost ${r.target.outpost}`} ${JSON.stringify(r.delta)}`); return;
       case 'station': forward(s, r, hooks.pilot(r.id) ? r.id : undefined, { op: 'station', index: r.index, unlocked: r.unlocked }, r.unlocked ? 'unlock-station' : 'lock-station', name(r.id), `station ${r.index}`); return;
+      case 'pilot': { const d = hooks.pilotDetail(r.id); if (!d) { result(s, r.ref, false, 'That pilot is not online.'); return; } send(s, { t: 'pilot', ref: r.ref, id: r.id, blocks: d.blocks, paint: d.paint }); return; }
+      case 'bulk': void bulk(s, r); return;
       case 'structure': forward(s, r, hooks.pilot(r.id) ? r.id : undefined, { op: 'structure', outpost: r.outpost, structure: r.structure, action: r.action }, `${r.action}-structure`, name(r.id), `outpost ${r.outpost}${r.structure === undefined ? '' : ` block ${r.structure}`}`); return;
     }
   }
@@ -239,13 +287,16 @@ export function createAdmin(options: AdminOptions, hooks: RelayHooks): Admin {
     };
     peer.onclose = () => { sockets.delete(s); hooks.release(s); };
     send(s, { t: 'log', entries: [...entries] });
+    const recent = events.slice(-ADMIN.eventsOnConnect), shown = new Set(recent);
+    send(s, { t: 'events', entries: [...alerts.filter(a => !shown.has(a)), ...recent].sort((x, y) => x.at - y.at) });
     sendOverview(s);
     return true;
   }
 
   const sendOverview = (only?: AdminSocket) => {
     if (!sockets.size) return;
-    const text = JSON.stringify({ t: 'overview', ...hooks.overview(), bans: bans.list() } satisfies AdminServerMessage), frame = textFrame(text);
+    const view = hooks.overview();
+    const text = JSON.stringify({ t: 'overview', ...view, stats: { ...view.stats, events: events.length }, bans: bans.list() } satisfies AdminServerMessage), frame = textFrame(text);
     for (const s of only ? [only] : sockets) if (s.peer.backlog <= NET.backlog) s.peer.sendFrame(frame);
   };
   const timer = setInterval(() => sendOverview(), ADMIN.overviewMs); timer.unref();
@@ -253,7 +304,7 @@ export function createAdmin(options: AdminOptions, hooks: RelayHooks): Admin {
   keepAlive.unref();
 
   return {
-    enabled: Boolean(password), bans, handleHttp, handleUpgrade, log, sockets,
+    enabled: Boolean(password), bans, handleHttp, handleUpgrade, log, sockets, event,
     close: () => { clearInterval(timer); clearInterval(keepAlive); for (const s of sockets) s.peer.close(1001); },
   };
 }

@@ -115,6 +115,15 @@ Actions, all written to the audit log (also stdout/journald):
 
   Older game versions ignore these commands, and the console shows "no response".
 
+The console (v2) has the following parts:
+- **Map:** the sector view uses the game's own art. Ships appear in their paint, with beams, thrust and death bursts.
+- **Pilots tab:** search, filter chips (players, bots, alive, dead, solo, in a lobby, sharing a sector, authority), sortable columns and checkbox selection. A bulk bar sends message, teleport, send home, kick or ban to many pilots as one relay request (at most 500). The result breaks down what happened, for example `Kick: 48 done, 2 not online`.
+- **Pilot drawer:** click a pilot to open it. It shows a live mini-map, ship preview, connection stats, one-click actions, their activity, and the cargo/bases inspector.
+- **Activity tab:** joins, leaves, sector changes, deaths, lobby changes and admin actions. Alerts (flooding, 5 deaths in 2 minutes, a banned address retrying, more than 5 connections from one address in a minute) are counted in the top bar until dismissed. The relay keeps the last 500 events in memory.
+- **Shortcuts:** `/` search, `F` follow, `I` inspect, `Del` kick the selected pilots, `Esc` close.
+
+To try it with simulated pilots: `node --experimental-strip-types scripts/swarm.ts ws://127.0.0.1:8787 40 300 4` runs 40 bots for 300 s across 4 workers. The bots are real headless games: they fly, mine, fight and form lobbies, but never fire at other pilots or use matchmaking. Bots refuse admin commands, so a bulk teleport counts them as "refused". Against the live relay, a swarm is a public load event, so agree it first.
+
 Players are not shown any notice that admins can watch them (the user's decision).
 
 Security: the console exists only when `ADMIN_PASSWORD` is set. The password is compared in constant

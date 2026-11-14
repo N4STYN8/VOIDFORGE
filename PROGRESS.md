@@ -1,5 +1,29 @@
 # Progress
 
+## Admin console v2 (branch claude/admin-v2, uncommitted)
+- **Map:** the sector view now uses the game's own art: parallax backdrop, pixel asteroid sprites, the real station and enemy sprites, and ships built from their modules in their paint colours. It also draws mining and tractor beams, thrust flames, shields and death bursts.
+- **Roster:** search (name, IP, id, lobby), filter chips, sortable columns, windowed rows, checkbox and shift-range selection, and select-all-matching.
+- **Bulk bar:** message, teleport, send home, kick and ban for up to 500 pilots in one relay request.
+- **Pilot drawer:** live mini-map, ship preview, stats, actions, an activity tab, and the cargo/bases inspector.
+- **Activity feed:** filters, plus alerts for flooding, repeated deaths, banned addresses retrying and connection bursts.
+- **UI:** resizable panel, keyboard shortcuts (`/` search, `F` follow, `I` inspect, `Del` kick selected, `Esc` close), and a game-palette theme.
+- **Swarm script:** `scripts/swarm.ts` runs simulated pilots for testing. On the live Pi (2026-11-14), 100 bots ran for 10 minutes: 103 online, 77 sectors, about 32% of one core, 91 to 106 MB, about 1,300 msgs/s in and 7 Mbit/s out, 0 skipped. They made 984 kills and unloaded about 59,500 ore.
+- **Validation:** 403 tests, with 14 new ones covering events, alerts, `pilot`, bulk, the art adapter, roster logic and the review fixes. Both builds and the Node 16 relay bundle pass.
+- **Browser check** against a local relay with 40 bots:
+  - search narrowed the list and selected 9 pilots
+  - bulk message: "9 done"
+  - the drawer showed the mini-map, ship preview and activity
+  - the sector view showed the game's art
+  - the join-burst alert fired
+  - no console errors
+- **Final review fixes:**
+  - The inspector no longer wipes mineral edits on the 1 s refresh.
+  - Bulk kick and ban write the bans file once.
+  - Paint values are normalised, and ship-image caches are bounded by pixels with a per-frame bake budget.
+  - Per-pilot events are rate limited, and alerts are kept in their own ring.
+  - The activity feed redraws at most once per frame.
+- Not deployed. Updating the Pi needs the new relay bundle plus `dist-admin/`, and explicit approval.
+
 ## Relay admin console (branch claude/gallant-tereshkova-aabb3e)
 - Built:
   - Password-protected `/admin` served by the relay, with login lockout, IP bans file and audit log.
