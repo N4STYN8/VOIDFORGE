@@ -52,6 +52,8 @@ export class NetClient {
   /** Lobby-wide messages (resource sharing), from members in any sector. */
   onParty: (from: string, kind: PartyKind, data: unknown) => void = () => {};
   onPartyUndelivered: (to: string, kind: PartyKind) => void = () => {};
+  /** A pilot left this sector (or went offline). */
+  onGone: (id: string) => void = () => {};
   /** Who runs enemies in this sector and how many pilots are here; undefined until the relay says. */
   room?: { authority: string; members: number };
   /** Rock claim leases held from the relay. */
@@ -235,7 +237,7 @@ export class NetClient {
         this.lobbyList = m.list; this.online = m.online; this.onLobbies(); return;
       }
       case 'error': this.setNote(m.message); return;
-      case 'gone': this.peers.delete(m.id); return;
+      case 'gone': this.peers.delete(m.id); this.onGone(m.id); return;
       case 'room': this.room = { authority: m.authority, members: m.members }; return;
       case 'claims': this.claims.grant(m.ok, m.denied, m.lease, now); return;
       case 'undelivered': this.onUndelivered(m.to, m.k); return;

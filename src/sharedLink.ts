@@ -1,7 +1,8 @@
 import { pilotRadius, type GameModel, type SectorWorld } from './model.ts';
 import { BUDGET, type NetClient } from './net.ts';
 import { NET } from './netProtocol.ts';
-import { sharedSector, encodeRock, encodeEnemies, encodeBump, encodePilotShot, encodeLook, decodeRocks, decodeEnemies, decodeIds, decodeShots, decodeHits, decodeLoot, decodePvpHit, decodeCargo, decodeBumps, decodePilotShots, decodeLook, type PilotLook, type PilotShot, type SharedHit, type SharedShot } from './shared.ts';
+import { outpostStats, type Outpost } from './outposts.ts';
+import { sharedSector, encodeOutpost, decodeOutpostPart, outpostFromParts, type OutpostPart, encodeRock, encodeEnemies, encodeBump, encodePilotShot, encodeLook, decodeRocks, decodeEnemies, decodeIds, decodeShots, decodeHits, decodeLoot, decodePvpHit, decodeCargo, decodeBumps, decodePilotShots, decodeLook, type PilotLook, type PilotShot, type SharedHit, type SharedShot } from './shared.ts';
 import { sectorWorld } from './sectors.ts';
 import { packWorld, unpackWorld, WORLD_CHUNK } from './worldTransfer.ts';
 
@@ -17,6 +18,13 @@ import { packWorld, unpackWorld, WORLD_CHUNK } from './worldTransfer.ts';
 export const SHARE_RATES = { enemies: 2, fx: 10, fxFast: 30, hits: 6, hitsFast: 20, worldChunks: 8 };
 /** Enemies this close to another pilot (world units, about a zoomed-out screen) are updated in every fx. */
 export const NEAR_ENEMIES = 2400;
+/**
+ * Outposts are personal, but everyone in a sector sees everyone's (display only). Each pilot sends its own
+ * outposts here in their own fx messages: an outpost again when it changes (at most every `min` seconds each,
+ * so construction progress shows), everything when a pilot arrives and every `refresh` seconds, at most `rate`
+ * messages a second and only while the send budget has room. Copies not refreshed for `expire` seconds are dropped.
+ */
+export const OUTPOST_SHARE = { rate: 4, min: 0.5, scan: 0.25, refresh: 10, expire: 25 };
 /** Longest one-way network delay assumed when carrying received things forward (seconds). */
 const MAX_ONE_WAY = 0.25;
 /** Seconds before a world request with no answer is asked again. */
@@ -29,7 +37,8 @@ const FX_BUDGET = NET.maxMessage - 3500;
  * age `a`), c clock, n enemy rows (f = 1 when the list is complete), x removed enemy ids. q is the sender's round
  * trip to the relay in milliseconds (about once a second), so receivers can estimate the delay from sender to them.
  */
-type Fx = { p?: unknown[]; b?: unknown[]; r?: unknown[]; e?: unknown[]; c?: number; l?: unknown; n?: unknown[]; f?: 1; x?: number[]; q?: number };
+type Fx = { p?: unknown[]; b?: unknown[]; r?: unknown[]; e?: unknown[]; c?: number; l?: unknown; n?: unknown[]; f?: 1; x?: number[]; q?: number; /** One part of one of the sender's outposts, and the ids of all its outposts here. */ o?: unknown; O?: unknown };
+type VisitorOutpost = { parts: (OutpostPart | undefined)[]; revision: number; outpost?: Outpost; at: number };
 /** A pilot's look (shield, beams) is dropped this many seconds after their last fx message. */
 const LOOK_TTL = 0.4;
 
@@ -53,6 +62,20 @@ export class SharedLink {
   private peerRtt = new Map<string, number>();
   /** Authority: enemy fire picked up each frame, with when, so its age can be sent. */
   private pendingEnemyShots: { shot: SharedShot; at: number }[] = [];
+  /** Own outposts: what was last sent of each (revision + construction progress), when, and parts waiting to go. */
+  private outpostSent = new Map<number, { sig: string; at: number }>();
+  private outpostQueue: OutpostPart[] = [];
+  private outpostIdsDirty = false;
+  private outpostTimes = { scan: -Infinity, send: -Infinity, refresh: -Infinity };
+  private outpostAudience = '';
+  /** Other pilots' outposts here: pilot id -> outpost id -> received copy. */
+  private visitors = new Map<string, Map<number, VisitorOutpost>>();
+  private visitorIds = new Map<string, number>();
+  private visitorsDirty = false;
+  private visitorModel?: GameModel;
+  private adoptedUntil = -Infinity;
+  /** True once any live outpost message has arrived in this shared sector (then it, not an adopted copy, decides). */
+  private outpostsHeard = false;
   private pendingHits = new Map<number, SharedHit>();
   private pendingPvp = new Map<string, number>();
   private lastPvp = -Infinity;
@@ -92,6 +115,7 @@ export class SharedLink {
         const shots = decodePilotShots(fx.p);
         // Launched from where this pilot draws the shooter's ship, so they leave its visible guns.
         if (shots.length) model.applyPilotShots(shots, this.net.pose(_from, this.net.clock()));
+        if (fx.o !== undefined || fx.O !== undefined) this.receiveOutposts(_from, fx);
         model.applyBumps(decodeBumps(fx.b));
         for (const rock of decodeRocks(fx.r)) model.applyRock(rock);
         if (shared?.role === 'follower' && _from === this.net.room?.authority) {
@@ -118,6 +142,7 @@ export class SharedLink {
       if (kind === 'world') this.receiveChunk(from, data);
     };
     // The killer left before their salvage arrived: it goes back to the wreck instead of vanishing.
+    net.onGone = id => { if (this.visitors.delete(id)) this.visitorsDirty = true; };
     net.onUndelivered = (to, kind) => { if (kind === 'pvp-loot') this.current().returnPvpLoot(); if (kind === 'world-req') this.asked.at = -Infinity; if (kind === 'world') this.outgoing = this.outgoing.filter(c => c.to !== to); };
   }
   /** Authority: packs this sector and queues it for one pilot. */
@@ -153,6 +178,7 @@ export class SharedLink {
     if (!net.sharing || !net.room) {
       if (model.shared) { if (model.shared.pvpLoot && !model.shared.pvpLoot.sent) model.returnPvpLoot(); model.shared = undefined; this.pendingHits.clear(); this.pendingPvp.clear(); }
       model.visitorOutposts = []; this.looks.clear(); this.peerRtt.clear(); this.sentEnemies.clear(); this.pendingEnemyShots.length = 0;
+      this.visitors.clear(); this.outpostSent.clear(); this.outpostQueue.length = 0; this.outpostAudience = ''; this.visitorModel = undefined; this.outpostsHeard = false;
       this.outgoing.length = 0; this.incoming.clear(); this.synced = '';
       return;
     }
@@ -162,7 +188,7 @@ export class SharedLink {
     shared.targets = net.poses(now).filter(pose => !pose.dead).map(pose => ({ id: pose.id, x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, radius: pilotRadius(pose.blocks.map(b => [b[1], b[2]])) }));
     shared.allies = new Set(net.lobby?.members.map(m => m.id) ?? []);
     // The authority's copy of this sector: asked for once per authority.
-    if (role === 'authority') { this.synced = ''; if (!net.peers.size) model.visitorOutposts = []; }
+    if (role === 'authority') this.synced = '';
     else {
       const key = this.syncKey();
       if (this.synced !== key && (this.asked.key !== key || now - this.asked.at >= WORLD_RETRY)) { this.asked = { key, at: now }; net.direct(net.room.authority, 'world-req', {}); }
@@ -182,6 +208,8 @@ export class SharedLink {
     if (role === 'authority') { for (const shot of shared.shots.splice(0)) if (this.pendingEnemyShots.length < 96) this.pendingEnemyShots.push({ shot, at: now }); }
     // Fresh fire goes out at once when the budget allows, instead of waiting for the next regular fx.
     if (this.due(now, this.last.fx, SHARE_RATES.fx, SHARE_RATES.fxFast, this.pendingShots.length + this.pendingEnemyShots.length)) { this.last.fx = now; this.sendFx(model, role === 'authority'); }
+    this.shareOutposts(model, now);
+    this.showVisitorOutposts(model, now);
     if (role === 'authority') {
       for (const loot of shared.loot.splice(0)) net.direct(loot.to, 'loot', loot.drops);
       shared.hits.length = 0;
@@ -244,6 +272,78 @@ export class SharedLink {
       fx.r = rocks;
     }
     if (fx.p || fx.b?.length || fx.r?.length || fx.e?.length || fx.c !== undefined || fx.l || fx.n || fx.x) this.net.cast('fx', fx);
+  }
+  /**
+   * Sends this pilot's own outposts in this sector to the others (see OUTPOST_SHARE): queued when one changes
+   * or someone arrives, sent one part per message while the send budget allows.
+   */
+  private shareOutposts(model: GameModel, now: number) {
+    const t = this.outpostTimes;
+    if (now - t.scan >= OUTPOST_SHARE.scan) {
+      t.scan = now;
+      // Someone new here (or a periodic refresh): everything goes again.
+      const audience = `${this.net.room?.members ?? 0}|${[...this.net.peers.keys()].sort().join()}`;
+      const arrived = audience !== this.outpostAudience && (this.net.room?.members ?? 0) > 1;
+      const refresh = arrived || now - t.refresh >= OUTPOST_SHARE.refresh;
+      this.outpostAudience = audience; if (refresh) t.refresh = now;
+      const here = new Set(model.outposts.map(o => o.id));
+      for (const id of [...this.outpostSent.keys()]) if (!here.has(id)) { this.outpostSent.delete(id); this.outpostIdsDirty = true; this.outpostQueue = this.outpostQueue.filter(p => p.i !== id); }
+      for (const outpost of model.outposts) {
+        // Progress of blocks under construction changes every frame without a new revision: it is part of the signature.
+        let building = 0; for (const s of outpost.structures) if (s.progress < 1) building += Math.round(s.progress * 20);
+        const sig = `${outpost.revision}|${outpost.structures.length}|${building}|${Math.round((outpost.shield ?? 0) / 5)}`, last = this.outpostSent.get(outpost.id);
+        if (!refresh && last && (last.sig === sig || now - last.at < OUTPOST_SHARE.min)) continue;
+        this.outpostSent.set(outpost.id, { sig, at: now });
+        const capacity = outpostStats(outpost).shieldCapacity;
+        this.outpostQueue = this.outpostQueue.filter(p => p.i !== outpost.id).concat(encodeOutpost(outpost, capacity > 0 ? (outpost.shield ?? 0) / capacity : undefined));
+      }
+      if (refresh && !model.outposts.length) this.outpostIdsDirty = true;
+    }
+    if ((!this.outpostQueue.length && !this.outpostIdsDirty) || now - t.send < 1 / OUTPOST_SHARE.rate || this.net.spare() < BUDGET.reserve) return;
+    t.send = now; this.outpostIdsDirty = false;
+    const fx: Fx = { O: model.outposts.map(o => o.id) };
+    const part = this.outpostQueue.shift(); if (part) fx.o = part;
+    this.net.cast('fx', fx);
+  }
+  /** Another pilot's outpost parts: kept per pilot, and an outpost is shown once all its parts of one revision are in. */
+  private receiveOutposts(from: string, fx: Fx) {
+    const now = this.now, mine = this.visitors.get(from) ?? new Map<number, VisitorOutpost>();
+    this.outpostsHeard = true; this.visitorsDirty = true;
+    this.visitors.set(from, mine);
+    if (Array.isArray(fx.O)) {
+      const listed = new Set(fx.O.filter(id => Number.isSafeInteger(id)));
+      for (const id of [...mine.keys()]) if (!listed.has(id)) { mine.delete(id); this.visitorsDirty = true; }
+      for (const entry of mine.values()) entry.at = now;
+    }
+    const part = decodeOutpostPart(fx.o); if (!part) return;
+    let entry = mine.get(part.i);
+    if (!entry || entry.parts.length !== part.m || entry.revision !== part.v) {
+      // A new revision starts a fresh set of parts; the copy already shown stays until it is complete.
+      entry = { parts: new Array(part.m).fill(undefined), revision: part.v, outpost: entry?.outpost, at: now };
+      mine.set(part.i, entry);
+    }
+    entry.parts[part.p] = part; entry.at = now;
+    if (entry.parts.every(Boolean)) {
+      const key = `${from}|${part.i}`;
+      let id = this.visitorIds.get(key); if (id === undefined) { id = this.visitorIds.size + 1; this.visitorIds.set(key, id); }
+      const outpost = outpostFromParts(entry.parts as OutpostPart[], id) as unknown as Outpost;
+      if (part.sh !== undefined) outpost.shield = part.sh * outpostStats(outpost).shieldCapacity; else delete outpost.shield;
+      entry.outpost = outpost; this.visitorsDirty = true;
+    }
+  }
+  /** Puts the other pilots' outposts into the model for drawing (and drops copies nobody has refreshed). */
+  private showVisitorOutposts(model: GameModel, now: number) {
+    for (const [pilot, mine] of this.visitors) {
+      for (const [id, entry] of mine) if (now - entry.at > OUTPOST_SHARE.expire) { mine.delete(id); this.visitorsDirty = true; }
+      if (!mine.size) this.visitors.delete(pilot);
+    }
+    // A sector copy just adopted from the authority carries its outposts: they stay until the first live outpost
+    // message arrives, or a refresh interval passes without one (their owner has left, or has none any more).
+    if (this.visitorModel !== model) { this.visitorModel = model; this.adoptedUntil = now + OUTPOST_SHARE.refresh + 2; this.visitorsDirty = true; }
+    if (!this.outpostsHeard && now < this.adoptedUntil) return;
+    if (!this.visitorsDirty) return;
+    this.visitorsDirty = false;
+    model.visitorOutposts = [...this.visitors.values()].flatMap(mine => [...mine.values()].flatMap(entry => entry.outpost ? [entry.outpost] : []));
   }
   /**
    * Authority: the enemies other pilots here could see or chart, with velocities. Nearby ones in every fx (at most

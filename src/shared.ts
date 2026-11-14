@@ -1,4 +1,4 @@
-import { ENEMIES, RESOURCES, type EnemyKind, type Resource } from './data.ts';
+import { ENEMIES, RESOURCES, STRUCTURES, type EnemyKind, type Resource } from './data.ts';
 import type { Asteroid } from './mining.ts';
 import { CLAIMS } from './netProtocol.ts';
 
@@ -191,4 +191,42 @@ export class ClaimBook {
     if (this.leases.size > 512) for (const [id, until] of this.leases) if (until < now) this.leases.delete(id);
   }
   clear() { this.leases.clear(); this.asked.clear(); this.queue.clear(); }
+}
+
+/**
+ * Another pilot's outpost as shared in a sector, for show only: blocks relative to the core cell as
+ * [kind index into `k`, dx, dy, rot, level, health, progress %]. Large outposts go in `m` parts of at most
+ * OUTPOST_PART blocks; `v` is the owner's revision, so receivers re-bake its sprite only when it changes.
+ * Nothing stored in an outpost (minerals, battery, drones) is ever sent, so nothing can be copied out of it.
+ */
+export type OutpostPart = { i: number; n: string; c: [number, number]; v: number; p: number; m: number; k: string[]; s: [number, number, number, number, number, number, number][]; sh?: number };
+export const OUTPOST_PART = 400;
+type SharedStructure = { kind: string; cx: number; cy: number; rot: number; level: number; health: number; progress: number };
+export function encodeOutpost(o: { id: number; name: string; cx: number; cy: number; revision: number; shield?: number; structures: SharedStructure[] }, shieldFraction?: number): OutpostPart[] {
+  const parts: OutpostPart[] = [], count = Math.max(1, Math.ceil(o.structures.length / OUTPOST_PART));
+  for (let p = 0; p < count; p++) {
+    const k: string[] = [], slice = o.structures.slice(p * OUTPOST_PART, (p + 1) * OUTPOST_PART);
+    const s = slice.map(b => { let kind = k.indexOf(b.kind); if (kind < 0) kind = k.push(b.kind) - 1; return [kind, b.cx - o.cx, b.cy - o.cy, b.rot, b.level, Math.max(0, Math.round(b.health)), Math.round(Math.max(0, Math.min(1, b.progress)) * 100)] as OutpostPart['s'][number]; });
+    const part: OutpostPart = { i: o.id, n: o.name.slice(0, 40), c: [o.cx, o.cy], v: o.revision, p, m: count, k, s };
+    if (shieldFraction !== undefined && shieldFraction > 0) part.sh = round(Math.min(1, shieldFraction), 2);
+    parts.push(part);
+  }
+  return parts;
+}
+const int = (n: unknown, max: number): n is number => Number.isInteger(n) && Math.abs(n as number) <= max;
+export function decodeOutpostPart(d: unknown): OutpostPart | undefined {
+  const v = d as OutpostPart;
+  if (!v || typeof v !== 'object' || !Number.isSafeInteger(v.i) || typeof v.n !== 'string' || !Array.isArray(v.c) || v.c.length !== 2 || !v.c.every(c => int(c, 1e7)) || !Number.isSafeInteger(v.v)) return;
+  if (!int(v.m, 16) || v.m < 1 || !int(v.p, 16) || v.p < 0 || v.p >= v.m || !Array.isArray(v.k) || v.k.length > 32 || !v.k.every(k => typeof k === 'string' && k in STRUCTURES) || !Array.isArray(v.s) || v.s.length > OUTPOST_PART) return;
+  const s = v.s.filter(r => Array.isArray(r) && r.length === 7 && int(r[0], 31) && r[0] >= 0 && r[0] < v.k.length && int(r[1], 64) && int(r[2], 64) && int(r[3], 3) && int(r[4], 5) && r[4] >= 1 && int(r[5], 1e6) && r[5] >= 0 && int(r[6], 100) && r[6] >= 0);
+  const part: OutpostPart = { i: v.i, n: v.n.slice(0, 40), c: [v.c[0], v.c[1]], v: v.v, p: v.p, m: v.m, k: [...v.k], s };
+  if (num(v.sh) && v.sh > 0) part.sh = Math.min(1, v.sh);
+  return part;
+}
+/** Builds a display copy of an outpost from all its parts (in any order). */
+export function outpostFromParts(parts: OutpostPart[], id: number) {
+  const first = parts[0];
+  const structures = parts.flatMap(part => part.s.map(([kind, dx, dy, rot, level, health, progress]) => ({ kind: part.k[kind] as keyof typeof STRUCTURES, cx: first.c[0] + dx, cy: first.c[1] + dy, rot, level, health, progress: progress / 100 })))
+    .map((s, n) => ({ id: n + 1, ...s }));
+  return { id, name: first.n, cx: first.c[0], cy: first.c[1], structures, revision: first.v, energy: 0, drones: [], shield: first.sh };
 }
