@@ -3,6 +3,8 @@ import { EXTRA_ENEMIES,type ExtraEnemyKind } from './enemyDefinitions.ts';
 export const WORLD = { width: 19200 * Math.sqrt(10), height: 19200 * Math.sqrt(10), stationX: 3200, stationY: 3200 };
 export const RESOURCES = { iron: { label: 'Iron', color: 0xb9bdc7 }, copper: { label: 'Copper', color: 0xd59460 }, crystal: { label: 'Crystal', color: 0x8ad6ed }, ice: { label: 'Ice', color: 0xc5ecff }, radioactive: { label: 'Radioactive', color: 0x9fe63f } };
 export type Resource = keyof typeof RESOURCES;
+/** Cargo ejection keeps mineral amounts in bounded, permanently uncollectible piles. */
+export const CARGO_EJECTION = { maxStacks: 12, radius: 76, radiusVariation: 24, speed: 28 };
 export const SHIP = { speed: 280, acceleration: 650, drag: 1.6, radius: 18, health: 100, miningRange: 240, miningRate: 9, pickupRange: 65 };
 // Enemy missiles take eight level-1 autocannon hits; intercepted warheads detonate harmlessly.
 export const MISSILE_DEFENSE = { health: 90, radius: 10, explosionRadius: 38 };

@@ -102,3 +102,18 @@ test('the relay tells a sender when its direct message had nobody to reach', asy
     socket.close();
   } finally { await relay.close(); }
 });
+
+ test('death recovery prompt survives sector notices and clears after rebuilding', () => {
+  const victim = openSpace();
+  victim.applyPvpHit('k', 'Killer', 1e5, false);
+  if (!victim.dead) { victim.world.advance(1.1); victim.applyPvpHit('k', 'Killer', 1e5, false); }
+  victim.message = 'Synced with the sector.';
+  assert.match(victim.deathNotice, /Press R/);
+  assert.match(victim.deathNotice, /home station/);
+  const rebuilt = rebuildAtHome(victim);
+  assert.equal(rebuilt.deathNotice, '');
+  assert.equal(rebuilt.atStation, true);
+  rebuilt.player.health = 0; rebuilt.message = 'Another pilot is in this sector.';
+  assert.match(rebuilt.deathNotice, /nearest unlocked station/);
+  rebuilt.respawn(); assert.equal(rebuilt.deathNotice, '');
+});

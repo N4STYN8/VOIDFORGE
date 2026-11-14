@@ -341,3 +341,17 @@ Choices: own Node + WebSocket relay; sector grid; owners keep changes to their s
 - [x] Full 382-test suite, game/admin builds, Node-16 relay bundle and integrated two-browser crew checks
 - [ ] Deploy crew-capable relay with persistent CREW_DATA (SSH access needed; coordinate with Zach)
 - [ ] Live crew capability and two-player acceptance check after relay rollout
+
+## Death recovery clarity
+- [x] Keep death/R instructions visible despite multiplayer notices
+- [x] Add clickable recovery, prioritize R over rotation and center recovered ship
+- [x] Preserve home rebuild costs, nearest-station respawn and pending crew journals
+- [x] Regression tests, builds and isolated browser button/keyboard checks
+- [ ] User review; changes remain local pending publication request
+
+## Cargo ejection
+- [x] Per-type carried-resource eject icons in HUD; stored minerals untouched
+- [x] Explicit irreversible warning, Cancel default, Escape and empty/dead guards
+- [x] Radial physical piles, saved uncollectible marker and exclusion from tractors/pickup/normal ore merging
+- [x] Conservation/save regression tests and real browser cancel/confirm/reload/responsive checks
+- [ ] User review of controls/scatter; changes remain local

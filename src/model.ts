@@ -22,7 +22,7 @@ export const GHOST = { extrapolate: 0.5, correct: 8, turn: 12, snap: 400 };
 /** Effect kinds a pilot's game sends to the others in a shared sector (muzzles and impacts are recreated there from the shots themselves). */
 export const SHARED_EFFECTS: ReadonlySet<EffectEvent['type']> = new Set(['explosion', 'debris', 'arc', 'shield']);
 import { collideAsteroid, collide, type Body } from './collisions.ts';
-import { LOBBY_SHARE, PVP, SECTOR, WORLD, SHIP, MISSILE_DEFENSE, WEAPONS, ENEMIES, ENEMY_AI, ENEMY_SPAWN, HORDE, FLEET, WAYPOINTS, OUTPOST, STRUCTURES, STRUCTURE_SPECIAL, DRONES, type StructureKind, DANGER, BOSS, HEARING, type EnemyDefinition, type EnemyWeapon, COLLISION, ORE_COMBAT, PATROL, MODULE_DURABILITY, REPAIR, MODULES, BUILD_GRID, BASES, BASE_RADIUS, EXPLORATION, RESOURCES, type EnemyKind, CORE, ROCKET, WEAPON_TYPES, SHIP_SYSTEMS, VFX, type WeaponKind, equipment, upgradeCost, type EquipmentStats, type EquipmentKind, type ModuleKind, type Resource } from './data.ts';
+import { CARGO_EJECTION, LOBBY_SHARE, PVP, SECTOR, WORLD, SHIP, MISSILE_DEFENSE, WEAPONS, ENEMIES, ENEMY_AI, ENEMY_SPAWN, HORDE, FLEET, WAYPOINTS, OUTPOST, STRUCTURES, STRUCTURE_SPECIAL, DRONES, type StructureKind, DANGER, BOSS, HEARING, type EnemyDefinition, type EnemyWeapon, COLLISION, ORE_COMBAT, PATROL, MODULE_DURABILITY, REPAIR, MODULES, BUILD_GRID, BASES, BASE_RADIUS, EXPLORATION, RESOURCES, type EnemyKind, CORE, ROCKET, WEAPON_TYPES, SHIP_SYSTEMS, VFX, type WeaponKind, equipment, upgradeCost, type EquipmentStats, type EquipmentKind, type ModuleKind, type Resource } from './data.ts';
 export type ShipModule = { invested?:Minerals; x: number; y: number; kind: ModuleKind; level: number; cooldown: number; integrity: number; ability?:AbilityState; targetIds?: number[]; boostRemaining?:number; boostCooldown?:number };
 export type Point = { x: number; y: number };
 /** A ship that is not being flown: everything that belongs to the hull rather than to the pilot. */
@@ -47,7 +47,7 @@ export const paintIndex = (value: unknown) => typeof value === 'number' && Numbe
 export const starterModules = (): ShipModule[] => [{ x: 1, y: 0, kind: 'cannon', level: 1, cooldown: 0, integrity: 45 }, { x: 0, y: -1, kind: 'miner', level: 1, cooldown: 0, integrity: 40 }];
 export type Input = { x: number; y: number; aim: Point; fire: boolean; mine: boolean; dock: boolean; boost?:boolean; overclock?:boolean; view?: { x: number; y: number; width: number; height: number } };
 export type Enemy = Point & { /** Shared sector: id of the remote pilot whose hit landed last (authority only, not saved meaningfully). */ lastHitBy?: string; retaliation?: number; /** Outpost raid target and party membership. */ raid?:number;raidParty?:boolean; armor?:number;accuracyScale?:number;maxHealth?:number;damageScale?:number;rewardScale?:number;meltdown?:number; meltdownDone?:boolean; faction?: import("./data.ts").FactionKind; cargo?: Partial<Record<Resource,number>>; industryClock?:number; horde?: boolean; populationExempt?: boolean; mount?: Point; phase2?: boolean; phase3?: boolean; cooldown3?: number; surge?: number; surgeTimer?: number; empTimer?: number; empCharge?: number; state?: EnemyState; lastSeen?: Point; memory?: number; clock?: number; retreat?: number; retreated?: boolean; reposition?: number; sidestep?: number; stuck?: number; px?: number; py?: number; shield?: number; shieldDelay?: number; cooldown2?: number; charge?: { t: number; angle: number; weapon: number }; sx?: number; sy?: number; parent?: number; home?: Point; populationRegion?:string;populationClass?:'normal'|'elite';populationPatrol?:Point & {id:number;angle:number};rewarded?:boolean; empRecovery?:number;disabledFor?: number; vx?: number; vy?: number; impactCooldown?: number; kind?: EnemyKind; squad?: number; slot?: number; patrolAngle?: number; id: number; health: number; cooldown: number; angle: number };
-export type Drop = Point & {vx?:number;vy?:number; id: number; ore: Resource; amount: number };
+export type Drop = Point & {vx?:number;vy?:number; discarded?:boolean; id: number; ore: Resource; amount: number };
 export type Bullet = Point & { id: number; vx: number; vy: number; life: number; enemy: boolean; missileHealth?:number; damage?: number; homing?: number; rocket?: boolean; splash?: number; weapon?: WeaponKind; level?: number; attackerId?:number; penetrating?:number; hitIds?:number[]; enhanced?:boolean; guided?:boolean; ultimate?:boolean;armorPiercing?:boolean;pierceFalloff?:number;fragment?:boolean; age?:number; /** Fired by an outpost turret: survives off screen like hostile fire. */ turret?:boolean; /** Another pilot's shot, shown here only: rocks stop it, it never damages anything in this simulation. */ remote?:boolean; /** Relay id of the pilot who fired a remote shot. */ owner?:string };
 /** Cell size of the per-frame rock lookup grid. */
 const ROCK_CELL = 160;
@@ -842,7 +842,32 @@ export class GameModel {
     let excess=Math.max(0,this.cargoUsed-this.cargoCapacity);
     for(const ore of Object.keys(this.cargo) as Resource[]){if(excess<=0)break;const amount=Math.min(excess,this.cargo[ore]);this.cargo[ore]-=amount;excess-=amount;this.releaseOre(this.player,ore,amount);}
   }
+  /** Explicitly discard only carried minerals; stored resources never participate. */
+  ejectCargo(ore: Resource, amount = this.cargo[ore]): number {
+    if (this.dead || !Object.hasOwn(RESOURCES, ore) || !Number.isFinite(amount) || amount <= 0) return 0;
+    const ejected = Math.min(amount, this.cargo[ore]);
+    if (ejected <= 0) return 0;
+    this.cargo[ore] -= ejected;
+    const count = Math.min(CARGO_EJECTION.maxStacks, Math.max(1, Math.ceil(ejected)));
+    let remaining = ejected;
+    for (let i = 0; i < count; i++) {
+      const angle = this.player.angle + i * Math.PI * 2 / count;
+      const radius = CARGO_EJECTION.radius + (i % 3) * CARGO_EJECTION.radiusVariation;
+      const amount = i === count - 1 ? remaining : Math.floor(ejected / count);
+      remaining -= amount;
+      if (amount <= 0) continue;
+      this.drops.push({ id: this.id++, ore, amount, discarded: true,
+        x: clamp(this.player.x + Math.cos(angle) * radius, 0, WORLD.width),
+        y: clamp(this.player.y + Math.sin(angle) * radius, 0, WORLD.height),
+        vx: this.player.vx * .5 + Math.cos(angle) * CARGO_EJECTION.speed,
+        vy: this.player.vy * .5 + Math.sin(angle) * CARGO_EJECTION.speed });
+    }
+    this.message = `Ejected ${ejected.toLocaleString()} ${RESOURCES[ore].label}. It cannot be collected again.`;
+    this.sound('uiWarning');
+    return ejected;
+  }
   private collectDrop(drop: Drop, point: Point) {
+    if (drop.discarded) return;
     const take = Math.max(0, Math.min(drop.amount, this.cargoCapacity - this.cargoUsed));
     if (take > 0) { this.cargo[drop.ore] += take; drop.amount -= take; this.effect({ type:'collection',amount:take, ...point, color: RESOURCES[drop.ore].color, radius:12 }); }
   }
@@ -1505,6 +1530,12 @@ export class GameModel {
     this.kills++;
     this.message = total ? `You destroyed ${name} and took ${total} minerals.` : `You destroyed ${name}. Their hold was empty.`;
   }
+  /** Recovery instructions must survive transient multiplayer notices. */
+  get deathNotice() {
+    return this.dead ? (this.rebuildDue
+      ? 'Ship destroyed. Press R or click below to rebuild at your home station. Rebuild costs are paid from stored minerals as available.'
+      : 'Ship destroyed. Press R or click below to respawn at the nearest unlocked station. Dropped cargo remains at the wreck.') : '';
+  }
   respawn() {
     if (!this.dead || this.rebuildDue) return;
     const base = this.nearestUnlockedBase;
@@ -1671,7 +1702,7 @@ export class GameModel {
   }
   private releaseOre(point: Point, ore: Resource, amount: number,velocity?:Point) {
     if (amount <= 0) return;
-    const existing = this.drops.find(d => d.ore === ore && dist(d, point) < 45);
+    const existing = this.drops.find(d => !d.discarded && d.ore === ore && dist(d, point) < 45);
     if (existing) {const total=existing.amount+amount;if(velocity){existing.vx=((existing.vx??0)*existing.amount+velocity.x*amount)/total;existing.vy=((existing.vy??0)*existing.amount+velocity.y*amount)/total;}existing.amount=total;}
     else this.drops.push({ id: this.id++, ...point, ore, amount,...(velocity?{vx:velocity.x,vy:velocity.y}:{}) });
   }
@@ -1904,12 +1935,12 @@ export class GameModel {
       let count = 0;
       if (this.cargoUsed < this.cargoCapacity) for (const id of ids) {
         const drop = dropsById.get(id);
-        if (drop && drop.amount > 0 && !claimed.has(id) && dist(source,drop) <= range && count < slots) { ids[count++] = id; claimed.add(id); }
+        if (drop && !drop.discarded && drop.amount > 0 && !claimed.has(id) && dist(source,drop) <= range && count < slots) { ids[count++] = id; claimed.add(id); }
       }
       ids.length = count;
       while (ids.length < slots && this.cargoUsed < this.cargoCapacity) {
         let nearest: Drop | undefined, distance = range;
-        for (const drop of this.drops) if (drop.amount > 0 && !claimed.has(drop.id)) {
+        for (const drop of this.drops) if (!drop.discarded && drop.amount > 0 && !claimed.has(drop.id)) {
           const d = dist(source,drop); if (d <= distance) { nearest=drop;distance=d; }
         }
         if (!nearest) break; ids.push(nearest.id); claimed.add(nearest.id);
@@ -1924,7 +1955,7 @@ export class GameModel {
         if(dist(source,drop)<=SHIP_SYSTEMS.collectionRadius) this.collectDrop(drop,source);
       }
     }
-    for (const drop of this.drops) if (drop.amount > 0 && !claimed.has(drop.id) && dist(p,drop)<this.pickupRange) this.collectDrop(drop,p);
+    for (const drop of this.drops) if (!drop.discarded && drop.amount > 0 && !claimed.has(drop.id) && dist(p,drop)<this.pickupRange) this.collectDrop(drop,p);
     this.drops = this.drops.filter(d => d.amount > 0);
     if (input.dock && this.atStation) {
       const deposited=this.cargoUsed;
@@ -1985,7 +2016,7 @@ export class GameModel {
           const carried=Object.values(e.cargo).reduce((sum,n)=>sum+(n??0),0);
           const rock=this.asteroids.filter(a=>a.amount>0&&dist(a,e)<industry.range+a.radius).sort((a,b)=>dist(a,e)-dist(b,e))[0];
           if(rock&&carried<industry.cargo){const impact=miningImpact(rock,e,rock),removed=this.take(rock,Math.min(industry.rate*elapsed,industry.cargo-carried),impact);if(removed>0){if(this.enemyBeams.length>=12)this.enemyBeams.shift();this.enemyBeams.push({start:{x:e.x,y:e.y},end:impact,life:.22});}e.cargo[rock.ore]=(e.cargo[rock.ore]??0)+removed;if(rock.amount<=0)this.destroyAsteroid(rock.id);}
-          for(const drop of this.drops)if(dist(drop,e)<def.radius+40&&drop.amount>0){const room=industry.cargo-Object.values(e.cargo).reduce((sum,n)=>sum+(n??0),0),amount=Math.min(drop.amount,Math.max(0,room));e.cargo[drop.ore]=(e.cargo[drop.ore]??0)+amount;drop.amount-=amount;}
+          for(const drop of this.drops)if(!drop.discarded&&dist(drop,e)<def.radius+40&&drop.amount>0){const room=industry.cargo-Object.values(e.cargo).reduce((sum,n)=>sum+(n??0),0),amount=Math.min(drop.amount,Math.max(0,room));e.cargo[drop.ore]=(e.cargo[drop.ore]??0)+amount;drop.amount-=amount;}
           if(carried>=(industry.escapeAt??Infinity)){e.retreat=5;e.retreated=true;}
         }
       }
@@ -2045,7 +2076,7 @@ export class GameModel {
         continue;
       }
       if(def.industry&&!def.industry.combat&&(e.memory??0)<=0&&(e.retreat??0)<=0){
-        const drop=this.drops.filter(d=>d.amount>0&&dist(d,e)<900).sort((a,b)=>dist(a,e)-dist(b,e))[0];
+        const drop=this.drops.filter(d=>!d.discarded&&d.amount>0&&dist(d,e)<900).sort((a,b)=>dist(a,e)-dist(b,e))[0];
         const rock=this.asteroids.filter(a=>a.amount>0&&dist(a,e)<1100).sort((a,b)=>dist(a,e)-dist(b,e))[0];const goal=drop??rock;
         if(goal){e.state=drop?'collect':'mine';const stop=drop?def.radius+25:Math.max((rock?.radius??0)+def.radius+20,def.industry.range*.6);const heading=avoidMovingOre(e,Math.atan2(goal.y-e.y,goal.x-e.x),this.asteroids,def.radius,true);e.angle=heading;if(dist(e,goal)>stop){const step=Math.min(def.speed*.6*dt,dist(e,goal)-stop);e.x+=Math.cos(heading)*step;e.y+=Math.sin(heading)*step;}e.vx=(e.x-previous.x)/dt;e.vy=(e.y-previous.y)/dt;continue;}
       }

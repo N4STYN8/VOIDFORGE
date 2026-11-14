@@ -129,6 +129,7 @@ class SpaceScene extends Phaser.Scene {
   private hordeBannerContent = '';
   private bossBarContent = '';
   private status = document.getElementById('status')!;
+  private recoveryButton = document.createElement('button');
   create() {
     this.audio.configureMusic(MUSIC_TRACKS,MUSIC_FALLBACK);
     // Local-development handle for browser checks; never set on the hosted site.
@@ -139,6 +140,13 @@ class SpaceScene extends Phaser.Scene {
     this.settings=new GameSettings(this.audio,this.effects,open=>{this.input.keyboard!.enabled=!open&&!this.menu?.open;if(open)this.input.keyboard!.disableGlobalCapture();else if(!this.menu?.open)this.input.keyboard!.enableGlobalCapture();});
     this.cockpit=new Cockpit(this.sessionControls,action=>this.cockpitCommand(action));
     this.sessionControls.querySelector('[data-settings]')!.addEventListener('click',()=>this.settings.show());
+    this.recoveryButton.type = 'button';
+    this.recoveryButton.addEventListener('pointerdown', event => event.stopPropagation());
+    this.recoveryButton.addEventListener('click', () => this.recoverShip());
+    this.hud.addEventListener('click', event => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-eject]');
+      if (button && !button.disabled && Object.hasOwn(RESOURCES, button.dataset.eject!)) this.confirmEjection(button.dataset.eject as Resource);
+    });
     this.setupNetPanel();
     this.crewPanel=new CrewPanel(this.net,{
       deposit:async(source,minerals)=>{await this.crewEconomy.deposit(source,minerals);if(this.crewEconomy.pending)throw Error(this.crewEconomy.note);},
@@ -402,7 +410,7 @@ class SpaceScene extends Phaser.Scene {
       else if (this.multiplayer) this.model.message = 'Multiplayer cannot be paused. Fly into a station ring to be safe.';
       else this.paused = !this.paused;
     }
-    if (Phaser.Input.Keyboard.JustDown(this.keys.R)) { if (this.buildMode) this.buildRot = (this.buildRot + 1) % 4; else if (this.model.rebuildDue && this.model.dead) { this.switchModel(rebuildAtHome(this.model));this.audio.play('respawn'); saveGame(this.model, this.saveFailed); } else this.model.respawn(); }
+    if (Phaser.Input.Keyboard.JustDown(this.keys.R)) { if (this.model.dead) this.recoverShip(); else if (this.buildMode) this.buildRot = (this.buildRot + 1) % 4; }
     if (Phaser.Input.Keyboard.JustDown(this.keys[OUTPOST.key]) && !this.building && !this.mapOpen && !this.settings.open) this.toggleBuildMode();
     if (this.buildMode && (this.model.buildModeError && !this.model.builder || this.building || this.mapOpen)) this.buildMode = false;
     if (Phaser.Input.Keyboard.JustDown(this.keys.N)){this.audio.toggleMute();this.settings.sync();}
@@ -505,7 +513,14 @@ class SpaceScene extends Phaser.Scene {
     this.renderBuildPanel(); this.renderOutpostPanel();
     document.body.classList.toggle('horde-alert',alert);document.body.classList.toggle('horde-warning',alert&&warning>0);
     }
-    this.status.textContent = this.paused ? 'PAUSED — Press Esc to resume' : this.model.message;
+    const notice = this.model.deathNotice || (this.paused ? 'PAUSED — Press Esc to resume' : this.model.message);
+    if (this.status.firstChild?.textContent !== notice) this.status.replaceChildren(document.createTextNode(notice));
+    if (this.model.dead) {
+      const pending = this.crewEconomy.pending || this.crewOutposts.pending;
+      this.recoveryButton.disabled = pending;
+      this.recoveryButton.textContent = pending ? 'Waiting for crew transfer…' : this.model.rebuildDue ? 'Rebuild at home [R]' : 'Respawn [R]';
+      if (this.recoveryButton.parentNode !== this.status) this.status.append(this.recoveryButton);
+    } else this.recoveryButton.remove();
     this.status.classList.toggle('urgent', this.model.dead || this.paused);
   }
   /**
@@ -991,6 +1006,45 @@ class SpaceScene extends Phaser.Scene {
     this.zoomAimLock=undefined; this.follow.setPosition(model.player.x, model.player.y); this.cameras.main.centerOn(model.player.x, model.player.y);
     if (!sameWorld) this.paintBackdropTextures();
     this.refreshSeedLabel(); this.input.keyboard!.enabled = true;
+  }
+  private confirmEjection(ore: Resource) {
+    const model = this.model, amount = model.cargo[ore];
+    if (model.dead || amount <= 0 || document.querySelector('.cargo-eject-dialog')) return;
+    const dialog = document.createElement('dialog');
+    dialog.className = 'cargo-eject-dialog';
+    dialog.setAttribute('aria-labelledby', 'eject-title');
+    dialog.setAttribute('aria-describedby', 'eject-warning');
+    dialog.innerHTML = `<h2 id="eject-title">Eject ${RESOURCES[ore].label}?</h2><p id="eject-warning">Eject ${amount.toLocaleString()} carried ${RESOURCES[ore].label} into space?<br><strong>You cannot pick it back up, including with tractors or after loading a save.</strong></p><p>Stored resources are untouched. Flight continues while this warning is open.</p><div><button type="button" data-cancel>Cancel</button><button type="button" data-confirm>Eject ${RESOURCES[ore].label}</button></div>`;
+    const keyboard = this.input.keyboard!, enabled = keyboard.enabled;
+    keyboard.resetKeys(); keyboard.enabled = false; keyboard.disableGlobalCapture();
+    dialog.addEventListener('close', () => {
+      dialog.remove(); keyboard.resetKeys();
+      keyboard.enabled = enabled && !this.menu.open && !this.settings.open;
+      if (keyboard.enabled) keyboard.enableGlobalCapture();
+    }, { once: true });
+    dialog.querySelector('[data-cancel]')!.addEventListener('click', () => dialog.close());
+    dialog.querySelector('[data-confirm]')!.addEventListener('click', () => {
+      if (this.model === model && !model.dead) {
+        model.ejectCargo(ore, amount); this.hudElapsed = 100;
+        saveGame(model, this.saveFailed);
+      }
+      dialog.close();
+    });
+    document.body.append(dialog); dialog.showModal();
+    dialog.querySelector<HTMLButtonElement>('[data-cancel]')!.focus();
+  }
+  private recoverShip() {
+    if (!this.model.dead) return;
+    if (this.crewEconomy.pending || this.crewOutposts.pending) {
+      this.recoveryButton.textContent = 'Waiting for crew transfer…'; return;
+    }
+    this.buildMode = false; this.building = false; this.mapOpen = false; this.paused = false;
+    if (this.model.rebuildDue) {
+      this.switchModel(rebuildAtHome(this.model)); this.audio.play('respawn');
+    } else this.model.respawn();
+    this.follow.setPosition(this.model.player.x, this.model.player.y);
+    this.cameras.main.centerOn(this.model.player.x, this.model.player.y);
+    saveGame(this.model, this.saveFailed);
   }
   private static readonly RADAR_RANGES = [1200, 2400, 4800];
   private drawMinimap() {
