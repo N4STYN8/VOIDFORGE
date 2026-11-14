@@ -7,13 +7,13 @@
   - Kick, ban, unban, rename, broadcast, lobby disband, remove and open, sector lock and evict.
   - Universe map with follow and spectate, real generated asteroid fields, live ships with block layouts, enemies, shots and beams.
   - In-game admin commands: teleport (point, own-grid cell, or visit another sector), spawn and clear enemies, evict, inspect, and edits to cargo, storage, stations and outposts.
-- Validation: 342 tests after merging main (PR #9 latency, PR #10 outpost sync; 22 new admin tests: adminProtocol 3, admin relay integration 13, adminControl 10), both builds and the Node 16 relay bundle. The admin map reads the new enemy format inside `fx`: partial `n` rows, `f` full lists and `x` removals.
+- Validation: 344 tests (2 more for the watched flag and the solo observer feed over a real relay); 342 after merging main (PR #9 latency, PR #10 outpost sync; 22 new admin tests: adminProtocol 3, admin relay integration 13, adminControl 10), both builds and the Node 16 relay bundle. The admin map reads the new enemy format inside `fx`: partial `n` rows, `f` full lists and `x` removals.
 - Browser check against a local relay with `relay-bot --horde --fire` plus the real game on a fresh origin joined to its lobby:
   - A wrong password was refused; login worked.
   - Pilots showed with ping and rate. Following tracked the bot over the asteroid field with ship blocks at close zoom.
   - Inspect returned the game's report, and +50 iron landed in the game's cargo.
   - The broadcast showed as an `[Admin]` note, and teleport moved the ship. No console errors.
-- Found during the check: solo pilots send no enemy traffic, so their enemies are not visible to admins (follow-up).
+- Solo pilots: the game sent no enemy traffic for a pilot alone in a sector. Now a watched room is flagged by the relay and a lone pilot there sends a presentation-only observer feed. Live check: a solo bot's raiders, horde and enemy fire show on the admin map.
 - Final review fixes: parallel-login lockout bypass, stalled admin sockets (backlog skip + keep-alive reaping), outpost destroy now moves its minerals to station storage, loopback addresses are never banned (warns when TRUST_PROXY is missing behind a proxy), oversized inspect acks keep their outcome, NUL asset paths return 400.
 - Not deployed. Deploying needs explicit approval: the relay restart on the Pi, plus a site deploy for the in-game handler. Pi setup is in server/README.md.
 

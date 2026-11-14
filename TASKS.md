@@ -8,7 +8,7 @@
 - [ ] Review the uncommitted change, then commit, PR and merge on request
 - [ ] Deploy (needs approval and coordination): `npm run relay-bundle` and copy `dist-admin/` to the Pi; set ADMIN_PASSWORD/TRUST_PROXY/BANS_FILE; check nginx forwards Host, X-Forwarded-For and X-Forwarded-Proto; restart the relay; deploy the site so clients run admin commands
 - [x] Admin map reads PR #9's enemy format inside `fx` (partial `n`, full `f`, removals `x`)
-- [ ] Follow-up: let a watched solo pilot share enemies, shots and look with admins (sharedLink.ts); today the map shows only their ship
+- [x] A watched solo pilot sends an observer feed (enemies, fire, beams, shield) so admins see their fights
 - [ ] Optional: show outpost blocks on the spectator map; reproduce belt motion and population-field rocks
 
 ## Shared outposts — built, needs play

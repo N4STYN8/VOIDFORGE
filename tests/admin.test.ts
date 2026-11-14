@@ -8,6 +8,10 @@ import { startRelay, type Relay, type RelayOptions } from '../server/relay.ts';
 import { passwordMatches, parseCookies } from '../server/admin.ts';
 import { NET, parseServer, type ServerMessage, type ShipState } from '../src/netProtocol.ts';
 import type { AdminServerMessage } from '../src/adminProtocol.ts';
+import { NetClient } from '../src/net.ts';
+import { SharedLink } from '../src/sharedLink.ts';
+import { GameModel } from '../src/model.ts';
+import { worldRef } from '../src/sectors.ts';
 
 const PASSWORD = 'correct horse';
 const adminDir = (() => { const dir = mkdtempSync(join(tmpdir(), 'vf-admin-')); writeFileSync(join(dir, 'index.html'), '<!doctype html><title>admin</title>'); return dir; })();
@@ -355,4 +359,55 @@ test('review fixes: loopback addresses are never banned, and a dead admin socket
     await new Promise<void>((done, fail) => { const timer = setTimeout(() => fail(new Error('dead admin socket was not reaped')), 2000); raw.on('close', () => { clearTimeout(timer); done(); }); raw.resume(); });
     a.close();
   } finally { await relay.close(); }
+});
+
+test('rooms learn when an admin watches them, and stop being marked when the watch ends', async () => {
+  const relay = await relayWith();
+  try {
+    const solo = await pilot(relay, 'Solo');
+    solo.send({ t: 'sector', world: world('s5'), owner: true });
+    assert.equal((await solo.next('room')).watched, undefined);
+    const a = await admin(relay);
+    a.send({ t: 'watch', ref: 1, rooms: ['s5'] });
+    assert.equal((await solo.next('room', m => m.watched === true)).members, 1);
+    a.send({ t: 'watch', ref: 2, rooms: [] });
+    await solo.next('room', m => !m.watched);
+    a.send({ t: 'watch', ref: 3, rooms: ['s5'] });
+    await solo.next('room', m => m.watched === true);
+    a.close();
+    await solo.next('room', m => !m.watched);
+    solo.close();
+  } finally { await relay.close(); }
+});
+
+test('a watched solo pilot sends an observer feed of its enemies and fire without entering shared mode', async () => {
+  const relay = await relayWith();
+  const net = new NetClient(), model = new GameModel('observed-solo'), link = new SharedLink(net, () => model);
+  try {
+    const at = model.player;
+    (model as unknown as { spawnEnemy(kind: string, x: number, y: number, angle: number): unknown }).spawnEnemy('raider', at.x + 300, at.y, 0);
+    net.connect(`ws://127.0.0.1:${relay.port}`, 'Solo');
+    net.setSector(worldRef(model), true);
+    const a = await admin(relay);
+    const clock = () => performance.now() / 1000;
+    for (let i = 0; i < 100 && !net.room; i++) { link.frame(model, clock()); await pause(10); }
+    a.send({ t: 'watch', ref: 1, rooms: [model.seed] });
+    let feed: Extract<AdminServerMessage, { t: 'obs' }> | undefined;
+    for (let i = 0; i < 150 && !feed; i++) {
+      link.frame(model, clock()); await pause(10);
+      const index = a.messages.findIndex(m => m.t === 'obs' && m.m.t === 'cast' && m.m.k === 'fx' && Array.isArray((m.m.d as { n?: unknown }).n));
+      if (index >= 0) feed = a.messages.splice(index, 1)[0] as Extract<AdminServerMessage, { t: 'obs' }>;
+    }
+    assert.ok(feed, 'the watched solo pilot cast its enemies');
+    const fx = (feed!.m as { d: { n: unknown[][]; f?: number } }).d;
+    assert.equal(fx.f, 1); assert.equal(fx.n[0][1], 'raider');
+    assert.equal(model.shared, undefined, 'single-player rules stay in force');
+    // Unwatched again: the feed stops.
+    a.send({ t: 'watch', ref: 2, rooms: [] });
+    for (let i = 0; i < 40; i++) { link.frame(model, clock()); await pause(10); }
+    a.messages.length = 0;
+    for (let i = 0; i < 40; i++) { link.frame(model, clock()); await pause(10); }
+    assert.ok(!a.messages.some(m => m.t === 'obs'), 'no feed once nobody watches');
+    a.close();
+  } finally { net.disconnect(); await relay.close(); }
 });
