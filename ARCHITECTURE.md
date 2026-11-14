@@ -210,3 +210,8 @@ Wheel heading stability: zoomAimLock captures pointer screen position and ship h
 - Shots: module positions computed once per frame for hostile fire; bounding-box rejection before exact segment tests; bullet caps counted once per batch.
 - Sight: `canSee` reuses each enemy's line-of-sight answer for SIGHT_REFRESH (0.1 s), cleared whenever the rock list is replaced; `clearLineOfSight` rejects rocks by bounding box. chooseTargets picks without temporary lists.
 - Rendering: a same-sector model switch (sector sync) keeps asteroid sprites and the backdrop, verifies each rock by an outline fingerprint and repaints at most 6 changed rocks per frame; peer name tags only restyle when their colour changes.
+
+
+Build module unlock stays centralized in OUTPOST.coreLevel (now 2), consumed by install validation and Build Mode messaging. MODULES.builder description matches this requirement; no new unlock/save state.
+
+Dynamic music: musicState.ts owns priority, activity timers, shuffle bags and fade math; musicTracks.ts maps exact local MP3 filenames using Vite URLs; musicEngine.ts owns bounded streaming elements/overlapping gain automation. GameAudio owns that one engine on its existing music bus. main.ts supplies station/mining/encounter state, model.musicEvents carries only confirmed local combat (transient, not saved), and musicSignals.ts filters actual active encounters. No network protocol change, no audio-buffer bank. Full asset/verification/limitation list: MUSIC_AUDIT.md.

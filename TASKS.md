@@ -272,3 +272,17 @@ Choices: own Node + WebSocket relay; sector grid; owners keep changes to their s
 - [x] Hold heading across wheel zoom; resume normal aim on mouse movement
 - [x] Verify moving Canvas/WebGL zoom, aim release and projection regression
 - [ ] User check on their ship; changes remain local
+
+## Earlier Build module unlock
+- [x] Unlock purchase/use at hull/core level 2 with matching description
+- [x] Verify L1 blocked, L2 installation and outpost placement
+- [ ] Playtest early outpost progression
+
+## Dynamic 12-track soundtrack
+- [x] Preserve latest main/performance changes and prior Core-2 Build module unlock
+- [x] Discover, preserve and map all 12 actual MP3s
+- [x] Central state priority, activity hysteresis and confirmed combat signals
+- [x] Bounded streaming/equal-power crossfades, fair rotation, resume and failure handling
+- [x] Preserve controls/unlock/SFX; test states, interruptions, playback and production build
+- [ ] Human listening pass for soundtrack/SFX balance
+- [ ] Optional future follower boss targeting metadata (requires separate relay scope)

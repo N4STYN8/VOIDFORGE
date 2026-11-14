@@ -128,3 +128,7 @@ Enemy missiles can be shot down. MISSILE_DEFENSE gives 90 durability (eight L1 a
 Wheel zoom preserves aiming direction; flight camera uses subpixel tracking so fractional zoom does not snap ship layers.
 
 Scrolling flight zoom preserves current ship heading until the mouse moves; zoom itself never commands a turn. Mouse movement immediately resumes normal aiming.
+
+Build module unlocks at hull/core level 2 (previously 4). Installation costs, construction cargo/energy rules and higher module tier requirements remain unchanged.
+
+Dynamic soundtrack: menu > boss > PvP > PvE > station/outfitter > mining > exploration. Mining needs 5 seconds, holds through 15 seconds idle; PvE/PvP hold 12/15 seconds after interaction. Calm fades 6 seconds, rotations 8, menu 4, PvE entry 1.5, PvP/boss entry 1. Songs rotate fairly and brief returns resume. Pause/mute/hidden tabs retain playback position. New games at the station use station music until leaving.

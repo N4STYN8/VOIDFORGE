@@ -1,3 +1,5 @@
+import {MUSIC_TRACKS,MUSIC_FALLBACK} from './musicTracks.ts';
+import {musicEncounter} from './musicSignals.ts';
 import { flightWorldPoint, zoomAimPoint, type ZoomAimLock } from './flightCamera.ts';
 import { soundIsVisible } from './soundVisibility.ts';
 import { bakeShipImage, type ShipArtBlock } from './shipImage.ts';
@@ -121,6 +123,7 @@ class SpaceScene extends Phaser.Scene {
   private bossBarContent = '';
   private status = document.getElementById('status')!;
   create() {
+    this.audio.configureMusic(MUSIC_TRACKS,MUSIC_FALLBACK);
     // Local-development handle for browser checks; never set on the hosted site.
     if (['localhost','127.0.0.1'].includes(location.hostname)) (window as unknown as { voidforge?: SpaceScene }).voidforge = this;
     this.sessionControls.id = 'session-controls';
@@ -356,7 +359,7 @@ class SpaceScene extends Phaser.Scene {
   private lastFrameAt = performance.now();
   update(_time: number, delta: number) {
     this.lastFrameAt = performance.now();
-    if(this.menu?.open)return;
+    if(this.menu?.open){this.audio.updateMusic(delta/1000,{menu:true});return;}
     // No pausing in multiplayer: a pilot who was paused alone resumes when someone else shares the sector.
     if (this.paused && this.multiplayer && !this.confirmingMenu) { this.paused = false; this.model.message = 'Another pilot is here: multiplayer cannot be paused.'; }
     if (Phaser.Input.Keyboard.JustDown(this.keys.M)) { this.setMapOpen(!this.mapOpen); this.building = false; }
@@ -420,6 +423,9 @@ class SpaceScene extends Phaser.Scene {
     // UI actions can happen while the simulation is paused. Drain their queue exactly once.
     for(const event of this.model.actionSounds.splice(0)){if(!soundIsVisible(event,bounds))continue;if(event.cue==='deposit')this.audio.deposit(event.amount??0);else if(event.cue)this.audio.play(event.cue,event.pitch??1,event.volume??1);}
     if(this.building!==this.outfitterWasOpen){this.audio.play(this.building?'outfitterOpen':'outfitterClose');this.outfitterWasOpen=this.building;}
+    const encounter=musicEncounter(this.model);
+    this.audio.updateMusic(delta/1000,{menu:false,station:this.building||this.model.atStation,mining:this.model.miningLinks.length>0,pve:encounter.pve||this.model.musicEvents.has('pve'),pvp:this.model.musicEvents.has('pvp'),boss:encounter.boss||this.model.musicEvents.has('boss'),paused:this.paused||(!this.multiplayer&&this.settings.open)});
+    this.model.musicEvents.clear();
     this.commandInput.clear();
     const audible=!this.paused&&!this.building&&!this.settings.open&&!this.model.dead;
     this.audio.setLoop('mine',audible?this.model.miningLinks.filter(link=>soundIsVisible(link.to,bounds)).length:0);this.audio.setLoop('tractor',audible?this.model.tractorLinks.filter(link=>soundIsVisible(link.to,bounds)).length:0);
@@ -923,6 +929,7 @@ class SpaceScene extends Phaser.Scene {
     }
     this.effects.clear();this.audio.setLoop('mine',0);this.audio.setLoop('tractor',0);
     this.buildMode = false; for (const [id, entry] of this.outpostSprites) { entry.image.destroy(); if (this.textures.exists(`outpost-${id}`)) this.textures.remove(`outpost-${id}`); } this.outpostSprites.clear();
+    this.audio.resetMusic();
     this.model = model; this.building = false; this.mapOpen = false; this.paused = false; this.movingModule = false; this.selectedCell = { x: 0, y: 0 };this.detailMode='module';this.buildCenter={x:0,y:0};
     this.lastBullet = -1; this.builderContent = ''; this.hudElapsed = 100; this.mapElapsed = 200; this.saveElapsed = 0;
     this.baseLabels.forEach((label, i) => label.setPosition(model.bases[i].x, model.bases[i].y - 172));

@@ -1,3 +1,5 @@
+import {MusicEngine} from './musicEngine.ts';
+import {MusicStateController,type MusicSignals,type MusicState} from './musicState.ts';
 export const AUDIO_MIX={effectsBoost:2.6,quietGain:.65,criticalDuck:.42,weaponDuck:.72} as const;
 import type { WeaponKind } from './data.ts';
 export type SoundCue='shieldReady'|'deposit'|'depositHeavy'|'pickupHeavy'|'dock'|'cargoLoad'|'moduleInstall'|'moduleUpgrade'|'upgradeUltimate'|'moduleMove'|'moduleRemove'|'repair'|'outfitterOpen'|'outfitterClose'|'shieldDown'|'lowEnergy'|'overheat'|'reactorOverdrive'|'overclock'|'warp'|'coolingSurge'|'fortress'|'aegis'|'vortex'|'excavator'|'respawn'|'constructionDone'|'structureHit'|'uiOpen'|'uiConfirm'|'uiCancel'|'uiLaunch'|'ultimate'|'uiHover'|'uiClick'|'uiWarning'|'fail'|'hit'|'fire'|'pulse'|'rail'|'plasma'|'rocket'|'flak'|'emp'|'mine'|'impact'|'shield'|'explosion'|'collect'|'boost'|'build'
@@ -66,7 +68,13 @@ export const SOUND_PROFILES:Record<SoundCue,SoundProfile>={
 };
 export class GameAudio{
   muted=false;masterVolume=.85;effectsVolume=.9;musicVolume=.45;
-  private track?:HTMLAudioElement;private music?:GainNode;
+  private soundtrack?:MusicEngine;private music?:GainNode;
+  private musicState=new MusicStateController();private musicPaused=false;
+  private musicCatalog?:{tracks:Record<MusicState,string[]>;fallback:string};
+  configureMusic(tracks:Record<MusicState,string[]>,fallback:string){this.musicCatalog={tracks,fallback};}
+  updateMusic(dt:number,signals:MusicSignals){this.musicPaused=Boolean(signals.paused&&!signals.menu);const state=this.musicState.update(dt,signals);this.startMusic();this.soundtrack?.update(state);}
+  resetMusic(){this.musicState.reset();}
+  get musicDebug(){return this.soundtrack?.debug;}
   private context?:AudioContext;private master?:GainNode;private effects?:GainNode;
   private last:Partial<Record<SoundCue,number>>={};private active=new Set<{node:AudioScheduledSourceNode;priority:number}>();
   private get voices(){return this.active.size;}
@@ -74,18 +82,18 @@ export class GameAudio{
   private pickupAmount=0;private pickupStep=0;private lastDeposit=-10;
   private loops=new Map<'mine'|'tractor',{nodes:AudioScheduledSourceNode[];gain:GainNode}>();
   constructor(){try{const settings=JSON.parse(localStorage.getItem('voidforge.audio')??'null');if(settings){this.masterVolume=Math.max(0,Math.min(1,settings.master??.85));this.effectsVolume=Math.max(0,Math.min(1,settings.effects??.9));this.musicVolume=Math.max(0,Math.min(1,settings.music??.45));this.muted=Boolean(settings.muted);}}catch{/* Defaults work without storage. */}
-    if(typeof document!=='undefined')document.addEventListener('visibilitychange',()=>{if(document.hidden){this.track?.pause();this.setLoop('mine',0);this.setLoop('tractor',0);}else this.startMusic();});
+    if(typeof document!=='undefined')document.addEventListener('visibilitychange',()=>{if(document.hidden){this.soundtrack?.setEnabled(false);this.setLoop('mine',0);this.setLoop('tractor',0);}else this.startMusic();});
   }
   unlock(){
     if(!this.context){if(typeof AudioContext==='undefined')return;this.context=new AudioContext();this.master=this.context.createGain();this.effects=this.context.createGain();this.effects.connect(this.master);
       this.music=this.context.createGain();this.music.connect(this.master);
-      this.track=new Audio(new URL('./Deep Space Patrol.mp3',import.meta.url).href);this.track.loop=true;this.track.preload='none';
-      this.context.createMediaElementSource(this.track).connect(this.music);const limiter=this.context.createDynamicsCompressor();limiter.threshold.value=-10;limiter.ratio.value=8;limiter.attack.value=.003;limiter.release.value=.15;this.master.connect(limiter);const safety=this.context.createWaveShaper(),curve=new Float32Array(2049);for(let i=0;i<curve.length;i++){const x=i/(curve.length-1)*2-1;curve[i]=.92*Math.tanh(x/.92);}safety.curve=curve;safety.oversample='2x';limiter.connect(safety);safety.connect(this.context.destination);this.applyVolumes();}
-    if(this.context.state!=='running')void this.context.resume().then(()=>this.startMusic()).catch(()=>{});
-    else this.startMusic();
+      if(this.musicCatalog)this.soundtrack=new MusicEngine(this.context,this.music,this.musicCatalog.tracks,this.musicCatalog.fallback);
+      const limiter=this.context.createDynamicsCompressor();limiter.threshold.value=-10;limiter.ratio.value=8;limiter.attack.value=.003;limiter.release.value=.15;this.master.connect(limiter);const safety=this.context.createWaveShaper(),curve=new Float32Array(2049);for(let i=0;i<curve.length;i++){const x=i/(curve.length-1)*2-1;curve[i]=.92*Math.tanh(x/.92);}safety.curve=curve;safety.oversample='2x';limiter.connect(safety);safety.connect(this.context.destination);this.applyVolumes();}
+    if(this.context.state!=='running')void this.context.resume().then(()=>{this.startMusic();this.soundtrack?.unlock();}).catch(()=>{});
+    else {this.startMusic();this.soundtrack?.unlock();}
   }
-  private startMusic(){if(this.track&&this.track.paused&&!document.hidden&&!this.muted&&this.musicVolume>0)void this.track.play().catch(()=>{});}
-  private applyVolumes(){if(this.context&&this.master&&this.effects){this.master.gain.setTargetAtTime(this.muted?0:this.masterVolume,this.context.currentTime,.03);this.effects.gain.setTargetAtTime(this.effectsVolume*AUDIO_MIX.effectsBoost,this.context.currentTime,.03);this.refreshMusicGain();if(this.muted||this.musicVolume===0)this.track?.pause();else this.startMusic();}}
+  private startMusic(){this.soundtrack?.setEnabled(!document.hidden&&!this.muted&&this.masterVolume>0&&this.musicVolume>0&&!this.musicPaused);}
+  private applyVolumes(){if(this.context&&this.master&&this.effects){this.master.gain.setTargetAtTime(this.muted?0:this.masterVolume,this.context.currentTime,.03);this.effects.gain.setTargetAtTime(this.effectsVolume*AUDIO_MIX.effectsBoost,this.context.currentTime,.03);this.refreshMusicGain();this.startMusic();}}
   setVolume(kind:'master'|'effects'|'music',value:number){if(kind==='master')this.masterVolume=Math.max(0,Math.min(1,value));else if(kind==='effects')this.effectsVolume=Math.max(0,Math.min(1,value));else this.musicVolume=Math.max(0,Math.min(1,value));this.applyVolumes();this.persist();}
   private refreshMusicGain(){const c=this.context,p=this.music?.gain;if(!c||!p)return;const active=c.currentTime<this.duckUntil;p.cancelScheduledValues(c.currentTime);p.setTargetAtTime(this.musicVolume*(active?this.duckAmount:1),c.currentTime,.025);if(active)p.setTargetAtTime(this.musicVolume,this.duckUntil,.18);}
   private duckMusic(priority:number,duration:number){const c=this.context;if(!c||!this.music||this.musicVolume<=0||priority<=0)return;const now=c.currentTime,target=priority>=2?AUDIO_MIX.criticalDuck:AUDIO_MIX.weaponDuck;this.duckAmount=now<this.duckUntil?Math.min(this.duckAmount,target):target;this.duckUntil=Math.max(this.duckUntil,now+Math.min(1.5,duration+.08));this.refreshMusicGain();}

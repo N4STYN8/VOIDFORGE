@@ -48,6 +48,11 @@ const SIGHT_REFRESH = 0.1;
 const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 export class GameModel {
+  /** Transient confirmed local combat interactions; never saved or sent over the relay. */
+  musicEvents=new Set<'pve'|'pvp'|'boss'>();
+  musicBossId?:number;
+  private npcMusic(enemy?:Enemy){if(this.dead||this.atStation)return;if(enemy&&dist(enemy,this.player)>1800)return;this.musicEvents.add('pve');const boss=enemy&&(ENEMIES[enemy.kind??'raider'].boss?enemy:this.enemies.find(e=>e.id===enemy.parent&&ENEMIES[e.kind??'raider'].boss));if(boss){this.musicEvents.add('boss');this.musicBossId=boss.id;}}
+
   player = { x: WORLD.stationX, y: WORLD.stationY + 130, vx: 0, vy: 0, health: SHIP.health, angle: -Math.PI / 2 };
   modules: ShipModule[] = starterModules();
   /** Name of the ship being flown, and the other ships waiting in the hangar. */
@@ -980,6 +985,7 @@ export class GameModel {
   }
   private damagePlayer(amount: number, hit?: Point, attackerId?:number) {
     if(this.modules.some(m=>m.kind==='engine'&&m.level>=5&&(m.ability?.phase??0)>0))return;
+    if(amount>0&&attackerId!==undefined)this.npcMusic(this.enemies.find(e=>e.id===attackerId));
     const incomingAmount=amount;
     const fortress=this.modules.find(m=>m.kind==='armor'&&m.level>=5);
     if(fortress)amount*=1-SPECIAL.armor.passive;
@@ -1163,7 +1169,7 @@ export class GameModel {
     if(facing&&housing&&!armorPiercing)amount=absorbed+(amount-absorbed)*(1-def.boss!.frontArmor!);
     e.health -= (amount - absorbed)*(1-Math.min(.65,armorPiercing?0:e.armor??0))*(1-(aura?ENEMIES[aura.kind??'raider'].aura!.reduction:0));
   }
-  private enemyExplosion(b:Bullet,point:Point){const radius=b.splash??0;this.effect({type:'explosion',...point,radius,weapon:b.weapon,color:0xf2a36a});if(!this.atStation&&dist(point,this.player)<radius+SHIP.radius)this.damagePlayer((b.damage??0)*Math.max(.25,1-dist(point,this.player)/(radius+SHIP.radius)),point,b.attackerId);}
+  private enemyExplosion(b:Bullet,point:Point){const radius=b.splash??0;this.effect({type:'explosion',...point,radius,weapon:b.weapon,color:0xf2a36a});if(!this.atStation&&dist(point,this.player)<radius+SHIP.radius){this.npcMusic(this.enemies.find(e=>e.id===b.attackerId));this.damagePlayer((b.damage??0)*Math.max(.25,1-dist(point,this.player)/(radius+SHIP.radius)),point,b.attackerId);}}
   private enemyShot(e: Enemy, w: EnemyWeapon, angle: number) {
     const def = ENEMIES[e.kind ?? 'raider'], count = w.count ?? 1, reach = def.radius + 6;
     if(def.repositionAfterShot)e.reposition=def.repositionAfterShot;
@@ -1286,7 +1292,7 @@ export class GameModel {
     let hostile = 0; for (const b of this.bullets) if (b.enemy) hostile++;
     for (const shot of shots) {
       if ('beam' in shot) {
-        if (!this.atStation && segmentCircleHit({ x: shot.x, y: shot.y }, { x: shot.ex, y: shot.ey }, this.player, SHIP.radius + 5) !== undefined) this.damagePlayer(shot.damage);
+        if (!this.atStation && segmentCircleHit({ x: shot.x, y: shot.y }, { x: shot.ex, y: shot.ey }, this.player, SHIP.radius + 5) !== undefined) {this.npcMusic();this.damagePlayer(shot.damage);}
         if (this.enemyBeams.length >= 12) this.enemyBeams.shift();
         this.enemyBeams.push({ start: { x: shot.x, y: shot.y }, end: { x: shot.ex, y: shot.ey }, life: .22 });
         continue;
@@ -1369,7 +1375,7 @@ export class GameModel {
     if (now - record.window >= 1) { record.window = now; record.taken = 0; }
     const allowed = Math.max(0, Math.min(damage, PVP.damageCap - record.taken));
     record.taken += allowed; record.at = now; record.name = name; this.attackers.set(from, record);
-    if (allowed > 0) { this.damagePlayer(allowed); if (!this.dead) this.message = `Under fire from ${name}!`; }
+    if (allowed > 0) { this.musicEvents.add('pvp');this.damagePlayer(allowed); if (!this.dead) this.message = `Under fire from ${name}!`; }
     if (this.dead) this.creditPvpKill();
     return allowed;
   }
@@ -1618,6 +1624,7 @@ export class GameModel {
   private disableByEmp(enemy:Enemy,duration:number){if(!ENEMIES[enemy.kind??'raider'].boss&&(enemy.empRecovery??0)<=0){enemy.disabledFor=Math.max(enemy.disabledFor??0,duration);enemy.empRecovery=duration+SPECIAL.emp.recovery;}}
   private hitEnemy(enemy:Enemy,damage:number,armorPiercing=false,by?:string){
     if(enemy.health<=0||damage<=0)return;
+    if(!by)this.npcMusic(enemy);
     enemy.lastHitBy=by;
     this.enemyHits++;this.cue('hit',enemy);this.damageEnemy(enemy,damage,true,armorPiercing);if(enemy.health<=0)this.enemyDestroyed(enemy);
   }
@@ -2108,8 +2115,8 @@ export class GameModel {
           break;
         }
         this.fragment(b,point);
-        if (b.enemy) {if((b.splash??0)>0)this.enemyExplosion(b,point);else this.damagePlayer(b.damage ?? WEAPONS.enemy.damage, point,b.attackerId);}
-        else if (pilot) { this.shared!.pvpHits.push({ to: pilot.id, damage: b.damage ?? WEAPONS.player.damage }); if ((b.splash ?? 0) > 0) this.explodeRocket(b, point); else this.addBlast({ ...point, radius: 12, life: 0.1 }, b.weapon); }
+        if (b.enemy) {this.npcMusic(this.enemies.find(e=>e.id===b.attackerId));if((b.splash??0)>0)this.enemyExplosion(b,point);else this.damagePlayer(b.damage ?? WEAPONS.enemy.damage, point,b.attackerId);}
+        else if (pilot) { this.musicEvents.add('pvp');this.shared!.pvpHits.push({ to: pilot.id, damage: b.damage ?? WEAPONS.player.damage }); if ((b.splash ?? 0) > 0) this.explodeRocket(b, point); else this.addBlast({ ...point, radius: 12, life: 0.1 }, b.weapon); }
         else if ((b.splash ?? 0)>0) this.explodeRocket(b, point);
         else if (target) {
           this.hitEnemy(target,b.damage??WEAPONS.player.damage,b.armorPiercing??(b.enhanced&&b.weapon==='rail'));

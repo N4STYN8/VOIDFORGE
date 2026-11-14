@@ -406,3 +406,20 @@ Compact HUD release: user explicitly requested push live. Origin fetched; HEAD/m
 - Same machine, main vs this branch (simulation ms per frame, mean / p99): single-player 1.02/2.3 → 0.39/1.1; authority with two pilots 1.73/3.4 → 0.53/1.5; follower 0.49/1.4 → 0.24/0.9; authority with four hordes (69 enemies) 4.24/6.9 → 0.81/2.1; fast flight worst frame 59 → ~6 ms (14.7 ms start-up frame). GCs per 30 s 158 → 34.
 - Browser (DevTools Chrome, foreground, 1440×900): follower with a horde and authority with 90 enemies both ~60 fps, p99 frame ≈ 20 ms; sector sync no longer drops frames.
 - Validation: 275 tests and build pass. Local and uncommitted on claude/mmo-perf (from main after PR #7 merged).
+
+
+## Build module at hull/core level 2 — 2026-11-13
+- Clean start; fetched origin, HEAD equals origin/main 0124d88, no pull needed. Created codex/build-module-core-two; no upstream selected.
+- Lowered OUTPOST.coreLevel from 4 to 2 and matched module description. Existing shared gate controls installation/error messaging. Costs, module tier upgrades and build energy/cargo rules preserved.
+- Files: src/data.ts, tests/outposts.test.ts and project docs. 291 tests and production build pass (existing bundle warning); targeted outpost suite also passes after testing actual placement on Core 2. Diff checks clean.
+- No pre-existing changes/conflicts. Local uncommitted changes only; nothing pushed or deployed. Next: playtest early outpost progression.
+
+## Dynamic soundtrack — 2026-11-13
+- User approved working from latest main and preserving both developers' changes. Created E:/AI Projects/VOIDFORGE-music on codex/dynamic-music tracking origin/main at 26681ed; git pull --ff-only confirmed current. Original audio-release worktree remains intact. Prior Core-2 patch copied; doc overlaps resolved by retaining Zach's performance notes and appending our notes, as authorized.
+- All 12 MP3s discovered in original project's src/Background Music, copied unchanged and hash-verified. Exact asset list, behavior and limitations in MUSIC_AUDIT.md.
+- Added centralized priority/timers, actual local PvE/PvP/boss interactions, fair rotation/bookmarked returns, real equal-power overlapping fades and max-three streamed voices. Reuses GameAudio bus/settings/ducking/SFX; pauses media/fades on mute, pause, hidden tab. Failed/missing tracks degrade through the same controller. No relay changes.
+- Files: new musicState.ts/musicTracks.ts/musicEngine.ts/musicSignals.ts, 12 MP3 assets, tests/music.test.ts; modified audio.ts/main.ts/model.ts plus retained data.ts/outposts tests and project docs.
+- Validation: 298 tests and production build pass (existing bundle warning). Real browser loaded all 12 MP3s and verified all states, interruptions, voice cap, menu/pause/mute/volume/resume, SFX and game station/exploration; real rotation tested mining and single PvE track. No browser errors. SHA-256 originals match.
+- Limitation: follower snapshots omit target/boss-projectile identity; follower boss music requires confirmed boss interaction, never proximity alone. New game at a station correctly starts station music. Next: human listening balance pass. All changes local/uncommitted; nothing pushed/deployed.
+
+- User authorized live publication: fetched origin and confirmed main unchanged at 26681ed. Re-ran all 298 tests and production build successfully. Publishing dynamic music, all 12 original MP3s and the preserved Core-2 Build module unlock via normal fast-forward push and existing Pages workflow. No relay changes.

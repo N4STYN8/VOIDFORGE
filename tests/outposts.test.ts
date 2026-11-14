@@ -20,23 +20,24 @@ function builderShip(level = 1) {
 }
 const cell = (m: GameModel, dx = 0, dy = 3) => ({ cx: cellOf(m.player.x) + dx, cy: cellOf(m.player.y) + dy });
 
-test('the Build module is a five-level ship module that needs Core level 4', () => {
+test('the Build module is a five-level ship module that needs Core level 2', () => {
   assert.equal(MODULES.builder.levels.length, MAX_MODULE_LEVEL); assert.equal(ABILITIES.builder.name, 'Industrial Fabricator');
   const stats = MODULES.builder.levels;
   assert.ok(stats[1].buildRange! > stats[0].buildRange! && stats[1].buildSpeed! > stats[0].buildSpeed!);
   assert.ok(stats[2].buildDiscount! > 0 && !stats[1].buildDiscount); assert.ok(stats[3].buildSpeed! > stats[2].buildSpeed!);
   const m = fixtureModel(); m.stored = { iron:1e6,copper:1e6,crystal:1e6,ice:1e6,radioactive:1e6 }; m.modules = [];
   for (let level = 1; level < OUTPOST.coreLevel; level++) {
-    assert.equal(m.coreLevel, level); assert.match(m.buildError('builder', 1, 0) ?? '', /Core level 4/); assert.equal(m.installModule('builder', 1, 0), false);
+    assert.equal(m.coreLevel, level); assert.match(m.buildError('builder', 1, 0) ?? '', /Core level 2/); assert.equal(m.installModule('builder', 1, 0), false);
     assert.ok(m.upgradeModule(0, 0));
   }
+  assert.equal(m.coreLevel, 2);
   assert.equal(m.buildError('builder', 1, 0), undefined); assert.ok(m.installModule('builder', 1, 0));
   assert.equal(m.modules.filter(x => x.kind === 'builder').length, 1); assert.equal(m.builder?.level, 1); assert.equal(m.builder?.range, stats[0].buildRange);
 });
 
 test('Build Mode needs an intact Build module and energy; losing it keeps existing outposts', () => {
   const none = fixtureModel(); assert.match(none.buildModeError ?? '', /Install a Build module/); assert.equal(none.placeStructure('outpostCore', 500, 500), false);
-  const m = builderShip(), at = cell(m);
+  const m = builderShip(), at = cell(m); m.coreLevel = 2;
   assert.equal(m.buildModeError, undefined); assert.ok(m.placeStructure('outpostCore', at.cx, at.cy)); assert.equal(m.outposts.length, 1);
   m.modules[0].integrity = 0; assert.match(m.buildModeError ?? '', /disabled/); assert.equal(m.placeStructure('wall', at.cx + 1, at.cy), false);
   m.modules = []; m.update(0.05, idle); assert.equal(m.outposts.length, 1); assert.equal(m.outposts[0].structures.length, 1);
@@ -44,7 +45,7 @@ test('Build Mode needs an intact Build module and energy; losing it keeps existi
 });
 
 test('blocks snap to the world grid, need a core first, must connect, and never overlap or build on obstacles', () => {
-  const m = builderShip(), at = cell(m);
+  const m = builderShip(), at = cell(m); m.coreLevel = 2;
   assert.match(m.placeError('wall', at.cx, at.cy) ?? '', /Outpost Core first/);
   assert.equal(m.placeError('outpostCore', at.cx, at.cy), undefined);
   const before = { ...m.cargo }, energy = m.energy; assert.ok(m.placeStructure('outpostCore', at.cx, at.cy));
