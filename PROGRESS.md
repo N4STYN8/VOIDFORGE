@@ -1,5 +1,10 @@
 # Progress
 
+## Shared outposts in multiplayer (local branch claude/outpost-sync, uncommitted)
+- Fixed: outposts built with Build Mode (F) in a shared sector did not appear for the other pilot. Each pilot now shares its own outposts live with everyone in the sector (new blocks, construction progress, damage, shield, losses), display only, with nothing stored in them sent. No relay change.
+- Validation: 312 tests (2 new in tests/outpost-share.test.ts: codec with multi-part outposts, and two pilots over a real relay seeing each other's outposts built, extended, progressing and lost, and a departed pilot's outposts removed) and build pass. Browser: joined a local `relayBot --outpost` lobby and the bot's outpost was drawn on the browser client; no console errors.
+- Not done: other pilots' turret aim, turret fire and drones are not shown; visitor outposts block nothing.
+
 ## Multiplayer latency pass and ping readout (local branch claude/objective-darwin-32381a, uncommitted)
 - Lower lag the game adds on top of the network, measured with the new `scripts/latencyBench.ts` (two pilots over a real local relay with simulated delay). LAN: remote ships 175 → 87 ms behind, mirrored enemies 220 → 35 ms, enemy shots 75–90 → under 10 ms, pilot shots visible 60–73 → 31 ms after firing. 80 ms round trip: ships 247 → 161 ms, enemies 298 → 22 ms, enemy shots 161–176 → 20–27 ms.
 - How: adaptive interpolation delay with extrapolation and eased corrections for remote ships; enemy velocities and dead reckoning on followers; enemies ride in fx (nearby every fx, full list twice a second, removals at once); enemy shots fast-forwarded by age + one-way delay; pilot shots launched from the drawn shooter; fx and hits flushed early when the client's own send budget allows (stays under the relay limit). No relay change.

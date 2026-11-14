@@ -1,5 +1,10 @@
 # Tasks
 
+## Shared outposts — built, needs play
+- [x] Live outpost sharing between pilots in a sector (blocks, progress, damage, shield, removal)
+- [ ] Show other pilots' turret aim/fire and drones if wanted
+- [ ] Play-test two players building in one sector
+
 ## Multiplayer latency — built, needs internet play
 - [x] Latency benchmark over a real relay with simulated delay (scripts/latencyBench.ts)
 - [x] Adaptive remote-ship interpolation with extrapolation and eased corrections
