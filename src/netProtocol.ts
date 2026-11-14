@@ -81,7 +81,7 @@ export type ServerMessage =
   | { t: 'gone'; id: string }
   | { t: 'error'; message: string }
   /** Who runs enemies in this sector, and how many pilots are in it. */
-  | { t: 'room'; authority: string; members: number }
+  | { t: 'room'; authority: string; members: number; /** An admin is watching this sector, so a pilot alone in it still sends an observer feed. */ watched?: true }
   | { t: 'cast'; from: string; r: string; k: CastKind; d: unknown }
   | { t: 'direct'; from: string; r: string; k: DirectKind; d: unknown }
   | { t: 'claims'; ok: number[]; denied: number[]; lease: number }
@@ -186,7 +186,7 @@ export function parseServer(raw: string): ServerMessage | undefined {
     case 'error': return typeof m.message === 'string' ? { t: 'error', message: m.message } : undefined;
     case 'left-lobby': return typeof m.reason === 'string' ? { t: 'left-lobby', reason: m.reason } : undefined;
     case 'state': { const s = readState(m.s); return s && typeof m.id === 'string' && (m.name === undefined || typeof m.name === 'string') && typeof m.r === 'string' ? { t: 'state', id: m.id, name: typeof m.name === 'string' ? cleanName(m.name) : undefined, r: m.r, s } : undefined; }
-    case 'room': return typeof m.authority === 'string' && Number.isInteger(m.members) ? { t: 'room', authority: m.authority, members: m.members as number } : undefined;
+    case 'room': return typeof m.authority === 'string' && Number.isInteger(m.members) ? { t: 'room', authority: m.authority, members: m.members as number, watched: m.watched === true || undefined } : undefined;
     case 'cast': return typeof m.from === 'string' && typeof m.r === 'string' && typeof m.k === 'string' && CASTS.includes(m.k) ? { t: 'cast', from: m.from, r: m.r, k: m.k as CastKind, d: m.d } : undefined;
     case 'direct': return typeof m.from === 'string' && typeof m.r === 'string' && typeof m.k === 'string' && DIRECTS.includes(m.k) ? { t: 'direct', from: m.from, r: m.r, k: m.k as DirectKind, d: m.d } : undefined;
     case 'match': return m.world === null ? { t: 'match', world: null } : (() => { const world = readWorld(m.world); return world ? { t: 'match', world, name: typeof m.name === 'string' ? cleanName(m.name) : undefined } as ServerMessage : undefined; })();

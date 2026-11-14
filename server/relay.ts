@@ -82,7 +82,20 @@ export function startRelay(options: RelayOptions = {}): Promise<Relay> {
     const all = [...room.clients].sort((a, b) => a.joined - b.joined), live = all.filter(c => !c.dead), list = live.length ? live : all;
     const choice = list.find(c => c.owner) ?? list.find(c => c.lobby?.host === c && c.lobby.members.size > 1 && list.some(o => o !== c && o.lobby === c.lobby)) ?? list[0];
     room.authority = choice;
-    if (choice) { const m: ServerMessage = { t: 'room', authority: choice.id, members: room.clients.size }; for (const c of room.clients) send(c, m); tap(key, JSON.stringify(m)); }
+    announceRoom(key);
+  }
+  /** Tells a room who runs it, how many pilots are in it, and whether an admin watches it (a lone pilot then sends an observer feed). */
+  function announceRoom(key: string) {
+    const room = rooms.get(key); if (!room?.authority) return;
+    const m: ServerMessage = { t: 'room', authority: room.authority.id, members: room.clients.size, watched: watchers.get(key)?.size ? true : undefined };
+    for (const c of room.clients) send(c, m);
+    tap(key, JSON.stringify(m));
+  }
+  /** Re-announces rooms whose watched state changed while `change` ran. */
+  function rewatch(seeds: Iterable<string>, change: () => void) {
+    const all = [...new Set(seeds)], was = all.map(seed => Boolean(watchers.get(seed)?.size));
+    change();
+    all.forEach((seed, i) => { if (Boolean(watchers.get(seed)?.size) !== was[i]) announceRoom(seed); });
   }
   function leaveRoom(c: Client) {
     if (!c.room) return;
@@ -122,6 +135,10 @@ export function startRelay(options: RelayOptions = {}): Promise<Relay> {
     const lobby = c.lobby;
     if (lobby && lobby.host !== c && lobby.host.room !== toSeed) leaveLobby(c, 'Removed from the lobby by an admin.');
   }
+  const unwatch = (socket: AdminSocket) => {
+    for (const seed of socket.watching) { const set = watchers.get(seed); set?.delete(socket); if (set && !set.size) watchers.delete(seed); }
+    socket.watching.clear();
+  };
   const byId = (id: string) => { for (const c of clients) if (c.id === id) return c; };
   const evictFrom = (seed: string, reason: string) => {
     const room = rooms.get(seed);
@@ -180,13 +197,13 @@ export function startRelay(options: RelayOptions = {}): Promise<Relay> {
     authorityOf(seed) { return rooms.get(seed)?.authority?.id; },
     evict: evictFrom,
     watch(socket, seeds) {
-      hooks.release(socket);
-      for (const seed of seeds.slice(0, ADMIN.maxWatch)) { let set = watchers.get(seed); if (!set) watchers.set(seed, set = new Set()); set.add(socket); socket.watching.add(seed); }
+      const next = seeds.slice(0, ADMIN.maxWatch);
+      rewatch([...socket.watching, ...next], () => {
+        unwatch(socket);
+        for (const seed of next) { let set = watchers.get(seed); if (!set) watchers.set(seed, set = new Set()); set.add(socket); socket.watching.add(seed); }
+      });
     },
-    release(socket) {
-      for (const seed of socket.watching) { const set = watchers.get(seed); set?.delete(socket); if (set && !set.size) watchers.delete(seed); }
-      socket.watching.clear();
-    },
+    release(socket) { rewatch([...socket.watching], () => unwatch(socket)); },
   };
   const admin: Admin = createAdmin({ ...options.admin }, hooks);
 

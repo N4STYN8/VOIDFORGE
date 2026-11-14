@@ -58,12 +58,14 @@ export class NetClient {
   /** A pilot left this sector (or went offline). */
   onGone: (id: string) => void = () => {};
   /** Who runs enemies in this sector and how many pilots are here; undefined until the relay says. */
-  room?: { authority: string; members: number };
+  room?: { authority: string; members: number; watched?: boolean };
   /** Rock claim leases held from the relay. */
   claims = new ClaimBook();
   /** True when this sector is shared with at least one other pilot. */
   get sharing() { return this.connected && (this.room?.members ?? 0) > 1; }
   get authority() { return this.room?.authority === this.id; }
+  /** Alone in a sector an admin is watching: the game sends a presentation-only feed (src/sharedLink.ts) but keeps single-player rules. */
+  get observed() { return this.connected && !this.sharing && Boolean(this.room?.watched) && this.authority; }
   /** Seed of the sector world this client last reported (its room). */
   get sectorSeed() { return this.sector?.seed; }
   private socket?: SocketLike;
@@ -173,7 +175,7 @@ export class NetClient {
       this.raw({ t: 'match', exclude: exclude.slice(0, 64) });
     });
   }
-  cast(kind: CastKind, data: unknown) { if (this.sharing) this.raw({ t: 'cast', k: kind, d: data }); }
+  cast(kind: CastKind, data: unknown) { if (this.sharing || this.observed) this.raw({ t: 'cast', k: kind, d: data }); }
   direct(to: string, kind: DirectKind, data: unknown) { if (this.sharing) this.raw({ t: 'direct', to, k: kind, d: data }); }
   /** Sends queued claim requests; call once per frame while sharing. */
   flushClaims() { if (!this.sharing) return; const ids = this.claims.take(); if (ids.length) this.raw({ t: 'claim', ids }); }
@@ -243,7 +245,7 @@ export class NetClient {
       }
       case 'error': this.setNote(m.message); return;
       case 'gone': this.peers.delete(m.id); this.onGone(m.id); return;
-      case 'room': this.room = { authority: m.authority, members: m.members }; return;
+      case 'room': this.room = { authority: m.authority, members: m.members, watched: m.watched }; return;
       case 'claims': this.claims.grant(m.ok, m.denied, m.lease, now); return;
       case 'undelivered': this.onUndelivered(m.to, m.k); return;
       case 'party': this.onParty(m.from, m.k, m.d); return;

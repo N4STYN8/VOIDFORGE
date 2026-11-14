@@ -16,6 +16,8 @@ import { packWorld, unpackWorld, WORLD_CHUNK } from './worldTransfer.ts';
  * within NEAR_ENEMIES of another pilot in every fx (at most `fx` per second), the whole list `enemies` times a
  * second, and removals at once.
  */
+/** Observer feed of a watched solo pilot: messages a second and the half-width of the area whose enemies it carries. */
+export const OBSERVED = { rate: 5, range: 4000 };
 export const SHARE_RATES = { enemies: 2, fx: 10, fxFast: 30, hits: 6, hitsFast: 20, worldChunks: 8 };
 /** Enemies this close to another pilot (world units, about a zoomed-out screen) are updated in every fx. */
 export const NEAR_ENEMIES = 2400;
@@ -198,6 +200,7 @@ export class SharedLink {
       model.visitorOutposts = []; this.looks.clear(); this.peerRtt.clear(); this.sentEnemies.clear(); this.pendingEnemyShots.length = 0;
       this.visitors.clear(); this.outpostSent.clear(); this.outpostQueue.length = 0; this.outpostAudience = ''; this.visitorModel = undefined; this.outpostsHeard = false; this.visitorDrones.clear(); this.dronesSent = false; this.pendingVisuals.length = 0; this.turretSent.clear(); this.peerDead.clear();
       this.outgoing.length = 0; this.incoming.clear(); this.synced = '';
+      if (net.observed) this.observe(model, now); else this.observed = undefined;
       return;
     }
     const role = net.authority ? 'authority' : 'follower';
@@ -243,6 +246,32 @@ export class SharedLink {
       shared.shots.length = 0; shared.loot.length = 0;
     }
   }
+  /**
+   * A pilot alone in a sector an admin watches: what this game shows (nearby enemies, own and enemy fire, beams and
+   * shield), OBSERVED.rate times a second. Presentation only: the model stays in single-player mode, nothing is
+   * claimed and no other pilot is affected. Shots are picked up every frame so short-lived ones are not missed.
+   */
+  private observe(model: GameModel, now: number) {
+    const o = this.observed ??= { model, shot: Math.max(-1, ...model.bullets.map(b => b.id)), at: -Infinity, mine: [], hostile: [] };
+    if (o.model !== model) Object.assign(o, { model, shot: Math.max(-1, ...model.bullets.map(b => b.id)), mine: [], hostile: [] });
+    let top = o.shot;
+    for (const b of model.bullets) if (b.id > o.shot) {
+      top = Math.max(top, b.id);
+      if (b.remote || b.life <= 0) continue;
+      if (b.enemy) { if (o.hostile.length < 48) o.hostile.push({ x: Math.round(b.x), y: Math.round(b.y), vx: Math.round(b.vx), vy: Math.round(b.vy), life: Math.round(b.life * 100) / 100, damage: Math.round(b.damage ?? 0) }); }
+      else if (o.mine.length < 48) o.mine.push(encodePilotShot(b, model.player));
+    }
+    o.shot = top;
+    if (now - o.at < 1 / OBSERVED.rate) return;
+    o.at = now;
+    const p = model.player, fx: Fx = { n: encodeEnemies(model.enemies.filter(e => e.health > 0 && Math.abs(e.x - p.x) < OBSERVED.range && Math.abs(e.y - p.y) < OBSERVED.range)), f: 1 };
+    const look = model.dead ? undefined : encodeLook(model.player, model.shield, model.maxShield, model.miningLinks, model.tractorLinks);
+    if (look) fx.l = look;
+    if (o.mine.length) fx.p = o.mine.splice(0);
+    if (o.hostile.length) fx.e = o.hostile.splice(0);
+    this.net.cast('fx', fx);
+  }
+  private observed?: { model: GameModel; shot: number; at: number; mine: PilotShot[]; hostile: SharedShot[] };
   /**
    * True when a batched message is due: its regular interval has passed, or there is something urgent and at least
    * the fast interval has passed while the client's send budget has room to spare.
