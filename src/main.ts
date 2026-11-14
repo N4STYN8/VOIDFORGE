@@ -1,4 +1,4 @@
-import { flightWorldPoint } from './flightCamera.ts';
+import { flightWorldPoint, zoomAimPoint, type ZoomAimLock } from './flightCamera.ts';
 import { soundIsVisible } from './soundVisibility.ts';
 import { bakeShipImage, type ShipArtBlock } from './shipImage.ts';
 import { MainMenu } from './mainMenu.ts';
@@ -65,6 +65,7 @@ class SpaceScene extends Phaser.Scene {
   private backdrop:{key:string;sprite:Phaser.GameObjects.TileSprite;factor:number;scale:number}[]=[];
   private stationSprites:Phaser.GameObjects.Image[]=[];
   private enemySprites:Phaser.GameObjects.Image[]=[];
+  private zoomAimLock?:ZoomAimLock;
   private shipSprites:Phaser.GameObjects.Image[]=[];
   private shipImage?:Phaser.GameObjects.Image;private shipImageSignature='';private shipImageReady=false;
   private builderElapsed=0;
@@ -287,7 +288,10 @@ class SpaceScene extends Phaser.Scene {
     this.cameras.main.setBounds(0, 0, WORLD.width, WORLD.height).setZoom(1.35).startFollow(this.follow, false, 0.15, 0.15);
     this.keys = this.input.keyboard!.addKeys(`W,A,S,D,SPACE,E,R,ESC,B,Q,M,N,G,V,P,SHIFT,C,${OUTPOST.key}`) as Record<string, Phaser.Input.Keyboard.Key>;
     this.input.on('wheel', (_pointer: Phaser.Input.Pointer, _objects: unknown, _dx: number, dy: number) => {
-      if (!this.mapOpen && !this.building) this.cameras.main.setZoom(Phaser.Math.Clamp(this.cameras.main.zoom * Math.exp(-dy * 0.001), 0.55, 2.2));
+      if (!this.mapOpen && !this.building) {
+        this.zoomAimLock={x:_pointer.x,y:_pointer.y,angle:this.model.player.angle};
+        this.cameras.main.setZoom(Phaser.Math.Clamp(this.cameras.main.zoom * Math.exp(-dy * 0.001), 0.55, 2.2));
+      }
     });
     this.mapCanvas.addEventListener('wheel', event => {
       event.preventDefault();
@@ -381,7 +385,7 @@ class SpaceScene extends Phaser.Scene {
     const boost=Phaser.Input.Keyboard.JustDown(this.keys.SHIFT)||this.commandInput.has('boost');
     const dock = Phaser.Input.Keyboard.JustDown(this.keys.E)||this.commandInput.has('dock');
     const pointer = this.input.activePointer;
-    const aim = flightWorldPoint(this.cameras.main,pointer.x,pointer.y);
+    const aim = this.flightAim(pointer);
     const bounds = this.cameras.main.worldView;
     // Guns and the mining beam answer only to clicks that started on the game view, never on a panel or menu.
     const onGame = !this.netOpen && pointer.downElement === this.game.canvas;
@@ -909,7 +913,7 @@ class SpaceScene extends Phaser.Scene {
     this.model = model; this.building = false; this.mapOpen = false; this.paused = false; this.movingModule = false; this.selectedCell = { x: 0, y: 0 };this.detailMode='module';this.buildCenter={x:0,y:0};
     this.lastBullet = -1; this.builderContent = ''; this.hudElapsed = 100; this.mapElapsed = 200; this.saveElapsed = 0;
     this.baseLabels.forEach((label, i) => label.setPosition(model.bases[i].x, model.bases[i].y - 172));
-    this.follow.setPosition(model.player.x, model.player.y); this.cameras.main.centerOn(model.player.x, model.player.y);
+    this.zoomAimLock=undefined; this.follow.setPosition(model.player.x, model.player.y); this.cameras.main.centerOn(model.player.x, model.player.y);
     this.paintBackdropTextures();
     this.refreshSeedLabel(); this.input.keyboard!.enabled = true;
   }
@@ -948,6 +952,10 @@ class SpaceScene extends Phaser.Scene {
     if(action==='shop'){if(!this.mapOpen&&this.model.atStation&&!this.model.dead)this.building=!this.building;return;}
     if(this.paused||this.building||this.mapOpen||this.model.dead)return;
     if(action==='build')this.toggleBuildMode();else this.commandInput.add(action);
+  }
+  private flightAim(pointer:Phaser.Input.Pointer){
+    if(this.zoomAimLock&&Math.hypot(pointer.x-this.zoomAimLock.x,pointer.y-this.zoomAimLock.y)>.5)this.zoomAimLock=undefined;
+    return zoomAimPoint(flightWorldPoint(this.cameras.main,pointer.x,pointer.y),this.model.player,this.zoomAimLock,pointer.x,pointer.y);
   }
   private renderShipImage(blocks:ShipArtBlock[],heading:number){
     const signature=`${this.model.shipPaint}|${blocks.map(b=>`${b.x},${b.y},${b.kind},${b.level}`).join(';')}`;
@@ -1173,7 +1181,7 @@ class SpaceScene extends Phaser.Scene {
     this.drawBuildPreview(now);
     if (!this.building && !this.paused) {
       const pointer = this.input.activePointer;
-      const aim = flightWorldPoint(this.cameras.main,pointer.x,pointer.y);
+      const aim = this.flightAim(pointer);
       g.lineStyle(1, 0xc2dbe7, 0.7); g.strokeCircle(aim.x, aim.y, 7);
       g.lineBetween(aim.x - 12, aim.y, aim.x - 5, aim.y); g.lineBetween(aim.x + 5, aim.y, aim.x + 12, aim.y);
       g.lineBetween(aim.x, aim.y - 12, aim.x, aim.y - 5); g.lineBetween(aim.x, aim.y + 5, aim.x, aim.y + 12);

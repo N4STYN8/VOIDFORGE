@@ -126,3 +126,5 @@ Damaging an enemy provokes 10 seconds of pursuit of the shooter beyond normal de
 Enemy missiles can be shot down. MISSILE_DEFENSE gives 90 durability (eight L1 autocannon hits) and a 10-unit hit radius. Interception consumes the defensive shot; survivors spark, destroyed missiles create a 38-unit visual explosion and positioned sound, with no loot or damaging splash. Ordinary hostile bullets remain uninterceptable.
 
 Wheel zoom preserves aiming direction; flight camera uses subpixel tracking so fractional zoom does not snap ship layers.
+
+Scrolling flight zoom preserves current ship heading until the mouse moves; zoom itself never commands a turn. Mouse movement immediately resumes normal aiming.

@@ -391,3 +391,11 @@ Compact HUD release: user explicitly requested push live. Origin fetched; HEAD/m
 - No conflicts, pre-existing edits, commits, push or deployment. Next: user visual check of active zoom; changes remain local/uncommitted.
 
 - User authorized live publication: fetched origin, confirmed main unchanged at 1beff1c, reran 290 tests and production build successfully. Publishing the reviewed camera fix via normal fast-forward push and existing Pages deployment; no relay changes.
+
+## Zoom heading reversal — 2026-11-13
+- Clean start; fetched origin, HEAD equals origin/main c0443bf, no pull needed. Created codex/zoom-heading-lock; no upstream selected.
+- Previous distant-cursor test missed near-cursor camera-follow lag: reproduced heading 0 → pi during wheel zoom in WebGL while moving. Kept current-value projection but added a wheel heading lock until actual mouse movement; input and reticle use the same direction. Model switches clear lock. No ship layout/rendering rewrite.
+- Files: src/main.ts, src/flightCamera.ts, tests/flightCamera.test.ts and project docs. 291 tests pass; build passes with existing bundle warning; diff checks clean. Browser moving-flight near-center-cursor wheel test now shows constant heading in Canvas/WebGL; mouse movement releases lock; no page errors.
+- No pre-existing edits or conflicts; uncommitted local changes only, nothing pushed/deployed. Next: user check the near-cursor zoom behavior.
+
+- User authorized live publication: fetched origin and confirmed main unchanged at c0443bf; 291 tests and production build pass. Publishing the reviewed wheel-heading fix via normal fast-forward push and existing Pages workflow; no relay changes.

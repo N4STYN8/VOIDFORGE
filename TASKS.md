@@ -266,3 +266,9 @@ Choices: own Node + WebSocket relay; sector grid; owners keep changes to their s
 - [x] Disable pixel-rounded follow at fractional zoom
 - [x] Check active Canvas/WebGL flight plus projection regressions
 - [ ] User verify zoom behavior on their ship
+
+## Zoom heading reversal
+- [x] Reproduce a 180-degree flip during moving, near-center-cursor zoom
+- [x] Hold heading across wheel zoom; resume normal aim on mouse movement
+- [x] Verify moving Canvas/WebGL zoom, aim release and projection regression
+- [ ] User check on their ship; changes remain local
