@@ -45,7 +45,9 @@ It prints the lobby code; join it from the game's Systems menu, or open
 ## Raspberry Pi (voidforge.2dq.us) — deployed 2026-11-13
 
 The Pi runs Debian 11 with Node 16 (shared with other services, so it was not upgraded). Node 16 cannot
-strip TypeScript, so the relay is bundled into one JavaScript file:
+strip TypeScript, so the relay is bundled into one JavaScript file. Node 16 also lacks `structuredClone`;
+`server/node16.ts` (the first import of `server/main.ts`) supplies it from `v8.serialize`/`deserialize`. Check that
+new server code avoids other Node 17+ APIs.
 
 ```bash
 npm run relay-bundle

@@ -1,3 +1,4 @@
+import './node16.ts';
 import { readFileSync } from 'node:fs';
 import { startRelay, DEFAULT_ORIGINS } from './relay.ts';
 
