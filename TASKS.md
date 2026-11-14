@@ -355,3 +355,10 @@ Choices: own Node + WebSocket relay; sector grid; owners keep changes to their s
 - [x] Radial physical piles, saved uncollectible marker and exclusion from tractors/pickup/normal ore merging
 - [x] Conservation/save regression tests and real browser cancel/confirm/reload/responsive checks
 - [ ] User review of controls/scatter; changes remain local
+
+## Eject moving-click fix
+- [x] Reproduce lost mouse-up click while coasting through HUD refreshes
+- [x] Preserve HUD control DOM identity/focus while updating live readings
+- [x] Verify held moving clicks, keyboard selection, confirmation/reload and responsive layouts
+- [x] Full 389 tests and game/admin builds
+- [ ] User review; local fix awaits publication request

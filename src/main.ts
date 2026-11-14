@@ -11,7 +11,7 @@ import {FACTIONS} from './fleetConfig.ts';
 import Phaser from 'phaser';
 import { GameSettings } from './settings.ts';
 import { moduleDrag } from './moduleDrag.ts';
-import { flightHud } from './hud.ts';
+import { flightHud, updateFlightHud } from './hud.ts';
 import { Cockpit, type CockpitAction } from './cockpit.ts';
 import { outfitterMarkup } from './outfitter.ts';
 import { EffectPool } from './effects.ts';
@@ -490,7 +490,7 @@ class SpaceScene extends Phaser.Scene {
     this.cockpit.update(this.model,aim,this.paused||this.building||this.settings.open,this.buildMode);
     document.body.classList.toggle('cockpit-modal',this.building||this.settings.open);
     const html=flightHud(this.model,{base:destination,direction:this.directionToStation(),zoom:this.cameras.main.zoom,muted:this.audio.muted,effects:this.effects.enabled,detailsOpen:this.hud.querySelector<HTMLDetailsElement>('details')?.open??false});
-    if(html!==this.hudContent){this.hud.innerHTML=html;this.hudContent=html;}
+    if(html!==this.hudContent){updateFlightHud(this.hud,html);this.hudContent=html;}
     // Boss bar: shown while a boss is close enough to matter.
     const boss=this.model.enemies.find(e=>ENEMIES[e.kind??'raider'].boss&&Math.hypot(e.x-p.x,e.y-p.y)<1800);
     let bossHtml='';

@@ -285,3 +285,6 @@ GameModel.deathNotice derives recovery instructions from dead/rebuildDue, indepe
 
 ## Cargo ejection — 2026-11-14
 CARGO_EJECTION in data.ts owns the bounded stack count, radial spread and outward speed. GameModel.ejectCargo transfers only selected carried quantities to personal drops, without RNG calls. Optional persisted Drop.discarded marks intentional jettison as permanently unrecoverable; legacy drops remain collectible. CollectDrop, tractor acquisition/retention and NPC scavenging reject marked drops; releaseOre never merges fresh recoverable minerals into them. The HUD uses delegated per-type eject actions and a stable modal outside its refreshed markup. Confirmation snapshots model/type/quantity, checks the same live model, caps spending to current cargo, and saves through the existing serializer/stores. Stored minerals and relay protocol are unchanged.
+
+## HUD interaction lifetime — 2026-11-14
+Flight HUD updates use updateFlightHud in hud.ts instead of replacing root.innerHTML. Matching nodes receive changed text/attributes in place; additions/removals still follow flightHud markup. This preserves eject button identity and focus through frequent changing speed/position/distance updates, allowing mouse-down and mouse-up to complete on the same control. Event delegation and confirmation behavior remain unchanged.
