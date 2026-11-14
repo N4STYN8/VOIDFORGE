@@ -1,3 +1,4 @@
+import type {CrewClientState,CrewResult} from './crewProtocol.ts';
 import { NET, MATCH, packState, parseServer, roomTag, type CastKind, type ClientMessage, type DirectKind, type LobbySummary, type Member, type PartyKind, type ShipBlock, type ShipState, type WorldRef } from './netProtocol.ts';
 import type { AdminCommand } from './adminProtocol.ts';
 import { ClaimBook } from './shared.ts';
@@ -34,6 +35,17 @@ export type NetStatus = 'offline' | 'connecting' | 'online' | 'error';
 type SocketLike = { readyState: number; send(text: string): void; close(): void; addEventListener(type: string, listener: (event: { data?: unknown }) => void): void };
 
 export class NetClient {
+  crewSupported=false;crewState?:CrewClientState;pilotId?:string;
+  onCrewState:()=>void=()=>{};onCrewIdentity:()=>void=()=>{};
+  private credentialKey='';private credential?:string;
+  private crewParts?:{id:string;total:number;parts:(string|undefined)[];bytes:number;at:number};
+  private crewWaiting=new Map<string,{resolve:(result:CrewResult)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>}>();
+  crewRequest(action:string,data:unknown={},requestId:string=globalThis.crypto?.randomUUID?.()??`crew-${Date.now()}-${Math.random().toString(36).slice(2)}`):Promise<CrewResult>{
+    if(!this.connected||!this.crewSupported||!this.pilotId)return Promise.reject(Error('Crew service is unavailable. Reconnect to a crew-enabled relay.'));
+    const waiting=this.crewWaiting.get(requestId);if(waiting)return Promise.reject(Error('This request is already pending.'));
+    return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{this.crewWaiting.delete(requestId);reject(Error('Crew request timed out; outcome is unknown. Retry with the same request ID.'));},15000);this.crewWaiting.set(requestId,{resolve,reject,timer});if(!this.raw({t:'crew',requestId,action,data})){clearTimeout(timer);this.crewWaiting.delete(requestId);reject(Error('Disconnected; outcome is unknown. Retry with the same request ID.'));}});
+  }
+
   status: NetStatus = 'offline';
   note = '';
   id?: string;
@@ -92,6 +104,7 @@ export class NetClient {
 
   connect(url: string, name: string) {
     this.name = name;
+    try{this.credentialKey=`voidforge.crew.identity:${new URL(url).origin}`;this.credential=localStorage.getItem(this.credentialKey)??undefined;}catch{/* Storage can be unavailable. */}
     if (this.socket && this.status !== 'error' && this.status !== 'offline') return;
     this.status = 'connecting'; this.setNote(`Connecting to ${url}…`);
     let socket: SocketLike;
@@ -236,7 +249,17 @@ export class NetClient {
   receive(raw: string, now = performance.now() / 1000) {
     const m = parseServer(raw); if (!m) return;
     switch (m.t) {
-      case 'welcome': this.id = m.id; this.status = 'online'; this.retryDelay = RECONNECT.first; this.setNote('Online.'); this.askLobbies(); return;
+      case 'welcome': this.id = m.id; this.status = 'online'; this.retryDelay = RECONNECT.first; this.setNote('Online.'); this.askLobbies();this.crewSupported=m.crewProtocol===1;if(this.crewSupported)this.raw({t:'crew-auth',credential:this.credential});this.onCrewState();return;
+      case 'crew-identity': this.pilotId=m.pilotId;this.credential=m.credential;try{localStorage.setItem(this.credentialKey,m.credential);}catch{/* Keep identity in memory when storage is disabled. */}this.onCrewIdentity();return;
+      case 'crew-state-part': {
+        if(m.total<1||m.total>256||m.index<0||m.index>=m.total||m.data.length>9000)return;
+        if(!this.crewParts||this.crewParts.id!==m.transferId||now-this.crewParts.at>30)this.crewParts={id:m.transferId,total:m.total,parts:new Array(m.total),bytes:0,at:now};
+        const transfer=this.crewParts;if(transfer.total!==m.total)return;if(transfer.parts[m.index]===undefined){transfer.parts[m.index]=m.data;transfer.bytes+=new TextEncoder().encode(m.data).length;}
+        if(transfer.bytes>2*1024*1024){this.crewParts=undefined;return;}if(transfer.parts.filter(p=>p!==undefined).length===m.total){this.crewParts=undefined;try{this.receive(JSON.stringify({t:'crew-state',state:JSON.parse(transfer.parts.join(''))}),now);}catch{/* Reject incomplete/invalid snapshots. */}}return;
+      }
+      case 'crew-state': this.crewState=m.state;this.pilotId=m.state.pilotId;this.onCrewState();return;
+      case 'crew-result': {const waiting=this.crewWaiting.get(m.requestId);if(waiting){clearTimeout(waiting.timer);this.crewWaiting.delete(m.requestId);waiting.resolve(m);}return;}
+
       case 'lobbies': {
         // The relay answers requests in order, so this reply belongs to the oldest one still waiting.
         const asked = this.pingAsked.shift(), at = this.clock();
@@ -298,6 +321,7 @@ export class NetClient {
   /** Messages dropped locally because they were too large to send. */
   oversized = 0;
   private dropped(text: string) {
+    this.crewParts=undefined;this.crewSupported=false;this.crewState=undefined;this.pilotId=undefined;for(const [requestId,w]of this.crewWaiting){clearTimeout(w.timer);w.reject(Error('Disconnected; outcome is unknown. Retry with the same request ID.'));}this.crewWaiting.clear();this.onCrewState();
     const had = this.lobby;
     this.status = 'offline'; this.socket = undefined; this.id = undefined; this.lobby = undefined; this.peers.clear(); this.pending = []; this.pingAsked = []; this.lastPing = -Infinity; this.room = undefined; this.claims.clear(); this.profileSent = ''; this.matchWaiting?.(null);
     if (this.keepOnline && text !== 'Offline.') {

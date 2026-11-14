@@ -1,3 +1,4 @@
+import type {CrewPurchaseIntent,CrewEconomyMark} from './crewEconomyTypes.ts';
 import { ECONOMY, LEGACY_PURCHASES, missingMinerals, legacyInvestment, type Minerals } from './economy.ts';
 import { advanceBelt,spinFor,BELT_MOTION } from './beltMotion.ts';
 import { EnemyPopulation,type EnemyPopulationSnapshot } from './enemyPopulation.ts';
@@ -30,7 +31,7 @@ export type Waypoint = Point & { id: number };
 /** The world-bound part of a save (everything that stays behind in a sector when the pilot leaves it). */
 export type SectorWorld = Omit<GameSave, PilotKey | 'galaxy'>;
 /** Pilot-owned save fields: these travel with the ship from sector to sector. */
-export const PILOT_KEYS = ['rebuildDue','player','modules','coreAbility','coreLevel','shield','energy','heat','cargo','stored','kills','deaths','shipName','shipPaint','hangar','ultimateTimers','fabricatorDebt','systemsDisabled','empImmunity','shieldDelay'] as const;
+export const PILOT_KEYS = ['crewEconomyMarks','rebuildDue','player','modules','coreAbility','coreLevel','shield','energy','heat','cargo','stored','kills','deaths','shipName','shipPaint','hangar','ultimateTimers','fabricatorDebt','systemsDisabled','empImmunity','shieldDelay'] as const;
 export type PilotKey = typeof PILOT_KEYS[number];
 /** Where the pilot is on the sector grid, plus the saved state of every other sector they have visited. */
 export type Galaxy = { home: string; x: number; y: number; sectors: Record<string, SectorWorld>;
@@ -182,6 +183,9 @@ export class GameModel {
     return Object.fromEntries((Object.keys(FLEET.cost) as Resource[]).map(ore => [ore, Math.ceil(FLEET.cost[ore] * scale)])) as Record<Resource, number>;
   }
   /** Lobby resource sharing (set by the scene): minerals lobby members currently share from their station deposits. */
+  crewEconomyMarks:CrewEconomyMark[]=[];
+  crewPool:Partial<Record<Resource,number>>={};
+  crewFund?: (intent:CrewPurchaseIntent,shortfall:Partial<Record<Resource,number>>) => void;
   lobbyPool: Partial<Record<Resource, number>> = {};
   /** Minerals this pilot asked its lobby for; the scene sends the request and clears it. */
   borrowRequest?: Partial<Record<Resource, number>>;
@@ -196,11 +200,12 @@ export class GameModel {
   lobbyCanCover(error: string | undefined, cost: Partial<Record<Resource, number>>, have: (ore: Resource) => number = ore => this.stored[ore]) {
     if (!error || !/Not enough|Missing/.test(error)) return false;
     const short = (Object.keys(cost) as Resource[]).map(ore => [ore, Math.max(0, (cost[ore] ?? 0) - have(ore))] as const).filter(([, n]) => n > 0);
-    return short.length > 0 && short.every(([ore, n]) => (this.lobbyPool[ore] ?? 0) >= n);
+    return short.length > 0 && short.every(([ore, n]) => Math.max(this.lobbyPool[ore]??0,this.crewFund?(this.crewPool[ore]??0):0) >= n);
   }
-  private lobbyCover(error: string, cost: Partial<Record<Resource, number>>, have: (ore: Resource) => number, retry: () => boolean): string {
+  private lobbyCover(error: string, cost: Partial<Record<Resource, number>>, have: (ore: Resource) => number, retry: () => boolean, crewIntent?:CrewPurchaseIntent): string {
     if (!/Not enough|Missing/.test(error)) return error;
     const short = (Object.keys(cost) as Resource[]).map(ore => [ore, Math.max(0, (cost[ore] ?? 0) - have(ore))] as const).filter(([, n]) => n > 0);
+    if(crewIntent&&this.crewFund&&short.length&&short.every(([ore,n])=>(this.crewPool[ore]??0)>=n)){this.crewFund(crewIntent,Object.fromEntries(short));return 'Authorizing shared crew funding…';}
     if (!short.length || short.some(([ore, n]) => (this.lobbyPool[ore] ?? 0) < n)) return error;
     if (this.borrowing) return 'Waiting for minerals from your lobby…';
     this.borrowRequest = Object.fromEntries(short); this.borrowing = { retry, until: this.world.time + LOBBY_SHARE.borrowTimeout };
@@ -226,7 +231,7 @@ export class GameModel {
   }
   /** Buys a new hull with the starter loadout and parks it in the hangar. */
   buyShip(): boolean {
-    const error = this.buyShipError(); if (error) { this.message = this.lobbyCover(error, this.shipPrice, ore => this.stored[ore], () => this.buyShip()); return false; }
+    const error = this.buyShipError(); if (error) { this.message = this.lobbyCover(error, this.shipPrice, ore => this.stored[ore], () => this.buyShip(),{kind:'ship',hangar:this.hangar.length}); return false; }
     const price = this.shipPrice; for (const ore of Object.keys(price) as Resource[]) this.stored[ore] -= price[ore];
     const used = new Set([this.shipName, ...this.hangar.map(s => s.name)]); let n = this.fleetSize + 1; while (used.has(`Ship ${n}`)) n++;
     this.hangar.push({ id: this.id++, name: `Ship ${n}`, coreLevel: 1, modules: starterModules(), health: CORE.levels[0].hull ?? 100, paint: this.fleetSize % FLEET.paints.length });
@@ -751,7 +756,7 @@ export class GameModel {
   }
   get chartedAsteroids() { return [...this.world.surveyed.values()]; }
   toSave(): GameSave {
-    return { version: 1, seed: this.seed, population:this.population.snapshot(), world: this.world.snapshot(this.asteroids),
+    return { version: 1, crewEconomyMarks:structuredClone(this.crewEconomyMarks), seed: this.seed, population:this.population.snapshot(), world: this.world.snapshot(this.asteroids),
       ultimateTimers:{...this.ultimateTimers},fabricatorDebt:this.fabricatorDebt,systemsDisabled:this.systemsDisabled,empImmunity:this.empImmunity,player: { ...this.player }, modules: structuredClone(this.modules), coreAbility:{...this.coreAbility},novaFields:structuredClone(this.novaFields), coreLevel: this.coreLevel, shield: this.shield, energy: this.energy, heat: this.heat, empPulses: structuredClone(this.empPulses),
       cargo: { ...this.cargo }, stored: { ...this.stored }, bases: structuredClone(this.bases), explored: [...this.explored],
       enemies: structuredClone(this.enemies), squads: structuredClone(this.squads), drops: structuredClone(this.drops), bullets: structuredClone(this.bullets), detachedModules: structuredClone(this.detachedModules),
@@ -767,6 +772,7 @@ export class GameModel {
     m.systemsDisabled=data.systemsDisabled??0;m.empImmunity=data.empImmunity??0;
     m.player = { ...data.player }; m.modules = structuredClone(data.modules); m.coreLevel = data.coreLevel; m.shield = data.shield; m.energy = Math.max(0,Math.min(data.energy ?? m.maxEnergy,m.maxEnergy)); m.heat = data.heat ?? 0; m.empPulses = structuredClone(data.empPulses ?? []);
     const empty = () => Object.fromEntries((Object.keys(RESOURCES) as Resource[]).map(ore => [ore, 0])) as Record<Resource, number>;
+    m.crewEconomyMarks=Array.isArray(data.crewEconomyMarks)?data.crewEconomyMarks.filter(mark=>mark&&typeof mark.id==='string'&&['debited','applied','refunded'].includes(mark.phase)):[];
     m.cargo = { ...empty(), ...data.cargo }; m.stored = { ...empty(), ...data.stored };
     if ([...Object.values(m.cargo), ...Object.values(m.stored)].some(n => !Number.isFinite(n) || n < 0)) throw new Error('Invalid resource quantities in save.');
     m.bases = structuredClone(data.bases); m.explored = new Set(data.explored);
@@ -873,7 +879,7 @@ export class GameModel {
     const error = this.upgradeError(x, y);
     if (error) {
       const m = this.modules.find(m => m.x === x && m.y === y), core = x === 0 && y === 0;
-      this.message = (m || core) && /Missing/.test(error) ? this.lobbyCover(error, upgradeCost(core ? 'core' : m!.kind, core ? this.coreLevel : m!.level), ore => this.stored[ore], () => this.upgradeModule(x, y)) : error;
+      this.message = (m || core) && /Missing/.test(error) ? this.lobbyCover(error, upgradeCost(core ? 'core' : m!.kind, core ? this.coreLevel : m!.level), ore => this.stored[ore], () => this.upgradeModule(x, y),{kind:'upgrade',module:core?'core':m!.kind,level:core?this.coreLevel:m!.level,x,y}) : error;
       return false;
     }
     const m = this.modules.find(m => m.x === x && m.y === y);
@@ -905,7 +911,7 @@ export class GameModel {
   }
   installModule(kind: ModuleKind, x: number, y: number): boolean {
     const error = this.buildError(kind, x, y);
-    if (error) { this.message = this.lobbyCover(error, MODULES[kind].cost, ore => this.stored[ore], () => this.installModule(kind, x, y)); return false; }
+    if (error) { this.message = this.lobbyCover(error, MODULES[kind].cost, ore => this.stored[ore], () => this.installModule(kind, x, y),{kind:'install',module:kind,x,y}); return false; }
     for (const ore of Object.keys(MODULES[kind].cost) as Resource[]) this.stored[ore] -= MODULES[kind].cost[ore];
     const oldHull = this.maxHealth, oldShield = this.maxShield;
     this.modules.push({ invested:{...MODULES[kind].cost}, x, y, kind, level: 1, cooldown: 0, integrity: MODULE_DURABILITY[kind][0] });
@@ -974,7 +980,7 @@ export class GameModel {
   }
   repairShip(): boolean {
     const damaged=this.player.health<this.maxHealth||this.modules.some(m=>m.integrity<this.moduleMaxIntegrity(m));
-    const error = this.repairError(); if (error) { this.message = this.lobbyCover(error, this.repairCost, ore => this.cargo[ore] + this.stored[ore], () => this.repairShip()); return false; }
+    const error = this.repairError(); if (error) { this.message = this.lobbyCover(error, this.repairCost, ore => this.cargo[ore] + this.stored[ore], () => this.repairShip(),{kind:'repair',hull:Math.max(0,this.maxHealth-this.player.health),integrity:this.modules.reduce((n,m)=>n+Math.max(0,this.moduleMaxIntegrity(m)-m.integrity),0)}); return false; }
     for (const ore of Object.keys(this.repairCost) as Resource[]) {
       const amount = this.repairCost[ore], carried = Math.min(this.cargo[ore], amount);
       this.cargo[ore] -= carried; this.stored[ore] -= amount - carried;
@@ -2271,6 +2277,7 @@ export class GameModel {
 
 
 export type GameSave = {
+  crewEconomyMarks?:CrewEconomyMark[];
   ultimateTimers?:GameModel['ultimateTimers'];fabricatorDebt?:number;systemsDisabled?:number;empImmunity?:number;version: 1; seed: string; population?:EnemyPopulationSnapshot;world: WorldSnapshot; player: GameModel['player']; modules: ShipModule[];
   coreAbility?:AbilityState;novaFields?:GameModel['novaFields'];coreLevel: number; shield: number; energy?:number; heat?:number; empPulses?:GameModel['empPulses']; cargo: Record<Resource, number>; stored: Record<Resource, number>;
   bases: GameModel['bases']; explored: string[]; enemies: Enemy[]; squads: GameModel['squads']; drops: Drop[];

@@ -153,10 +153,10 @@ export class SharedLink {
     };
     net.onDirect = (from, kind, data) => {
       const model = this.current();
-      if (kind === 'hit' && model.shared?.role === 'authority') for (const hit of decodeHits(data)) model.applyRemoteHit(hit.enemyId, hit.damage, from, hit.pierce);
+      if (kind === 'hit' && (model.shared?.role === 'authority' || from === 'crew-server' && this.net.authority)) for (const hit of decodeHits(data)) model.applyRemoteHit(hit.enemyId, hit.damage, from, hit.pierce);
       if (kind === 'loot') model.receiveLoot(decodeLoot(data));
       const name = this.net.peers.get(from)?.name ?? 'another pilot';
-      if (kind === 'pvp-hit') model.applyPvpHit(from, name, decodePvpHit(data), Boolean(this.net.lobby?.members.some(m => m.id === from)));
+      if (kind === 'pvp-hit') model.applyPvpHit(from, name, decodePvpHit(data), Boolean(this.net.lobby?.members.some(m => m.id === from) || this.net.crewState?.crewPeerIds.includes(from)));
       if (kind === 'pvp-loot') model.receivePvpLoot(decodeCargo(data), name);
       if (kind === 'world-req' && model.shared?.role === 'authority') void this.sendWorld(from, model);
       if (kind === 'world') this.receiveChunk(from, data);
@@ -207,7 +207,7 @@ export class SharedLink {
     if (model.shared?.role !== role) { const loot = model.shared?.pvpLoot; model.shared = sharedSector(role, id => net.claims.has(id, this.now)); model.shared.pvpLoot = loot; this.pendingHits.clear(); this.sentEnemies.clear(); this.pendingEnemyShots.length = 0; this.last.enemies = -Infinity; }
     const shared = model.shared!;
     shared.targets = net.poses(now).filter(pose => !pose.dead).map(pose => ({ id: pose.id, x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, radius: pilotRadius(pose.blocks.map(b => [b[1], b[2]])) }));
-    shared.allies = new Set(net.lobby?.members.map(m => m.id) ?? []);
+    shared.allies = new Set([...(net.lobby?.members.map(m => m.id) ?? []), ...(net.crewState?.crewPeerIds ?? [])]);
     shared.selfId = net.id;
     this.collectVisuals(model, now);
     // The authority's copy of this sector: asked for once per authority.

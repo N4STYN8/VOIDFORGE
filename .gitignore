@@ -9,3 +9,7 @@ dist-relay/
 dist-admin/
 bans.json
 bans.json.tmp
+
+
+# Durable local relay identities, credentials and crew ledgers
+data/

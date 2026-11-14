@@ -1,3 +1,6 @@
+import {CrewOutpostClient} from './crewOutposts.ts';
+import {CrewPanel} from './crewPanel.ts';
+import {CrewEconomy} from './crewEconomy.ts';
 import {MUSIC_TRACKS,MUSIC_FALLBACK} from './musicTracks.ts';
 import {musicEncounter,visibleHostileNpcs} from './musicSignals.ts';
 import { flightWorldPoint, zoomAimPoint, type ZoomAimLock } from './flightCamera.ts';
@@ -50,6 +53,9 @@ class SpaceScene extends Phaser.Scene {
   private hudContent='';
   /** Relay connection, lobby state and remote ships. Presentation and transport only; the model stays local. */
   private net = new NetClient();
+  private crewEconomy=new CrewEconomy(this.net,()=>this.model,saveGameConfirmed);
+  private crewOutposts=new CrewOutpostClient(this.net,()=>this.model,saveGameConfirmed);
+  private crewPanel?:CrewPanel;private crewBuild=false;
   private netStarted=false;
   private menuNetworkTransition=false;
   private travelPending = false;
@@ -134,6 +140,19 @@ class SpaceScene extends Phaser.Scene {
     this.cockpit=new Cockpit(this.sessionControls,action=>this.cockpitCommand(action));
     this.sessionControls.querySelector('[data-settings]')!.addEventListener('click',()=>this.settings.show());
     this.setupNetPanel();
+    this.crewPanel=new CrewPanel(this.net,{
+      deposit:async(source,minerals)=>{await this.crewEconomy.deposit(source,minerals);if(this.crewEconomy.pending)throw Error(this.crewEconomy.note);},
+      withdraw:async(target,minerals)=>{await this.crewEconomy.withdraw(target,minerals);if(this.crewEconomy.pending)throw Error(this.crewEconomy.note);},
+      funding:enabled=>{if(enabled!==undefined)this.crewEconomy.setEnabled(enabled);return this.crewEconomy.enabled;},
+      build:enabled=>{if(enabled!==undefined)this.crewBuild=enabled;return this.crewBuild;},
+      outposts:()=>this.crewOutposts.outposts,personal:()=>this.model.outposts,
+      status:()=>[this.crewEconomy.pending?'Resource transfer pending':this.crewEconomy.note,this.crewOutposts.pending?'Outpost transfer pending':this.crewOutposts.note].filter(Boolean).join(' · '),balances:()=>({cargo:this.model.cargo,stored:this.model.stored}),
+      outpost:async(action,id,structure,minerals)=>{if(action==='bank-deposit')return this.crewOutposts.bankDeposit(id,minerals!);if(action==='bank-withdraw')return this.crewOutposts.bankWithdraw(id,minerals!);if(action==='claim-personal'){await this.crewOutposts.claimPersonal(id);if(this.crewOutposts.pending)throw Error(this.crewOutposts.note);return;}if(action==='upgrade')return this.crewOutposts.upgrade(id,structure!);if(action==='repair')return this.crewOutposts.repair(id,structure!);if(action==='transfer-personal'){await this.crewOutposts.transferPersonal(id);if(this.crewOutposts.pending)throw Error(this.crewOutposts.note);return;}if(action==='dock'){if(this.model.cargoUsed>0){await this.crewEconomy.deposit('cargo',{...this.model.cargo});if(this.crewEconomy.pending)throw Error(this.crewEconomy.note);}await this.crewOutposts.dock(id);if(this.crewOutposts.pending)throw Error(this.crewOutposts.note);}},
+    });
+    this.crewPanel.onVisibility=open=>{this.input.keyboard!.resetKeys();this.input.keyboard!.enabled=!open&&!this.menu?.open&&!this.settings.open;if(open)this.input.keyboard!.disableGlobalCapture();else if(!this.menu?.open&&!this.settings.open)this.input.keyboard!.enableGlobalCapture();};
+    this.net.onCrewState=()=>{this.crewPanel?.refresh();this.crewOutposts.frame();};
+    const crewButton=document.createElement('button');crewButton.textContent='Crew';crewButton.dataset.openCrew='true';crewButton.addEventListener('click',()=>{this.setNetOpen(false);this.crewPanel!.show();});this.netPanel.querySelector('header')!.append(crewButton);
+
     this.sessionControls.addEventListener('focusin', event => { if ((event.target as HTMLElement).id === 'seed-input') { this.input.keyboard!.enabled = false; this.input.keyboard!.disableGlobalCapture(); if (!this.multiplayer) this.paused = true; } });
     this.sessionControls.addEventListener('focusout', () => { this.input.keyboard!.enabled = true; this.input.keyboard!.enableGlobalCapture(); });
     this.sessionControls.addEventListener('click', event => {
@@ -150,6 +169,7 @@ class SpaceScene extends Phaser.Scene {
     });
     this.sessionControls.querySelector<HTMLInputElement>('#import-save')!.addEventListener('change', async event => {
       const input = event.target as HTMLInputElement, file = input.files?.[0]; if (!file) return;
+      if((this.crewEconomy.pending||this.crewOutposts.pending)){this.model.message='Resolve the pending crew transfer before importing a save.';input.value='';return;}
       try { const model = GameModel.fromSave(JSON.parse(await file.text())); const backup = backupSavedGame(); this.switchModel(model); void backup.finally(() => saveGame(model, this.saveFailed)); }
       catch { this.model.message = 'That file is not a supported VOIDFORGE save.'; }
       input.value = '';
@@ -195,6 +215,7 @@ class SpaceScene extends Phaser.Scene {
     this.buildPanel.addEventListener('click', event => {
       const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button'); if (!button) return;
       if (button.dataset.structure) { this.buildKind = button.dataset.structure as StructureKind; this.buildSelected = undefined; }
+      if(button.hasAttribute('data-crew-manage')){this.crewPanel?.show();return;}
       const chosen = this.selectedBlock();
       if (button.dataset.block && chosen) { const done = button.dataset.block === 'upgrade' ? this.model.upgradeStructure(chosen.outpost, chosen.structure) : this.model.repairStructure(chosen.outpost, chosen.structure); if (!done) this.audio.play('fail'); }
       if (button.dataset.block === 'deselect') this.buildSelected = undefined;
@@ -348,7 +369,7 @@ class SpaceScene extends Phaser.Scene {
     }, 250);
     this.menu=new MainMenu({
       continue:async()=>{if(!this.sessionStarted){const saved=await loadSavedGame();if(!saved)throw new Error('No valid saved game could be loaded. Start a new voyage or import a backup.');this.switchModel(saved);}this.beginSession();},
-      newGame:async seed=>{const next=seed?new GameModel(seed):new GameModel();if(this.sessionStarted){const error=await saveGameConfirmed(this.model);if(error)throw new Error(error);}if(!await backupSavedGame())throw new Error('Backup failed. Export your current save before starting a new world.');this.switchModel(next);this.beginSession();const error=await saveGameConfirmed(next);if(error)this.model.message=error;},
+      newGame:async seed=>{if((this.crewEconomy.pending||this.crewOutposts.pending))throw Error('Resolve the pending crew transfer before starting another world.');const next=seed?new GameModel(seed):new GameModel();if(this.sessionStarted){const error=await saveGameConfirmed(this.model);if(error)throw new Error(error);}if(!await backupSavedGame())throw new Error('Backup failed. Export your current save before starting a new world.');this.switchModel(next);this.beginSession();const error=await saveGameConfirmed(next);if(error)this.model.message=error;},
       settings:()=>this.settings.show(),
       sound:kind=>{if(kind!=='hover'&&kind!=='open')this.audio.unlock();this.audio.play(({hover:'uiHover',click:'uiClick',warning:'uiWarning',open:'uiOpen',confirm:'uiConfirm',cancel:'uiCancel',launch:'uiLaunch'} as const)[kind]);},
       multiplayer:async()=>{if(!this.sessionStarted){const saved=await loadSavedGame();if(!saved)throw new Error('Start a new voyage first, then open Multiplayer to use its pilot.');this.switchModel(saved);}this.beginSession();this.setNetOpen(true);},
@@ -360,6 +381,7 @@ class SpaceScene extends Phaser.Scene {
   private lastFrameAt = performance.now();
   update(_time: number, delta: number) {
     this.lastFrameAt = performance.now();
+    if(!this.menu?.open){this.crewEconomy.frame();this.crewOutposts.frame();}this.crewPanel?.render();
     if(this.menu?.open){this.audio.updateMusic(delta/1000,{menu:true});return;}
     // No pausing in multiplayer: a pilot who was paused alone resumes when someone else shares the sector.
     if (this.paused && this.multiplayer && !this.confirmingMenu) { this.paused = false; this.model.message = 'Another pilot is here: multiplayer cannot be paused.'; }
@@ -395,15 +417,16 @@ class SpaceScene extends Phaser.Scene {
     // Guns and the mining beam answer only to clicks that started on the game view, never on a panel or menu.
     const onGame = !this.netOpen && pointer.downElement === this.game.canvas;
     if (this.buildMode && !this.paused && !this.settings.open) this.updateBuildMode(aim, pointer);
-    if (!this.paused && !this.building && !this.settings.open) this.model.update(delta / 1000, {
+    if (!this.paused && !this.building && !this.settings.open && !this.crewPanel?.open) this.model.update(delta / 1000, {
       x: Number(this.keys.D.isDown) - Number(this.keys.A.isDown), y: Number(this.keys.S.isDown) - Number(this.keys.W.isDown),
       aim, fire: onGame && !this.buildMode && !(this.mapOpen&&this.mapPointer) && pointer.leftButtonDown(), overclock:Phaser.Input.Keyboard.JustDown(this.keys.C)||this.commandInput.has('overclock'), boost, mine: !this.buildMode && !this.netOpen && ((onGame&&!(this.mapOpen&&this.mapPointer)&&pointer.rightButtonDown()) || this.keys.SPACE.isDown), dock, view: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
     });
     // In multiplayer the Outfitter and Settings do not stop time: the ship keeps flying with hands off the controls.
-    else if (this.multiplayer && !this.paused) this.model.update(delta / 1000, this.idleInput(bounds));
+    else if ((this.multiplayer||this.crewPanel?.open) && !this.paused) this.model.update(delta / 1000, this.idleInput(bounds));
     // performance.now, not the Phaser loop clock: remote samples are stamped with it on arrival.
     this.updateNet(performance.now() / 1000);
     // Crossing a world edge swaps in the neighbouring sector's model; the pilot's ship and cargo travel with it.
+    if(this.model.sectorRequest&&(this.crewEconomy.pending||this.crewOutposts.pending)){this.model.sectorRequest=undefined;this.model.message='Crew transfer pending; wait before crossing the sector border.';}
     if (this.model.sectorRequest && !this.travelPending) {
       const direction = this.model.sectorRequest, step = SECTOR_STEPS[direction], g = this.model.galaxy, key = `${g.x + step.dx},${g.y + step.dy}`; this.model.sectorRequest = undefined;
       const go = (neighbour?: Parameters<typeof travel>[2]) => { try { const next = travel(this.model, direction, neighbour); this.switchModel(next); saveGame(next, this.saveFailed); this.audio.play('collect'); } catch (error) { this.model.message = `Sector travel failed: ${(error as Error).message}`; } };
@@ -654,7 +677,7 @@ class SpaceScene extends Phaser.Scene {
     status.dataset.ping = net.pingMs === undefined ? '' : net.pingMs < 80 ? 'good' : net.pingMs < 160 ? 'fair' : 'poor';
     status.title = 'Round trip from this game to the multiplayer relay and back, measured every few seconds.';
     q<HTMLInputElement>('[data-net-offline]').checked = !net.staysOnline && net.status === 'offline';
-    const allies = new Set(lobby?.members.map(m => m.id) ?? []);
+    const allies = new Set([...(lobby?.members.map(m => m.id) ?? []),...(net.crewState?.crewPeerIds??[])]);
     q('[data-net-lobby]').innerHTML = lobby
       ? `<div class="mp-lobby"><div class="mp-code"><b>${esc(lobby.code)}</b><span>${lobby.open ? 'Open · listed' : 'Private · code only'} · ${lobby.members.length}/${NET.maxLobby}</span></div>
          <ul class="mp-list">${lobby.members.map(m => `<li><span>${esc(m.name)}${m.id === net.id ? ' (you)' : ''}</span><small>${m.host ? 'HOST' : 'MEMBER'}</small></li>`).join('')}</ul>
@@ -689,7 +712,7 @@ class SpaceScene extends Phaser.Scene {
     this.share.frame(this.model, now);
     if (!wasShared && this.model.shared?.targets.some(t => !this.model.shared!.allies.has(t.id))) this.model.message = 'Another pilot is in this sector. Outside station rings they can attack you, and take your cargo.';
     const poses = net.poses(now);
-    const allies = new Set(net.lobby?.members.map(m => m.id) ?? []);
+    const allies = new Set([...(net.lobby?.members.map(m => m.id) ?? []),...(net.crewState?.crewPeerIds??[])]);
     this.model.pilots = poses.filter(pose => !pose.dead).map(pose => ({ x: pose.x, y: pose.y, name: pose.name, hostile: !allies.has(pose.id) }));
     this.peerPoses = poses;
     this.drawPeers(poses);
@@ -729,7 +752,7 @@ class SpaceScene extends Phaser.Scene {
   }
   /** Other pilots' ships from their block layouts, with paint, a name tag and hull percentage. Pooled sprites. */
   private drawPeers(poses: PeerPose[]) {
-    const view = this.cameras.main.worldView, cell = BUILD_GRID.cellSize, allies = new Set(this.net.lobby?.members.map(m => m.id) ?? []); let index = 0, label = 0;
+    const view = this.cameras.main.worldView, cell = BUILD_GRID.cellSize, allies = new Set([...(this.net.lobby?.members.map(m => m.id) ?? []),...(this.net.crewState?.crewPeerIds??[])]); let index = 0, label = 0;
     for (const pose of poses) {
       if (pose.x < view.x - 300 || pose.y < view.y - 300 || pose.x > view.right + 300 || pose.y > view.bottom + 300) continue;
       const cos = Math.cos(pose.angle), sin = Math.sin(pose.angle);
@@ -767,24 +790,26 @@ class SpaceScene extends Phaser.Scene {
     for(const layer of this.backdrop){layer.sprite.setTexture(layer.key);layer.sprite.texture.setFilter(Phaser.Textures.FilterMode.NEAREST);}
   }
   private toggleBuildMode() {
+    if(this.crewBuild&&!this.crewOutposts.available){this.model.message='Connect to your crew to build crew outposts.';return;}
     if (this.buildMode) { this.buildMode = false; return; }
     const error = this.model.buildModeError;
     if (error) { this.model.message = error; this.audio.play('fail'); return; }
     this.buildMode = true; this.buildHeld = ''; this.buildWasDown = true; this.buildSelected = undefined;
-    if (!this.model.outposts.length) this.buildKind = 'outpostCore';
+    if (!(this.crewBuild?this.crewOutposts.outposts:this.model.outposts).length) this.buildKind = 'outpostCore';
     this.model.message = 'Build Mode: pick a block, left click a green cell to build.';
   }
   /** Places blocks under the cursor while the left button is held (one per cell), and leaves Build Mode on right click. */
   private updateBuildMode(aim: { x: number; y: number }, pointer: Phaser.Input.Pointer) {
     const cx = cellOf(aim.x), cy = cellOf(aim.y), down = pointer.leftButtonDown();
-    const existing = structureAt(this.model.outposts, cx, cy);
+    const existing = structureAt(this.crewBuild?this.crewOutposts.outposts:this.model.outposts, cx, cy);
     const placeError = existing ? undefined : this.model.placeError(this.buildKind, cx, cy), funds = this.buildKind === 'outpostCore' ? undefined : outpostFor(this.model.outposts, cx, cy);
-    this.buildHover = !placeError || this.model.lobbyCanCover(placeError, this.model.structureCost(this.buildKind), ore => this.model.buildAvailable(ore, funds)) ? '' : placeError;
+    this.buildHover = this.crewBuild?(this.crewOutposts.placeError(this.buildKind,cx,cy)??''):!placeError || this.model.lobbyCanCover(placeError, this.model.structureCost(this.buildKind), ore => this.model.buildAvailable(ore, funds)) ? '' : placeError;
     if (pointer.rightButtonDown()) { this.buildMode = false; return; }
     // Clicking a built block selects it for upgrade or repair instead of placing.
     if (existing) { if (down && !this.buildWasDown) { this.buildSelected = { outpost: existing.outpost.id, block: existing.structure.id }; this.audio.play('collect'); } this.buildWasDown = down; if (!down) this.buildHeld = ''; return; }
     if (down && this.buildHeld !== `${cx},${cy}` && !(this.buildWasDown && this.buildHeld === '')) {
       this.buildHeld = `${cx},${cy}`;
+      if(this.crewBuild){void this.crewOutposts.place(this.buildKind,cx,cy,this.buildRot).then(()=>{this.model.message='Crew outpost updated.';if(this.buildKind==='outpostCore')this.buildKind='wall';}).catch(error=>{this.model.message=error.message;});this.buildWasDown=down;return;}
       const placed = this.model.placeStructure(this.buildKind, cx, cy, this.buildRot);
       if (!placed && !this.buildWasDown) this.audio.play('fail');
       if (placed && this.buildKind === 'outpostCore') this.buildKind = 'wall';
@@ -793,11 +818,12 @@ class SpaceScene extends Phaser.Scene {
     this.buildWasDown = down;
   }
   private selectedBlock() {
-    const outpost = this.model.outposts.find(o => o.id === this.buildSelected?.outpost), structure = outpost?.structures.find(s => s.id === this.buildSelected?.block);
+    const outpost = (this.crewBuild?this.crewOutposts.outposts:this.model.outposts).find(o => o.id === this.buildSelected?.outpost), structure = outpost?.structures.find(s => s.id === this.buildSelected?.block);
     return outpost && structure ? { outpost, structure } : undefined;
   }
   /** Details and actions for the block selected in Build Mode. */
   private blockDetails(outpost: Outpost, s: Structure) {
+    if(this.crewBuild)return `<h3>Crew-owned: ${STRUCTURES[s.kind].label}</h3><p>Level ${s.level} · ${Math.ceil(s.health)} hull</p><p>Managed by the crew server.</p><button data-crew-manage>Open crew outpost controls</button>`;
     const def = STRUCTURES[s.kind], ability = STRUCTURE_ABILITIES[s.kind], ores = Object.keys(this.model.cargo) as Resource[], turret = turretOf(s), next = { ...s, level: s.level + 1 }, nextTurret = s.level < OUTPOST.maxLevel ? turretOf(next) : undefined;
     const price = (cost: Record<Resource, number>) => ores.filter(ore => cost[ore] > 0).map(ore => `${cost[ore]} ${ore}`).join(' + ') || 'free';
     const arrow = (label: string, now: number, later: number | undefined) => now || later ? `<tr><th>${label}</th><td>${Math.round(now)}</td>${later !== undefined && later !== now ? `<td class="next-value">→ ${Math.round(later)}</td>` : '<td></td>'}</tr>` : '';
@@ -875,7 +901,7 @@ class SpaceScene extends Phaser.Scene {
   private drawOutposts(view: Phaser.Geom.Rectangle, now: number) {
     const g = this.graphics, seen = new Set<number>(), size = OUTPOST.cell; this.turretIndex = 0; this.droneIndex = 0;
     // Another pilot's outposts (shared sector) are drawn the same way, under negative sprite keys so ids never clash.
-    const shown: [Outpost, number][] = [...this.model.outposts.map(o => [o, o.id] as [Outpost, number]), ...this.model.visitorOutposts.map(o => [o, -1 - o.id] as [Outpost, number])];
+    const shown: [Outpost, number][] = [...this.model.outposts.map(o => [o, o.id] as [Outpost, number]), ...this.model.visitorOutposts.map(o => [o, -1 - o.id] as [Outpost, number]),...this.crewOutposts.outposts.map(o=>[o,-1000000000-o.id] as [Outpost,number])];
     for (const [outpost, spriteId] of shown) {
       seen.add(spriteId);
       const b = outpostBounds(outpost), inView = (b.maxX + 1) * size > view.x - 40 && b.minX * size < view.right + 40 && (b.maxY + 1) * size > view.y - 40 && b.minY * size < view.bottom + 40;
@@ -938,7 +964,7 @@ class SpaceScene extends Phaser.Scene {
     const aim = flightWorldPoint(this.cameras.main,this.input.activePointer.x,this.input.activePointer.y), cx = cellOf(aim.x), cy = cellOf(aim.y), size = OUTPOST.cell, ok = !this.buildHover, color = ok ? 0x5dff9a : 0xff4d6d;
     g.lineStyle(1, 0xd9a441, 0.35 + Math.sin(now * 4) * 0.1); g.strokeCircle(p.x, p.y, builder.range);
     this.buildGhost.setTexture(`structure-${this.buildKind}`).setPosition(cellCenter(cx), cellCenter(cy)).setRotation(this.buildRot * Math.PI / 2);
-    const over = Boolean(structureAt(this.model.outposts, cx, cy));
+    const over = Boolean(structureAt(this.crewBuild?this.crewOutposts.outposts:this.model.outposts, cx, cy));
     this.buildGhost.setVisible(!over);
     if (over) { g.lineStyle(1.5, 0xffe9a8, 0.9); g.strokeRect(cx * size, cy * size, size, size); return; }
     g.fillStyle(color, 0.28); g.fillRect(cx * size, cy * size, size, size); g.lineStyle(1.5, color, 0.95); g.strokeRect(cx * size, cy * size, size, size);
@@ -949,6 +975,7 @@ class SpaceScene extends Phaser.Scene {
    * backdrop painted for this seed, so a sync does not cause a visible hitch.
    */
   private switchModel(model: GameModel, sameWorld = false) {
+    if(this.crewEconomy.pending||this.crewOutposts.pending){this.model.message='Resolve the pending crew transfer before changing worlds.';return;}
     sameWorld &&= model.seed === this.model.seed;
     if (sameWorld) for (const cache of this.asteroidCache.values()) cache.verify = true;
     else {
@@ -977,7 +1004,7 @@ class SpaceScene extends Phaser.Scene {
   }
   private disconnectForMenu(){if(this.net.status!=='offline'||this.net.staysOnline){this.menuNetworkTransition=true;try{this.net.goOffline();this.link.frame(this.model,performance.now()/1000);}finally{this.menuNetworkTransition=false;}}this.netStarted=false;}
   private beginSession(){this.scene.setVisible(true);this.sessionStarted=true;if(!this.netStarted){this.netStarted=true;this.startNet();}this.paused=false;this.input.keyboard!.resetKeys();this.input.keyboard!.enabled=true;this.input.keyboard!.enableGlobalCapture();this.commandInput.clear();this.saveElapsed=0;}
-  private openMenu(){this.outfitterWasOpen=false;this.setNetOpen(false);this.disconnectForMenu();this.scene.setVisible(false);this.building=false;this.mapOpen=false;this.buildMode=false;this.builder.hidden=true;this.mapWindow.hidden=true;document.body.classList.remove('chart-open');this.audio.setLoop('mine',0);this.audio.setLoop('tractor',0);this.input.keyboard!.resetKeys();this.input.keyboard!.enabled=false;this.input.keyboard!.disableGlobalCapture();this.menu.show(this.sessionStarted||Boolean(startModel));}
+  private openMenu(){this.crewPanel?.hide();this.outfitterWasOpen=false;this.setNetOpen(false);this.disconnectForMenu();this.scene.setVisible(false);this.building=false;this.mapOpen=false;this.buildMode=false;this.builder.hidden=true;this.mapWindow.hidden=true;document.body.classList.remove('chart-open');this.audio.setLoop('mine',0);this.audio.setLoop('tractor',0);this.input.keyboard!.resetKeys();this.input.keyboard!.enabled=false;this.input.keyboard!.disableGlobalCapture();this.menu.show(this.sessionStarted||Boolean(startModel));}
   private confirmingMenu=false;
   private async returnToMenu(){
     const paused=this.paused;this.paused=true;this.confirmingMenu=true;this.input.keyboard!.enabled=false;this.input.keyboard!.disableGlobalCapture();

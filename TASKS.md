@@ -322,3 +322,22 @@ Choices: own Node + WebSocket relay; sector grid; owners keep changes to their s
 - [x] Resume peaceful song/position after long fights with 2s return fades
 - [x] Test threshold sequence, viewport filtering, real playback, rapid returns, priority and PvP events
 - [ ] Human playtest combat/peaceful transition balance
+
+
+## Persistent crews
+- [x] Persistent identities, crew creation/names/invites/accept/decline/leave and cap10
+- [x] Owner/admin/moderator permissions, ownership transfer, safe disband and immediate revocation
+- [x] Atomic shared wallet, canonical purchase grants, activity log and recoverable personal transfers
+- [x] Server-owned crew outposts, Build Mode, upgrades/repairs/docking/storage, finite mining and defenses
+- [x] Preserve personal outposts; explicit crew transfer and owner reclaim
+- [x] Crew panel, roster/online roles, resource separation and leader-only administration
+- [x] Same-crew friendly-fire protection; protocol compatibility and server persistence
+- [x] Automated concurrency/reconnect/retry/mining tests plus two-browser UI/Build Mode validation
+- [ ] Separately authorized production relay/site deployment with CREW_DATA backup and both developers coordinated
+- [ ] Live two-player crew/outpost acceptance check after deployment
+
+## Crew/admin integration and release
+- [x] Integrate crews on latest Zach main b9aba2d, retaining admin/observer and visual-parity changes
+- [x] Full 382-test suite, game/admin builds, Node-16 relay bundle and integrated two-browser crew checks
+- [ ] Deploy crew-capable relay with persistent CREW_DATA (SSH access needed; coordinate with Zach)
+- [ ] Live crew capability and two-player acceptance check after relay rollout
