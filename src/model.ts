@@ -14,7 +14,7 @@ import type { EffectEvent } from './effectEvents.ts';
 import { edgeDirection, sectorKey, sectorLabel, type SectorDirection } from './sectorGrid.ts';
 import type { SharedSector, SharedShot, SharedTarget, RockState, EnemyRow, BumpRow, PilotShot } from './shared.ts';
 import { collideAsteroid, collide, type Body } from './collisions.ts';
-import { PVP, SECTOR, WORLD, SHIP, WEAPONS, ENEMIES, ENEMY_AI, ENEMY_SPAWN, HORDE, FLEET, WAYPOINTS, OUTPOST, STRUCTURES, STRUCTURE_SPECIAL, DRONES, type StructureKind, DANGER, BOSS, HEARING, type EnemyDefinition, type EnemyWeapon, COLLISION, ORE_COMBAT, PATROL, MODULE_DURABILITY, REPAIR, MODULES, BUILD_GRID, BASES, BASE_RADIUS, EXPLORATION, RESOURCES, type EnemyKind, CORE, ROCKET, WEAPON_TYPES, SHIP_SYSTEMS, VFX, type WeaponKind, equipment, upgradeCost, type EquipmentStats, type EquipmentKind, type ModuleKind, type Resource } from './data.ts';
+import { LOBBY_SHARE, PVP, SECTOR, WORLD, SHIP, WEAPONS, ENEMIES, ENEMY_AI, ENEMY_SPAWN, HORDE, FLEET, WAYPOINTS, OUTPOST, STRUCTURES, STRUCTURE_SPECIAL, DRONES, type StructureKind, DANGER, BOSS, HEARING, type EnemyDefinition, type EnemyWeapon, COLLISION, ORE_COMBAT, PATROL, MODULE_DURABILITY, REPAIR, MODULES, BUILD_GRID, BASES, BASE_RADIUS, EXPLORATION, RESOURCES, type EnemyKind, CORE, ROCKET, WEAPON_TYPES, SHIP_SYSTEMS, VFX, type WeaponKind, equipment, upgradeCost, type EquipmentStats, type EquipmentKind, type ModuleKind, type Resource } from './data.ts';
 export type ShipModule = { invested?:Minerals; x: number; y: number; kind: ModuleKind; level: number; cooldown: number; integrity: number; ability?:AbilityState; targetIds?: number[]; boostRemaining?:number; boostCooldown?:number };
 export type Point = { x: number; y: number };
 /** A ship that is not being flown: everything that belongs to the hull rather than to the pilot. */
@@ -115,6 +115,44 @@ export class GameModel {
     const scale = 1 + this.hangar.length * FLEET.growth;
     return Object.fromEntries((Object.keys(FLEET.cost) as Resource[]).map(ore => [ore, Math.ceil(FLEET.cost[ore] * scale)])) as Record<Resource, number>;
   }
+  /** Lobby resource sharing (set by the scene): minerals lobby members currently share from their station deposits. */
+  lobbyPool: Partial<Record<Resource, number>> = {};
+  /** Minerals this pilot asked its lobby for; the scene sends the request and clears it. */
+  borrowRequest?: Partial<Record<Resource, number>>;
+  private borrowing?: { retry: () => boolean; until: number };
+  get borrowPending() { return Boolean(this.borrowing); }
+  /**
+   * When an action failed only for lack of minerals and the lobby's shared deposits cover the shortfall,
+   * asks the lobby for exactly that and remembers the action, which runs again once the minerals arrive
+   * (`finishBorrow`). Returns the message to show: the original error when the lobby cannot help.
+   */
+  /** True when `error` is only a mineral shortfall that the lobby's shared deposits cover (the UI keeps such actions clickable). */
+  lobbyCanCover(error: string | undefined, cost: Partial<Record<Resource, number>>, have: (ore: Resource) => number = ore => this.stored[ore]) {
+    if (!error || !/Not enough|Missing/.test(error)) return false;
+    const short = (Object.keys(cost) as Resource[]).map(ore => [ore, Math.max(0, (cost[ore] ?? 0) - have(ore))] as const).filter(([, n]) => n > 0);
+    return short.length > 0 && short.every(([ore, n]) => (this.lobbyPool[ore] ?? 0) >= n);
+  }
+  private lobbyCover(error: string, cost: Partial<Record<Resource, number>>, have: (ore: Resource) => number, retry: () => boolean): string {
+    if (!/Not enough|Missing/.test(error)) return error;
+    const short = (Object.keys(cost) as Resource[]).map(ore => [ore, Math.max(0, (cost[ore] ?? 0) - have(ore))] as const).filter(([, n]) => n > 0);
+    if (!short.length || short.some(([ore, n]) => (this.lobbyPool[ore] ?? 0) < n)) return error;
+    if (this.borrowing) return 'Waiting for minerals from your lobby…';
+    this.borrowRequest = Object.fromEntries(short); this.borrowing = { retry, until: this.world.time + LOBBY_SHARE.borrowTimeout };
+    return `Borrowing ${short.map(([ore, n]) => `${n} ${ore}`).join(', ')} from your lobby's shared deposits…`;
+  }
+  /** Minerals a lobby member sent from their deposits: they become this pilot's own station deposits. */
+  receiveLobbyMinerals(minerals: Partial<Record<Resource, number>>, from: string) {
+    const got = (Object.entries(minerals) as [Resource, number][]).filter(([, n]) => n > 0);
+    for (const [ore, n] of got) this.stored[ore] += n;
+    if (got.length) this.message = `Received ${got.map(([ore, n]) => `${n} ${ore}`).join(', ')} from ${from}.`;
+  }
+  /** Every lobby answer for the last request is in: retry the action if it was covered. */
+  finishBorrow(covered: boolean) {
+    const borrowing = this.borrowing; this.borrowing = undefined; if (!borrowing) return;
+    if (covered) borrowing.retry(); else this.message = 'Your lobby could not cover that after all.';
+  }
+  /** Gives up on a lobby request that took too long (the scene may still deliver late minerals as deposits). */
+  private expireBorrow() { if (this.borrowing && this.world.time > this.borrowing.until) { this.borrowing = undefined; this.message = 'No answer from your lobby. Try again.'; } }
   buyShipError(): string | undefined {
     if (this.dead || !this.atStation) return 'Dock at an active station to buy a ship.';
     const price = this.shipPrice, missing = (Object.keys(price) as Resource[]).filter(ore => this.stored[ore] < price[ore]);
@@ -122,7 +160,7 @@ export class GameModel {
   }
   /** Buys a new hull with the starter loadout and parks it in the hangar. */
   buyShip(): boolean {
-    const error = this.buyShipError(); if (error) { this.message = error; return false; }
+    const error = this.buyShipError(); if (error) { this.message = this.lobbyCover(error, this.shipPrice, ore => this.stored[ore], () => this.buyShip()); return false; }
     const price = this.shipPrice; for (const ore of Object.keys(price) as Resource[]) this.stored[ore] -= price[ore];
     const used = new Set([this.shipName, ...this.hangar.map(s => s.name)]); let n = this.fleetSize + 1; while (used.has(`Ship ${n}`)) n++;
     this.hangar.push({ id: this.id++, name: `Ship ${n}`, coreLevel: 1, modules: starterModules(), health: CORE.levels[0].hull ?? 100, paint: this.fleetSize % FLEET.paints.length });
@@ -174,7 +212,7 @@ export class GameModel {
     if (!this.builder) return this.modules.some(m => m.kind === 'builder') ? 'The Build module is disabled. Repair it at a station.' : `Install a Build module (Core level ${OUTPOST.coreLevel}) to construct outposts.`;
     if (this.energy < OUTPOST.energyPerBlock) return 'Not enough energy to run the Build module.';
   }
-  /** Carried-cargo price of a block after the Build module's discount. */
+  /** Price of a block after the Build module's discount (paid by `payBuild`). */
   structureCost(kind: StructureKind): Record<Resource, number> {
     const discount = 1 - (this.builder?.discount ?? 0) / 100, base = STRUCTURES[kind].cost;
     return Object.fromEntries((Object.keys(base) as Resource[]).map(ore => [ore, Math.ceil(base[ore] * discount)])) as Record<Resource, number>;
@@ -196,15 +234,14 @@ export class GameModel {
     } else if (!outpostFor(this.outposts, cx, cy)) {
       return this.outposts.length ? 'Blocks must touch an existing outpost block, inside that outpost\'s construction area.' : 'Place an Outpost Core first.';
     }
-    const price = this.structureCost(kind), missing = (Object.keys(price) as Resource[]).filter(ore => this.cargo[ore] < price[ore]);
-    if (missing.length) return `Not enough carried ${missing.join(' and ')}.`;
+    const missing = this.buildMissing(this.structureCost(kind), kind === 'outpostCore' ? undefined : outpostFor(this.outposts, cx, cy));
+    if (missing.length) return `Not enough ${missing.join(' and ')} (ship cargo, outpost storage and station deposits).`;
   }
-  /** Builds a block from carried cargo. Returns false and sets `message` when it cannot. */
+  /** Builds a block, paying from ship cargo, then that outpost's storage, then station deposits. Returns false and sets `message` when it cannot. */
   placeStructure(kind: StructureKind, cx: number, cy: number, rot = 0): boolean {
-    const error = this.placeError(kind, cx, cy);
-    if (error) { this.message = error; return false; }
-    const price = this.structureCost(kind);
-    for (const ore of Object.keys(price) as Resource[]) this.cargo[ore] -= price[ore];
+    const error = this.placeError(kind, cx, cy), funds = kind === 'outpostCore' ? undefined : outpostFor(this.outposts, cx, cy);
+    if (error) { this.message = this.lobbyCover(error, this.structureCost(kind), ore => this.buildAvailable(ore, funds), () => this.placeStructure(kind, cx, cy, rot)); return false; }
+    this.payBuild(this.structureCost(kind), kind === 'outpostCore' ? undefined : outpostFor(this.outposts, cx, cy));
     this.energy -= OUTPOST.energyPerBlock;
     const structure: Structure = { id: this.id++, kind, cx, cy, rot: ((rot % 4) + 4) % 4, level: 1, health: STRUCTURES[kind].health, progress: 0 };
     let outpost = kind === 'outpostCore' ? undefined : outpostFor(this.outposts, cx, cy);
@@ -280,9 +317,20 @@ export class GameModel {
     if(moved>0)this.sound('cargoLoad');
     return moved;
   }
-  /** Minerals available for outpost work: carried cargo plus that outpost's storage. */
-  private outpostFunds(outpost: Outpost, price: Record<Resource, number>) { const stored = outpost.stored ??= emptyStore(); return (Object.keys(price) as Resource[]).filter(ore => this.cargo[ore] + stored[ore] < price[ore]); }
-  private payOutpost(outpost: Outpost, price: Record<Resource, number>) { const stored = outpost.stored ??= emptyStore(); for (const ore of Object.keys(price) as Resource[]) { const carried = Math.min(this.cargo[ore], price[ore]); this.cargo[ore] -= carried; stored[ore] -= price[ore] - carried; } }
+  /**
+   * Where build work (new blocks, upgrades, repairs) takes minerals from, in the order they are spent:
+   * the ship's cargo, then the outpost's own storage when the work is on an outpost, then minerals
+   * deposited at stations. Minerals only move out of these stores; nothing is created.
+   */
+  private buildSources(outpost?: Outpost): Record<Resource, number>[] { return [this.cargo, ...(outpost ? [outpost.stored ??= emptyStore()] : []), this.stored]; }
+  /** How much of one mineral build work can use here (for the build panel). */
+  buildAvailable(ore: Resource, outpost?: Outpost) { return this.buildSources(outpost).reduce((sum, source) => sum + source[ore], 0); }
+  /** Minerals the stores together cannot cover. */
+  buildMissing(price: Record<Resource, number>, outpost?: Outpost) { return (Object.keys(price) as Resource[]).filter(ore => this.buildAvailable(ore, outpost) < price[ore]); }
+  private payBuild(price: Record<Resource, number>, outpost?: Outpost) {
+    const sources = this.buildSources(outpost);
+    for (const ore of Object.keys(price) as Resource[]) { let left = price[ore]; for (const source of sources) { const take = Math.min(source[ore], left); source[ore] -= take; left -= take; } }
+  }
   /** Price of taking a block from `level` to the next: its build cost times the current level, less any discounts. */
   structureUpgradeCost(outpost: Outpost, s: Structure): Record<Resource, number> {
     const base = STRUCTURES[s.kind].cost, discount = (1 - (this.builder?.discount ?? 0) / 100) * (outpostStats(outpost).fabrication ? 1 - STRUCTURE_SPECIAL.fabrication : 1);
@@ -297,13 +345,13 @@ export class GameModel {
     if (s.level >= OUTPOST.maxLevel) return 'Maximum level.';
     const work = this.outpostWorkError(s); if (work) return work;
     if (s.level >= OUTPOST.stationLevel && !outpostStats(outpost).upgrades) return `Build an Upgrade station to go beyond level ${OUTPOST.stationLevel}.`;
-    const missing = this.outpostFunds(outpost, this.structureUpgradeCost(outpost, s));
-    if (missing.length) return `Not enough ${missing.join(' and ')} (carried plus outpost storage).`;
+    const missing = this.buildMissing(this.structureUpgradeCost(outpost, s), outpost);
+    if (missing.length) return `Not enough ${missing.join(' and ')} (ship cargo, outpost storage and station deposits).`;
   }
-  /** Raises a block one level, paying from carried cargo first and outpost storage second. */
+  /** Raises a block one level, paying from ship cargo, then outpost storage, then station deposits. */
   upgradeStructure(outpost: Outpost, s: Structure): boolean {
-    const error = this.upgradeStructureError(outpost, s); if (error) { this.message = error; return false; }
-    this.payOutpost(outpost, this.structureUpgradeCost(outpost, s));
+    const error = this.upgradeStructureError(outpost, s); if (error) { this.message = this.lobbyCover(error, this.structureUpgradeCost(outpost, s), ore => this.buildAvailable(ore, outpost), () => this.upgradeStructure(outpost, s)); return false; }
+    this.payBuild(this.structureUpgradeCost(outpost, s), outpost);
     const before = maxHealth(s); s.level++; s.health += maxHealth(s) - before; outpost.revision++;
     this.message = `${STRUCTURES[s.kind].label} upgraded to level ${s.level}.`; this.sound(s.level>=5?'upgradeUltimate':'moduleUpgrade', { x: cellCenter(s.cx), y: cellCenter(s.cy) });
     this.spillOutpostOverflow(outpost);
@@ -314,12 +362,12 @@ export class GameModel {
     if (s.progress < 1) return 'Still under construction.';
     if (s.health >= maxHealth(s)) return 'No damage to repair.';
     const work = this.outpostWorkError(s); if (work) return work;
-    if (this.outpostFunds(outpost, this.structureRepairCost(s)).length) return 'Not enough iron (carried plus outpost storage).';
+    if (this.buildMissing(this.structureRepairCost(s), outpost).length) return 'Not enough iron (ship cargo, outpost storage and station deposits).';
   }
   /** Fully repairs one block for iron; never free. */
   repairStructure(outpost: Outpost, s: Structure): boolean {
-    const error = this.repairStructureError(outpost, s); if (error) { this.message = error; return false; }
-    this.payOutpost(outpost, this.structureRepairCost(s)); s.health = maxHealth(s); outpost.revision++;
+    const error = this.repairStructureError(outpost, s); if (error) { this.message = this.lobbyCover(error, this.structureRepairCost(s), ore => this.buildAvailable(ore, outpost), () => this.repairStructure(outpost, s)); return false; }
+    this.payBuild(this.structureRepairCost(s), outpost); s.health = maxHealth(s); outpost.revision++;
     this.message = `${STRUCTURES[s.kind].label} repaired.`; this.sound('repair', { x: cellCenter(s.cx), y: cellCenter(s.cy) });
     return true;
   }
@@ -755,7 +803,11 @@ export class GameModel {
   }
   upgradeModule(x: number, y: number): boolean {
     const error = this.upgradeError(x, y);
-    if (error) { this.message = error; return false; }
+    if (error) {
+      const m = this.modules.find(m => m.x === x && m.y === y), core = x === 0 && y === 0;
+      this.message = (m || core) && /Missing/.test(error) ? this.lobbyCover(error, upgradeCost(core ? 'core' : m!.kind, core ? this.coreLevel : m!.level), ore => this.stored[ore], () => this.upgradeModule(x, y)) : error;
+      return false;
+    }
     const m = this.modules.find(m => m.x === x && m.y === y);
     const core = x === 0 && y === 0, kind: EquipmentKind = core ? 'core' : m!.kind;
     const oldHull = this.maxHealth, oldShield = this.maxShield;
@@ -785,7 +837,7 @@ export class GameModel {
   }
   installModule(kind: ModuleKind, x: number, y: number): boolean {
     const error = this.buildError(kind, x, y);
-    if (error) { this.message = error; return false; }
+    if (error) { this.message = this.lobbyCover(error, MODULES[kind].cost, ore => this.stored[ore], () => this.installModule(kind, x, y)); return false; }
     for (const ore of Object.keys(MODULES[kind].cost) as Resource[]) this.stored[ore] -= MODULES[kind].cost[ore];
     const oldHull = this.maxHealth, oldShield = this.maxShield;
     this.modules.push({ invested:{...MODULES[kind].cost}, x, y, kind, level: 1, cooldown: 0, integrity: MODULE_DURABILITY[kind][0] });
@@ -854,7 +906,7 @@ export class GameModel {
   }
   repairShip(): boolean {
     const damaged=this.player.health<this.maxHealth||this.modules.some(m=>m.integrity<this.moduleMaxIntegrity(m));
-    const error = this.repairError(); if (error) { this.message = error; return false; }
+    const error = this.repairError(); if (error) { this.message = this.lobbyCover(error, this.repairCost, ore => this.cargo[ore] + this.stored[ore], () => this.repairShip()); return false; }
     for (const ore of Object.keys(this.repairCost) as Resource[]) {
       const amount = this.repairCost[ore], carried = Math.min(this.cargo[ore], amount);
       this.cargo[ore] -= carried; this.stored[ore] -= amount - carried;
@@ -934,7 +986,7 @@ export class GameModel {
   }
   unlockBase(): boolean {
     const error = this.unlockError();
-    if (error) { this.message = error; return false; }
+    if (error) { this.message = this.lobbyCover(error, this.nearestBase.cost, ore => this.cargo[ore] + this.stored[ore], () => this.unlockBase()); return false; }
     const base = this.nearestBase;
     for (const ore of Object.keys(base.cost) as Resource[]) {
       const carried = Math.min(this.cargo[ore], base.cost[ore]);
@@ -1515,7 +1567,7 @@ export class GameModel {
     if (this.dead) return;
     dt = Math.min(dt, 0.05);
     this.systemsDisabled=Math.max(0,this.systemsDisabled-dt);this.empImmunity=Math.max(0,this.empImmunity-dt);
-    this.world.advance(dt);
+    this.world.advance(dt); this.expireBorrow();
     tick(this.coreAbility,dt);for(const key of Object.keys(this.ultimateTimers) as (keyof typeof this.ultimateTimers)[])this.ultimateTimers[key]=Math.max(0,this.ultimateTimers[key]-dt);
     for(const m of this.modules)if(m.level>=5){const a=state(m);tick(a,dt);if(m.kind==='cannon')a.sustained=input.fire&&!this.atStation?a.sustained+dt:0;}
     if(input.overclock&&this.coreLevel>=5&&this.coreAbility.cooldown<=0&&this.operate(SPECIAL.core.power,SPECIAL.core.heat)){

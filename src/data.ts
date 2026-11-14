@@ -342,6 +342,12 @@ for(const durability of Object.values(MODULE_DURABILITY))durability.push(Math.ro
  * `damageCap` limits damage per second accepted from one attacker; `creditWindow` is how long a hit still
  * counts as the kill.
  */
+/**
+ * Lobby resource sharing (opt-in per player): members announce the station deposits they share every
+ * `poolInterval` seconds (an announcement older than `poolTtl` is ignored), and a borrow request that gets
+ * no full answer within `borrowTimeout` seconds of game time is given up.
+ */
+export const LOBBY_SHARE = { poolInterval: 2, poolTtl: 8, borrowTimeout: 15 };
 export const PVP = { damageCap: 600, creditWindow: 12, rebuildPerCore: { iron: 30, copper: 18 }, rebuildRare: { crystal: 4 } };
 /** Sector grid: `matchChance` is how often a never-visited cell asks the relay for a matched pilot's sector while online. Flying into a world edge for `hold` seconds moves the ship to the next sector, `entryInset` units inside its opposite edge. `bound` matches the ship clamp. */
 export const SECTOR = { bound: 20, edge: 40, hold: 1.5, entryInset: 320, clearance: 45, slide: 90, matchChance: 0.5 };

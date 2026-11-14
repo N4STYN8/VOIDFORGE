@@ -48,6 +48,8 @@ export type ClientMessage =
   | { t: 'open'; open: boolean }
   /** Asks for the open lobby list and the online pilot count. */
   | { t: 'lobbies' }
+  /** Lobby-wide data, wherever the members are: to one member (`to`) or all the others. */
+  | { t: 'party'; to?: string; k: PartyKind; d: unknown }
   | { t: 'leave' }
   | { t: 'sector'; world: WorldRef; owner?: boolean }
   | { t: 'state'; s: ShipState }
@@ -66,6 +68,9 @@ export type ServerMessage =
   | { t: 'welcome'; id: string }
   | { t: 'lobby'; code: string; host: string; members: Member[]; world: WorldRef | null; open?: boolean }
   | { t: 'lobbies'; online: number; list: LobbySummary[] }
+  | { t: 'party'; from: string; k: PartyKind; d: unknown }
+  /** A `party` message to a pilot who is no longer in the sender's lobby. */
+  | { t: 'party-undelivered'; to: string; k: PartyKind }
   | { t: 'left-lobby'; reason: string }
   /** `name` rides only on updates that carry the block layout (every couple of seconds), to keep frames small. */
   | { t: 'state'; id: string; name?: string; r: string; s: ShipState }
@@ -85,6 +90,9 @@ export const MATCH = { maxRatio: 1.75, wait: 1500 };
 export type CastKind = 'rocks' | 'enemies' | 'shots' | 'pvp' | 'fx';
 /** `world-req` asks the sector authority for its copy of the sector; `world` carries it back in chunks. */
 export type DirectKind = 'hit' | 'loot' | 'pvp-hit' | 'pvp-loot' | 'world-req' | 'world';
+/** Lobby resource sharing: `pool` announces shared deposits, `take` asks a member for minerals, `give` sends them (or declines with none). */
+export type PartyKind = 'pool' | 'take' | 'give';
+const PARTY: readonly string[] = ['pool', 'take', 'give'];
 const CASTS: readonly string[] = ['rocks', 'enemies', 'shots', 'pvp', 'fx'], DIRECTS: readonly string[] = ['hit', 'loot', 'pvp-hit', 'pvp-loot', 'world-req', 'world'];
 /** Most rock ids one claim message may ask for, and how long a lease lasts (milliseconds). */
 export const CLAIMS = { batch: 16, lease: 2500 };
@@ -141,6 +149,7 @@ export function parseClient(raw: string): ClientMessage | undefined {
     case 'create': return { t: 'create', open: m.open === true || undefined };
     case 'open': return typeof m.open === 'boolean' ? { t: 'open', open: m.open } : undefined;
     case 'lobbies': return { t: 'lobbies' };
+    case 'party': return typeof m.k === 'string' && PARTY.includes(m.k) && (m.to === undefined || typeof m.to === 'string') && m.d !== undefined ? { t: 'party', to: m.to as string | undefined, k: m.k as PartyKind, d: m.d } : undefined;
     case 'leave': return { t: 'leave' };
     case 'join': return typeof m.code === 'string' ? { t: 'join', code: normalizeCode(m.code) } : undefined;
     case 'sector': { const world = readWorld(m.world); return world && { t: 'sector', world, owner: m.owner === true || undefined }; }
@@ -175,6 +184,8 @@ export function parseServer(raw: string): ServerMessage | undefined {
       const members = (m.members as Member[]).filter(p => p && typeof p.id === 'string' && typeof p.name === 'string').map(p => ({ id: p.id, name: cleanName(p.name), host: Boolean(p.host) }));
       return { t: 'lobby', code: m.code, host: m.host, members, world: m.world === null ? null : readWorld(m.world) ?? null, open: m.open === true || undefined };
     }
+    case 'party': return typeof m.from === 'string' && typeof m.k === 'string' && PARTY.includes(m.k) ? { t: 'party', from: m.from, k: m.k as PartyKind, d: m.d } : undefined;
+    case 'party-undelivered': return typeof m.to === 'string' && typeof m.k === 'string' && PARTY.includes(m.k) ? { t: 'party-undelivered', to: m.to, k: m.k as PartyKind } : undefined;
     case 'lobbies': {
       if (!Number.isInteger(m.online) || !Array.isArray(m.list)) return;
       const list = (m.list as LobbySummary[]).slice(0, 100).filter(l => l && typeof l.code === 'string' && typeof l.host === 'string' && Number.isInteger(l.members)).map(l => ({ code: normalizeCode(l.code), host: cleanName(l.host), members: l.members, power: finite(l.power) ? l.power : undefined }));

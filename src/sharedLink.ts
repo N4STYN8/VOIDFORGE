@@ -1,7 +1,7 @@
 import { pilotRadius, type GameModel, type SectorWorld } from './model.ts';
 import type { NetClient } from './net.ts';
 import { NET } from './netProtocol.ts';
-import { sharedSector, encodeRock, encodeEnemies, encodeBump, encodePilotShot, decodeRocks, decodeEnemies, decodeShots, decodeHits, decodeLoot, decodePvpHit, decodeCargo, decodeBumps, decodePilotShots, type SharedHit } from './shared.ts';
+import { sharedSector, encodeRock, encodeEnemies, encodeBump, encodePilotShot, encodeLook, decodeRocks, decodeEnemies, decodeShots, decodeHits, decodeLoot, decodePvpHit, decodeCargo, decodeBumps, decodePilotShots, decodeLook, type PilotLook, type SharedHit } from './shared.ts';
 import { sectorWorld } from './sectors.ts';
 import { packWorld, unpackWorld, WORLD_CHUNK } from './worldTransfer.ts';
 
@@ -16,7 +16,9 @@ const WORLD_RETRY = 6;
 /** Rough size budget for one fx message, well under NET.maxMessage. */
 const FX_BUDGET = NET.maxMessage - 3500;
 
-type Fx = { p?: unknown[]; b?: unknown[]; r?: unknown[]; e?: unknown[]; c?: number };
+type Fx = { p?: unknown[]; b?: unknown[]; r?: unknown[]; e?: unknown[]; c?: number; l?: unknown };
+/** A pilot's look (shield, beams) is dropped this many seconds after their last fx message. */
+const LOOK_TTL = 0.4;
 
 /**
  * Connects a GameModel to the relay while a sector is shared. Call `frame` once per frame after the model
@@ -45,6 +47,9 @@ export class SharedLink {
   private asked = { key: '', at: -Infinity };
   private incoming = new Map<string, { n: number; parts: string[]; got: number }>();
   private outgoing: { to: string; id: string; i: number; n: number; data: string }[] = [];
+  private looks = new Map<string, { at: number; look: PilotLook }>();
+  /** Another pilot's current shield and beams, if they sent them recently. */
+  look(id: string): PilotLook | undefined { const entry = this.looks.get(id); return entry && this.now - entry.at <= LOOK_TTL ? entry.look : undefined; }
   /** Set by the scene: replaces the model with one built on the authority's copy of the sector. */
   onWorld: (world: SectorWorld) => void = () => {};
   constructor(net: NetClient, current: () => GameModel) {
@@ -53,6 +58,7 @@ export class SharedLink {
       const model = this.current(), shared = model.shared;
       if (kind === 'fx' && data && typeof data === 'object') {
         const fx = data as Fx;
+        const look = decodeLook(fx.l); if (look) this.looks.set(_from, { at: this.now, look });
         model.applyPilotShots(decodePilotShots(fx.p));
         model.applyBumps(decodeBumps(fx.b));
         for (const rock of decodeRocks(fx.r)) model.applyRock(rock);
@@ -111,7 +117,7 @@ export class SharedLink {
     const net = this.net;
     if (!net.sharing || !net.room) {
       if (model.shared) { if (model.shared.pvpLoot && !model.shared.pvpLoot.sent) model.returnPvpLoot(); model.shared = undefined; this.pendingHits.clear(); this.pendingPvp.clear(); }
-      model.visitorOutposts = [];
+      model.visitorOutposts = []; this.looks.clear();
       this.outgoing.length = 0; this.incoming.clear(); this.synced = '';
       return;
     }
@@ -169,6 +175,8 @@ export class SharedLink {
   private sendFx(model: GameModel, authority: boolean) {
     const shared = model.shared!, fx: Fx = {};
     if (this.pendingShots.length) fx.p = this.pendingShots.splice(0);
+    const look = model.dead ? undefined : encodeLook(model.player, model.shield, model.maxShield, model.miningLinks, model.tractorLinks);
+    if (look) fx.l = look;
     if (shared.bumpedRocks.size) {
       const byId = new Map(model.asteroids.map(a => [a.id, a]));
       fx.b = [...shared.bumpedRocks].slice(0, 48).flatMap(id => { const a = byId.get(id); return a && !shared.changedRocks.has(id) ? [encodeBump(a)] : []; });
@@ -192,6 +200,6 @@ export class SharedLink {
       }
       fx.r = rocks;
     }
-    if (fx.p || fx.b?.length || fx.r?.length || fx.e?.length || fx.c !== undefined) this.net.cast('fx', fx);
+    if (fx.p || fx.b?.length || fx.r?.length || fx.e?.length || fx.c !== undefined || fx.l) this.net.cast('fx', fx);
   }
 }

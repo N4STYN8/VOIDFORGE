@@ -145,6 +145,15 @@ export function startRelay(options: RelayOptions = {}): Promise<Relay> {
         if (target) send(target, { t: 'direct', from: c.id, r: roomTag(c.room), k: m.k, d: m.d }); else send(c, { t: 'undelivered', to: m.to, k: m.k });
         return;
       }
+      case 'party': {
+        // Lobby-wide messages reach members in any sector; the relay never looks inside them.
+        const lobby = c.lobby;
+        if (!lobby) { if (m.to) send(c, { t: 'party-undelivered', to: m.to, k: m.k }); return; }
+        const out: ServerMessage = { t: 'party', from: c.id, k: m.k, d: m.d };
+        if (m.to) { const target = [...lobby.members].find(other => other.id === m.to && other !== c); if (target) send(target, out); else send(c, { t: 'party-undelivered', to: m.to, k: m.k }); }
+        else for (const other of lobby.members) if (other !== c) send(other, out);
+        return;
+      }
       case 'claim': {
         const room = c.room ? rooms.get(c.room) : undefined; if (!room) return;
         const now = Date.now(), ok: number[] = [], denied: number[] = [];

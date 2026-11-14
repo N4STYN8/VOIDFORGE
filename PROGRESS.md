@@ -330,6 +330,22 @@ Compact HUD release: user explicitly requested push live. Origin fetched; HEAD/m
 - Git: branch claude/mmo-fixes from main after PR #5 merged; merged later main (menu, compact HUD), one import conflict resolved. The relay on the Pi still runs the previous version.
 - Next: redeploy the relay on the Pi (approval needed), then merge this PR so the live site uses it; play-test with two people.
 
+## Multiplayer play-test round 2 — 2026-11-13
+- User report: no remote tractor/mining beams, pilots vanish when paused, shields not visible, guns fire while using menus; rule: no pausing in multiplayer.
+- Built: pilot looks in fx (shield, mining and tractor beams) drawn on remote ships; no pause in multiplayer (Esc, blur and seed typing do not pause; Outfitter/Settings keep simulating hands-off; frame-stall timer keeps simulating and sending); fire/mine only from presses on the game canvas; relay bot `--mine` and auto-respawn for checks.
+- Validation: 263 tests and build pass. Browser (Chrome, local relay, mining bot host): remote mining beam visible on the guest, Esc refuses to pause and a forced pause is undone, holding on a panel button fires nothing while holding on the game fires, frame loop stopped for 5 s still sent 8 ship updates and advanced the simulation 3.8 s. QA saves restored. No relay change needed.
+- Git: new branch claude/mmo-polish after PR #6 merged. Next: two-person play-test of beams, shields and the no-pause rule.
+
+## Build mode pays from deposits — 2026-11-13
+- User request: build mode only used ship cargo; it should also use deposited minerals. New blocks, upgrades and repairs now pay from ship cargo, then the outpost's storage, then station deposits; the build panel shows all three and marks affordability from their total.
+- Validation: 264 tests (new payment-order and conservation test) and build pass; browser: panel lists ship cargo and station deposits, an Outpost Core was paid 2 iron from cargo and the rest from deposits. QA save restored. Local and uncommitted.
+
+## Lobby resource sharing — 2026-11-13
+- User request: share resources in a lobby when a setting is on. Decisions via questions: station deposits only, each player opts in.
+- Built: relay `party` messages (lobby-wide, any sector); `LobbyShare` pool announcements and borrow/give with refunds; model `lobbyCover` on every deposit-spending action with automatic retry; Multiplayer panel switch and pool line; UI keeps lobby-coverable actions clickable; relay bot `--share`.
+- Validation: 268 tests (new: amounts, shortfall-only borrowing and retry, relay round trip with exact conservation and opt-out, refund when the borrower left) and build pass. Browser with a sharing bot: pool shown in the panel; with empty ship and deposits an Outpost Core borrowed 240 iron/120 copper/30 crystal and built itself; the bot's pool dropped by exactly that. QA save restored.
+- Needs the relay redeployed on the Pi before it works live (new `party` message). Local and uncommitted.
+
 ## Industrial audio upgrade / authorized release — 2026-11-13
 - Highest-priority fix: successful mineral unloads now queue actual transferred quantity and play clamp/rattle/confirmation layers; full/large holds use deeper texture. Covers Forge E, partial/full outpost deposits and automatic fleet unload; no success cue for empty/failed transfers. No resource/cost changes.
 - Added persistent action audio for outfitter/build/repair, aggregated metallic pickups, continuous mining crackle, progressive weapon weight/ultimate release, energy/heat/shield warnings, paid L5 activations, respawn/rebuild and specific menu transitions. Existing music/settings are preserved. Full audit in AUDIO_AUDIT.md.

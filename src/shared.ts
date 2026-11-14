@@ -85,6 +85,32 @@ export function decodePilotShots(d: unknown): PilotShot[] {
   return d.slice(0, 64).filter((s): s is PilotShot => s && [s.x, s.y, s.vx, s.vy, s.life].every(num) && s.life > 0 && s.life < 20 && (s.weapon === undefined || typeof s.weapon === 'string') && (s.level === undefined || Number.isInteger(s.level)));
 }
 
+/**
+ * How another pilot's ship looks right now beyond its hull: shield charge and active mining/tractor beams.
+ * A beam row is the source's offset from the ship centre, the target point, the module level and target id;
+ * receivers draw it from their interpolated view of that ship, so the beam stays attached to it.
+ */
+export type BeamRow = [dx: number, dy: number, tx: number, ty: number, level: number, target: number];
+export type PilotLook = { s?: [shield: number, max: number]; m?: BeamRow[]; t?: BeamRow[] };
+type Link = { from: { x: number; y: number }; to: { x: number; y: number }; level: number; targetId: number };
+export function encodeLook(ship: { x: number; y: number }, shield: number, maxShield: number, mining: Link[], tractor: Link[]): PilotLook | undefined {
+  const row = (l: Link): BeamRow => [round(l.from.x - ship.x), round(l.from.y - ship.y), round(l.to.x), round(l.to.y), l.level, l.targetId];
+  const look: PilotLook = {};
+  if (maxShield > 0 && shield > 0) look.s = [Math.round(shield), Math.round(maxShield)];
+  if (mining.length) look.m = mining.slice(0, 12).map(row);
+  if (tractor.length) look.t = tractor.slice(0, 12).map(row);
+  return look.s || look.m || look.t ? look : undefined;
+}
+export function decodeLook(d: unknown): PilotLook | undefined {
+  if (!d || typeof d !== 'object') return;
+  const v = d as Record<string, unknown>, look: PilotLook = {};
+  const beams = (b: unknown) => Array.isArray(b) ? b.slice(0, 12).filter((r): r is BeamRow => Array.isArray(r) && r.length === 6 && r.every(num) && Math.abs(r[0]) < 400 && Math.abs(r[1]) < 400 && Number.isInteger(r[4]) && r[4] >= 1 && r[4] <= 5) : undefined;
+  if (Array.isArray(v.s) && v.s.length === 2 && v.s.every(num) && (v.s[1] as number) > 0) look.s = [Math.max(0, Math.min(v.s[0] as number, v.s[1] as number)), v.s[1] as number];
+  const m = beams(v.m), t = beams(v.t);
+  if (m?.length) look.m = m; if (t?.length) look.t = t;
+  return look;
+}
+
 export function decodeShots(d: unknown): SharedShot[] {
   if (!Array.isArray(d)) return [];
   return d.slice(0, 64).filter((s): s is SharedShot => s && (s.beam === true ? [s.x, s.y, s.ex, s.ey, s.damage].every(num) : [s.x, s.y, s.vx, s.vy, s.life, s.damage].every(num) && s.life > 0 && s.life < 20))
