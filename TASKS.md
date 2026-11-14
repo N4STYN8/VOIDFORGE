@@ -2,7 +2,9 @@
 
 ## Shared outposts — built, needs play
 - [x] Live outpost sharing between pilots in a sector (blocks, progress, damage, shield, removal)
-- [ ] Show other pilots' turret aim/fire and drones if wanted
+- [x] Show other pilots' outpost drones in flight (visual only)
+- [x] Visual parity: explosions, arcs, shield flashes, EMP/plasma areas, turret shots and aim, engine flames/trails, remote shot hits, pilot destruction
+- [ ] Play-test two pilots fighting together and check what still looks different
 - [ ] Play-test two players building in one sector
 
 ## Multiplayer latency — built, needs internet play

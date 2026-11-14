@@ -1,8 +1,9 @@
 import { pilotRadius, type GameModel, type SectorWorld } from './model.ts';
 import { BUDGET, type NetClient } from './net.ts';
+import { OUTPOST } from './data.ts';
 import { NET } from './netProtocol.ts';
 import { outpostStats, type Outpost } from './outposts.ts';
-import { sharedSector, encodeOutpost, decodeOutpostPart, outpostFromParts, type OutpostPart, encodeRock, encodeEnemies, encodeBump, encodePilotShot, encodeLook, decodeRocks, decodeEnemies, decodeIds, decodeShots, decodeHits, decodeLoot, decodePvpHit, decodeCargo, decodeBumps, decodePilotShots, decodeLook, type PilotLook, type PilotShot, type SharedHit, type SharedShot } from './shared.ts';
+import { sharedSector, encodeOutpost, decodeOutpostPart, outpostFromParts, encodeDrones, decodeDrones, encodeVisual, decodeVisuals, decodeTurrets, type RemoteVisual, type TurretRow, type DroneRow, type OutpostPart, encodeRock, encodeEnemies, encodeBump, encodePilotShot, encodeLook, decodeRocks, decodeEnemies, decodeIds, decodeShots, decodeHits, decodeLoot, decodePvpHit, decodeCargo, decodeBumps, decodePilotShots, decodeLook, type PilotLook, type PilotShot, type SharedHit, type SharedShot } from './shared.ts';
 import { sectorWorld } from './sectors.ts';
 import { packWorld, unpackWorld, WORLD_CHUNK } from './worldTransfer.ts';
 
@@ -37,7 +38,11 @@ const FX_BUDGET = NET.maxMessage - 3500;
  * age `a`), c clock, n enemy rows (f = 1 when the list is complete), x removed enemy ids. q is the sender's round
  * trip to the relay in milliseconds (about once a second), so receivers can estimate the delay from sender to them.
  */
-type Fx = { p?: unknown[]; b?: unknown[]; r?: unknown[]; e?: unknown[]; c?: number; l?: unknown; n?: unknown[]; f?: 1; x?: number[]; q?: number; /** One part of one of the sender's outposts, and the ids of all its outposts here. */ o?: unknown; O?: unknown };
+type Fx = { p?: unknown[]; b?: unknown[]; r?: unknown[]; e?: unknown[]; c?: number; l?: unknown; n?: unknown[]; f?: 1; x?: number[]; q?: number; /** One part of one of the sender's outposts, and the ids of all its outposts here. */ o?: unknown; O?: unknown; /** The sender's outpost drones in flight near another pilot (an empty list clears them). */ d?: unknown; /** Visual effects (explosions, arcs, EMP pulses...) and turret head angles, display only. */ v?: unknown[]; t?: unknown[] };
+/** A drawn copy of another pilot's drone and the pose it is easing toward. */
+type VisitorDrone = { drone: { id: number; hangar: number; x: number; y: number; angle: number; state: 'outbound'; load: number; timer: number; beam?: { x: number; y: number } }; goal: DroneRow };
+/** Other pilots' drones ease toward their last reported pose at this rate (per second), and vanish after `ttl` seconds without a report. */
+const DRONE_VIEW = { ease: 12, ttl: 1 };
 type VisitorOutpost = { parts: (OutpostPart | undefined)[]; revision: number; outpost?: Outpost; at: number };
 /** A pilot's look (shield, beams) is dropped this many seconds after their last fx message. */
 const LOOK_TTL = 0.4;
@@ -74,6 +79,16 @@ export class SharedLink {
   private visitorsDirty = false;
   private visitorModel?: GameModel;
   private adoptedUntil = -Infinity;
+  /** Other pilots' drones in flight: pilot id -> "outpost:drone" -> drawn copy; when each pilot last reported. */
+  private visitorDrones = new Map<string, { at: number; drones: Map<string, VisitorDrone> }>();
+  private dronesSent = false;
+  /** Own visual effects waiting for the next fx, the EMP pulses and plasma fields already sent, and turret angles last sent. */
+  private pendingVisuals: RemoteVisual[] = [];
+  private sentAreas = new WeakSet<object>();
+  private turretSent = new Map<string, number>();
+  /** Which other pilots were last seen destroyed, so their destruction is shown once. */
+  private peerDead = new Map<string, boolean>();
+  private lastDroneFrame = -Infinity;
   /** True once any live outpost message has arrived in this shared sector (then it, not an adopted copy, decides). */
   private outpostsHeard = false;
   private pendingHits = new Map<number, SharedHit>();
@@ -114,8 +129,11 @@ export class SharedLink {
         if (typeof fx.q === 'number' && Number.isFinite(fx.q) && fx.q >= 0) this.peerRtt.set(_from, Math.min(2, fx.q / 1000));
         const shots = decodePilotShots(fx.p);
         // Launched from where this pilot draws the shooter's ship, so they leave its visible guns.
-        if (shots.length) model.applyPilotShots(shots, this.net.pose(_from, this.net.clock()));
+        if (shots.length) model.applyPilotShots(shots, this.net.pose(_from, this.net.clock()), _from);
         if (fx.o !== undefined || fx.O !== undefined) this.receiveOutposts(_from, fx);
+        if (fx.d !== undefined) this.receiveDrones(_from, decodeDrones(fx.d));
+        if (fx.v) model.applyRemoteVisuals(decodeVisuals(fx.v));
+        if (fx.t) this.receiveTurrets(_from, decodeTurrets(fx.t));
         model.applyBumps(decodeBumps(fx.b));
         for (const rock of decodeRocks(fx.r)) model.applyRock(rock);
         if (shared?.role === 'follower' && _from === this.net.room?.authority) {
@@ -142,7 +160,7 @@ export class SharedLink {
       if (kind === 'world') this.receiveChunk(from, data);
     };
     // The killer left before their salvage arrived: it goes back to the wreck instead of vanishing.
-    net.onGone = id => { if (this.visitors.delete(id)) this.visitorsDirty = true; };
+    net.onGone = id => { if (this.visitors.delete(id)) this.visitorsDirty = true; this.visitorDrones.delete(id); };
     net.onUndelivered = (to, kind) => { if (kind === 'pvp-loot') this.current().returnPvpLoot(); if (kind === 'world-req') this.asked.at = -Infinity; if (kind === 'world') this.outgoing = this.outgoing.filter(c => c.to !== to); };
   }
   /** Authority: packs this sector and queues it for one pilot. */
@@ -178,7 +196,7 @@ export class SharedLink {
     if (!net.sharing || !net.room) {
       if (model.shared) { if (model.shared.pvpLoot && !model.shared.pvpLoot.sent) model.returnPvpLoot(); model.shared = undefined; this.pendingHits.clear(); this.pendingPvp.clear(); }
       model.visitorOutposts = []; this.looks.clear(); this.peerRtt.clear(); this.sentEnemies.clear(); this.pendingEnemyShots.length = 0;
-      this.visitors.clear(); this.outpostSent.clear(); this.outpostQueue.length = 0; this.outpostAudience = ''; this.visitorModel = undefined; this.outpostsHeard = false;
+      this.visitors.clear(); this.outpostSent.clear(); this.outpostQueue.length = 0; this.outpostAudience = ''; this.visitorModel = undefined; this.outpostsHeard = false; this.visitorDrones.clear(); this.dronesSent = false; this.pendingVisuals.length = 0; this.turretSent.clear(); this.peerDead.clear();
       this.outgoing.length = 0; this.incoming.clear(); this.synced = '';
       return;
     }
@@ -187,6 +205,8 @@ export class SharedLink {
     const shared = model.shared!;
     shared.targets = net.poses(now).filter(pose => !pose.dead).map(pose => ({ id: pose.id, x: pose.x, y: pose.y, vx: pose.vx, vy: pose.vy, radius: pilotRadius(pose.blocks.map(b => [b[1], b[2]])) }));
     shared.allies = new Set(net.lobby?.members.map(m => m.id) ?? []);
+    shared.selfId = net.id;
+    this.collectVisuals(model, now);
     // The authority's copy of this sector: asked for once per authority.
     if (role === 'authority') this.synced = '';
     else {
@@ -206,10 +226,11 @@ export class SharedLink {
     net.flushClaims();
     this.collectShots(model);
     if (role === 'authority') { for (const shot of shared.shots.splice(0)) if (this.pendingEnemyShots.length < 96) this.pendingEnemyShots.push({ shot, at: now }); }
-    // Fresh fire goes out at once when the budget allows, instead of waiting for the next regular fx.
-    if (this.due(now, this.last.fx, SHARE_RATES.fx, SHARE_RATES.fxFast, this.pendingShots.length + this.pendingEnemyShots.length)) { this.last.fx = now; this.sendFx(model, role === 'authority'); }
+    // Fresh fire and explosions go out at once when the budget allows, instead of waiting for the next regular fx.
+    if (this.due(now, this.last.fx, SHARE_RATES.fx, SHARE_RATES.fxFast, this.pendingShots.length + this.pendingEnemyShots.length + this.pendingVisuals.length)) { this.last.fx = now; this.sendFx(model, role === 'authority'); }
     this.shareOutposts(model, now);
     this.showVisitorOutposts(model, now);
+    this.placeVisitorDrones(model, now);
     if (role === 'authority') {
       for (const loot of shared.loot.splice(0)) net.direct(loot.to, 'loot', loot.drops);
       shared.hits.length = 0;
@@ -236,7 +257,8 @@ export class SharedLink {
     let top = this.sentShots.id;
     for (const b of model.bullets) if (b.id > this.sentShots.id) {
       top = Math.max(top, b.id);
-      if (!b.enemy && !b.turret && !b.remote && b.life > 0 && model.shared!.targets.length && this.pendingShots.length < 48) this.pendingShots.push(encodePilotShot(b, model.player));
+      // Own shots launch from this ship as others draw it; outpost turret shots from where they really are.
+      if (!b.enemy && !b.remote && b.life > 0 && model.shared!.targets.length && this.pendingShots.length < 48) this.pendingShots.push(encodePilotShot(b, b.turret ? undefined : model.player));
     }
     this.sentShots.id = top;
   }
@@ -245,7 +267,13 @@ export class SharedLink {
     const shared = model.shared!, fx: Fx = {}, now = this.now;
     if (this.pendingShots.length) fx.p = this.pendingShots.splice(0);
     if (this.net.rtt !== undefined && now - this.last.rtt >= 1) { fx.q = Math.round(this.net.rtt * 1000); this.last.rtt = now; }
-    const look = model.dead ? undefined : encodeLook(model.player, model.shield, model.maxShield, model.miningLinks, model.tractorLinks);
+    // Own outpost drones in flight where another pilot could see them (destroyed pilots still watch); one empty list once they have all landed.
+    const viewers = model.outposts.some(o => o.drones?.length) ? this.net.poses(now) : [];
+    const drones = encodeDrones(model.outposts, (x, y) => viewers.some(t => Math.abs(t.x - x) < NEAR_ENEMIES && Math.abs(t.y - y) < NEAR_ENEMIES));
+    if (drones.length || this.dronesSent) { fx.d = drones; this.dronesSent = drones.length > 0; }
+    const look = model.dead ? undefined : encodeLook(model.player, model.shield, model.maxShield, model.miningLinks, model.tractorLinks, model.boostActive, model.modules.some(m => m.kind === 'engine' && (m.ability?.phase ?? 0) > 0));
+    if (this.pendingVisuals.length) fx.v = this.pendingVisuals.splice(0, 48).map(encodeVisual);
+    const turrets = this.turretRows(model, now); if (turrets.length) fx.t = turrets;
     if (look) fx.l = look;
     if (shared.bumpedRocks.size) {
       const byId = new Map(model.asteroids.map(a => [a.id, a]));
@@ -271,7 +299,7 @@ export class SharedLink {
       }
       fx.r = rocks;
     }
-    if (fx.p || fx.b?.length || fx.r?.length || fx.e?.length || fx.c !== undefined || fx.l || fx.n || fx.x) this.net.cast('fx', fx);
+    if (fx.p || fx.b?.length || fx.r?.length || fx.e?.length || fx.c !== undefined || fx.l || fx.n || fx.x || fx.d || fx.v || fx.t) this.net.cast('fx', fx);
   }
   /**
    * Sends this pilot's own outposts in this sector to the others (see OUTPOST_SHARE): queued when one changes
@@ -285,7 +313,7 @@ export class SharedLink {
       const audience = `${this.net.room?.members ?? 0}|${[...this.net.peers.keys()].sort().join()}`;
       const arrived = audience !== this.outpostAudience && (this.net.room?.members ?? 0) > 1;
       const refresh = arrived || now - t.refresh >= OUTPOST_SHARE.refresh;
-      this.outpostAudience = audience; if (refresh) t.refresh = now;
+      this.outpostAudience = audience; if (refresh) { t.refresh = now; this.turretSent.clear(); }
       const here = new Set(model.outposts.map(o => o.id));
       for (const id of [...this.outpostSent.keys()]) if (!here.has(id)) { this.outpostSent.delete(id); this.outpostIdsDirty = true; this.outpostQueue = this.outpostQueue.filter(p => p.i !== id); }
       for (const outpost of model.outposts) {
@@ -327,8 +355,76 @@ export class SharedLink {
       const key = `${from}|${part.i}`;
       let id = this.visitorIds.get(key); if (id === undefined) { id = this.visitorIds.size + 1; this.visitorIds.set(key, id); }
       const outpost = outpostFromParts(entry.parts as OutpostPart[], id) as unknown as Outpost;
+      // Turret aim arrives separately: keep the last known heads on the new copy.
+      entry.outpost?.structures.forEach((s, index) => { if (s.angle !== undefined && outpost.structures[index]) outpost.structures[index].angle = s.angle; });
       if (part.sh !== undefined) outpost.shield = part.sh * outpostStats(outpost).shieldCapacity; else delete outpost.shield;
       entry.outpost = outpost; this.visitorsDirty = true;
+    }
+  }
+  /**
+   * Picks up this frame's own visual effects for the others (only where another pilot could see them): effects the
+   * model raised, new EMP pulses and plasma fields, and an explosion where another pilot's ship was just destroyed
+   * (shown here directly, since that pilot's game stops sending when it dies).
+   */
+  private collectVisuals(model: GameModel, now: number) {
+    const shared = model.shared!, poses = this.net.poses(now);
+    const near = (x: number, y: number) => poses.some(p => Math.abs(p.x - x) < NEAR_ENEMIES && Math.abs(p.y - y) < NEAR_ENEMIES);
+    const add = (v: RemoteVisual) => { if (this.pendingVisuals.length < 96 && near(v.x, v.y)) this.pendingVisuals.push(v); };
+    for (const e of shared.effects.splice(0)) if (e.type === 'explosion' || e.type === 'debris' || e.type === 'arc' || e.type === 'shield') add({ type: e.type, x: e.x, y: e.y, radius: e.radius, color: e.color, toX: e.toX, toY: e.toY, weapon: e.weapon, level: e.level, angle: e.angle, count: e.count });
+    for (const pulse of model.empPulses) if (!this.sentAreas.has(pulse)) { this.sentAreas.add(pulse); add({ type: 'emp', x: pulse.x, y: pulse.y, radius: pulse.maxRadius }); }
+    for (const field of model.novaFields) if (!this.sentAreas.has(field)) { this.sentAreas.add(field); add({ type: 'nova', x: field.x, y: field.y, radius: field.radius, life: field.life }); }
+    for (const pose of poses) {
+      const was = this.peerDead.get(pose.id); this.peerDead.set(pose.id, Boolean(pose.dead));
+      if (pose.dead && was === false) model.applyRemoteVisuals([{ type: 'explosion', x: pose.x, y: pose.y, radius: 70, color: 0xffb070 }, { type: 'debris', x: pose.x, y: pose.y, angle: pose.angle, count: 6, color: 0x9fb4c4 }]);
+    }
+  }
+  /** Turret head angles on this pilot's outposts near another pilot, when they have turned since last sent. */
+  private turretRows(model: GameModel, now: number): TurretRow[] {
+    const rows: TurretRow[] = [], poses = model.outposts.length ? this.net.poses(now) : [];
+    for (const outpost of model.outposts) {
+      const cx = (outpost.cx + 0.5) * OUTPOST.cell, cy = (outpost.cy + 0.5) * OUTPOST.cell;
+      if (!poses.some(p => Math.abs(p.x - cx) < NEAR_ENEMIES + 800 && Math.abs(p.y - cy) < NEAR_ENEMIES + 800)) continue;
+      outpost.structures.forEach((s, index) => {
+        if (s.angle === undefined || rows.length >= 96) return;
+        const key = `${outpost.id}:${index}`, angle = Math.round(s.angle * 100) / 100;
+        if (this.turretSent.get(key) === angle) return;
+        this.turretSent.set(key, angle); rows.push([outpost.id, index, angle]);
+      });
+    }
+    return rows;
+  }
+  /** Another pilot's turret head angles, applied to that pilot's outpost copies here. */
+  private receiveTurrets(from: string, rows: TurretRow[]) {
+    const outposts = this.visitors.get(from);
+    for (const [id, index, angle] of rows) { const s = outposts?.get(id)?.outpost?.structures[index]; if (s) s.angle = angle; }
+  }
+  /** Another pilot's drones in flight: each report replaces the set (drones that landed disappear). */
+  private receiveDrones(from: string, rows: DroneRow[]) {
+    // Stamped on arrival (not with the last frame's time), so a throttled tab does not drop drones as stale.
+    const at = this.net.clock(), entry = this.visitorDrones.get(from) ?? { at, drones: new Map<string, VisitorDrone>() }, next = new Map<string, VisitorDrone>();
+    for (const row of rows) {
+      const key = `${row[0]}:${row[1]}`, known = entry.drones.get(key);
+      const drone = known?.drone ?? { id: row[1], hangar: 0, x: row[2], y: row[3], angle: row[4], state: 'outbound' as const, load: 0, timer: 0 };
+      next.set(key, { drone, goal: row });
+    }
+    entry.drones = next; entry.at = at; this.visitorDrones.set(from, entry);
+  }
+  /** Eases other pilots' drones toward their reports and hangs them on those pilots' outpost copies for drawing. */
+  private placeVisitorDrones(model: GameModel, now: number) {
+    const dt = Math.min(0.1, Math.max(0, now - this.lastDroneFrame)); this.lastDroneFrame = now;
+    const k = Math.min(1, dt * DRONE_VIEW.ease);
+    for (const outpost of model.visitorOutposts) outpost.drones = [];
+    for (const [pilot, entry] of this.visitorDrones) {
+      if (now - entry.at > DRONE_VIEW.ttl) { this.visitorDrones.delete(pilot); continue; }
+      const outposts = this.visitors.get(pilot);
+      for (const { drone, goal } of entry.drones.values()) {
+        const [outpostId, , x, y, angle, bx, by] = goal;
+        drone.x += (x - drone.x) * k; drone.y += (y - drone.y) * k;
+        let turn = angle - drone.angle; turn = Math.atan2(Math.sin(turn), Math.cos(turn)); drone.angle += turn * k;
+        if (bx !== undefined && by !== undefined) drone.beam = { x: bx, y: by }; else delete drone.beam;
+        const shown = outposts?.get(outpostId)?.outpost;
+        if (shown) (shown.drones ??= []).push(drone);
+      }
     }
   }
   /** Puts the other pilots' outposts into the model for drawing (and drops copies nobody has refreshed). */

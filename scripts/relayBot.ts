@@ -17,7 +17,7 @@ import { OUTPOST } from '../src/data.ts';
  * pilot (outside the station ring, so use a large orbit); `--mine` parks beside a rock outside the station ring
  * and mines it (to check remote beams); `--share` deposits plenty of minerals and shares them with the lobby.
  * `--horde` brings a level-4 horde in every 40 s (to load-test shared enemies). `--outpost` founds an outpost 700 units
- * east of the station and adds a wall block every 2 s (to check outposts reach other pilots). It never touches browser saves.
+ * east of the station, adds a wall block every 2 s and flies a drone around it (to check outposts and drones reach other pilots). It never touches browser saves.
  */
 const args = process.argv.slice(2), outposting = args.includes('--outpost'), hordes = args.includes('--horde'), sharing = args.includes('--share'), mine = args.includes('--mine'), fire = args.includes('--fire'), raiders = args.includes('--raiders'), visitor = args.includes('--visitor'), orbit = Number(args.find(a => a.startsWith('--orbit='))?.slice(8) ?? 160), [url = 'ws://127.0.0.1:8787', code = '-', seed = 'relay-bot-world'] = args.filter(a => !a.startsWith('--'));
 const model = new GameModel(seed), net = new NetClient(), link = new SharedLink(net, () => model), centre = { x: model.bases[0].x, y: model.bases[0].y }, clock = () => performance.now() / 1000, start = clock();
@@ -52,6 +52,12 @@ setInterval(() => {
     builtAt = now; const o = model.outposts[0], n = o.structures.length;
     for (const s of o.structures) s.progress = 1;
     o.structures.push({ id: n + 1, kind: 'wall', cx: o.cx + 1 + (n - 1) % 12, cy: o.cy + Math.floor((n - 1) / 12) - 1, rot: 0, level: 1, health: 60, progress: 0.3 } as (typeof o.structures)[number]); o.revision++;
+  }
+  if (outposting && model.outposts[0]) {
+    // A drone circling the outpost with its beam on, set after the update (the bot's outpost has no hangar to keep it).
+    const o = model.outposts[0], ox = (o.cx + 0.5) * OUTPOST.cell, oy = (o.cy + 0.5) * OUTPOST.cell, a = (now - start) * 0.8;
+    const x = ox + Math.cos(a) * 160, y = oy + Math.sin(a) * 160;
+    o.drones = [{ id: 1, hangar: 1, x, y, angle: a + Math.PI / 2, state: 'mining', load: 0, timer: 0, beam: { x: x + Math.cos(a) * 30, y: y + Math.sin(a) * 30 } }];
   }
   link.frame(model, now);
   share.frame(model, now);
