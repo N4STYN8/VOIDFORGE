@@ -1,14 +1,15 @@
 export type MusicState='menu'|'boss'|'pvp'|'pve'|'station'|'mining'|'exploration';
-export type MusicSignals={menu:boolean;station?:boolean;mining?:boolean;pve?:boolean;pvp?:boolean;boss?:boolean;paused?:boolean};
-export function musicFade(from:MusicState,to:MusicState,rotation=false){if(rotation)return 8;if(from==='menu'||to==='menu')return 4;if(to==='boss'||to==='pvp')return 1;if(to==='pve')return 1.5;return 6;}
+export type MusicSignals={menu:boolean;station?:boolean;mining?:boolean;visibleNpcs?:number;pvp?:boolean;boss?:boolean;paused?:boolean};
+export const isCombatMusic=(state:MusicState)=>state==='pve'||state==='pvp'||state==='boss';
+export function musicFade(from:MusicState,to:MusicState,rotation=false){if(rotation)return 8;if(from==='menu'||to==='menu')return 4;if(to==='boss'||to==='pvp')return 1;if(to==='pve')return 1.5;if(from==='pve'||from==='pvp')return 2;return 6;}
 export class MusicStateController{
- state:MusicState='menu';private pve=0;private pvp=0;private mine=0;private idle=15;private mining=false;
- reset(){this.pve=this.pvp=this.mine=0;this.idle=15;this.mining=false;}
+ state:MusicState='menu';private pve=false;private pvp=0;private mine=0;private idle=15;private mining=false;
+ reset(){this.pve=false;this.pvp=this.mine=0;this.idle=15;this.mining=false;}
  update(dt:number,s:MusicSignals):MusicState{
   dt=Math.max(0,Math.min(1,dt));if(s.menu){this.reset();return this.state='menu';}if(s.paused)return this.state;
-  this.pve=s.pve?12:Math.max(0,this.pve-dt);this.pvp=s.pvp?15:Math.max(0,this.pvp-dt);
+  const visible=s.visibleNpcs??0;this.pve=visible>=6||(this.pve&&visible>0);this.pvp=s.pvp?3:Math.max(0,this.pvp-dt);
   if(s.mining){this.mine+=dt;this.idle=0;if(this.mine>=5)this.mining=true;}else{this.idle+=dt;if(!this.mining)this.mine=0;if(this.idle>=15){this.mining=false;this.mine=0;}}
-  return this.state=s.boss?'boss':this.pvp>0?'pvp':this.pve>0?'pve':s.station?'station':this.mining?'mining':'exploration';
+  return this.state=s.boss?'boss':this.pvp>0?'pvp':this.pve?'pve':s.station?'station':this.mining?'mining':'exploration';
  }
 }
 export class ShuffleTracks{

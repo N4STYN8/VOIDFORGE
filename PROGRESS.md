@@ -431,3 +431,12 @@ Compact HUD release: user explicitly requested push live. Origin fetched; HEAD/m
 - Limitation: follower snapshots omit target/boss-projectile identity; follower boss music requires confirmed boss interaction, never proximity alone. New game at a station correctly starts station music. Next: human listening balance pass. All changes local/uncommitted; nothing pushed/deployed.
 
 - User authorized live publication: fetched origin and confirmed main unchanged at 26681ed. Re-ran all 298 tests and production build successfully. Publishing dynamic music, all 12 original MP3s and the preserved Core-2 Build module unlock via normal fast-forward push and existing Pages workflow. No relay changes.
+
+## Combat music trigger refinement — 2026-11-13
+- Clean start; fetched and safely pulled main 8374223 → c44c087, preserving the latest multiplayer latency changes. Created codex/combat-music-threshold; no upstream selected for this local branch.
+- PvE now counts living hostile NPC hulls overlapping the camera viewport, excluding mounted parts. Starts at six, stays active down to one, exits immediately at zero; NPC hit events cannot trigger it. PvP still uses confirmed real-player hits, with a 3s inactivity timeout. Boss priority unchanged.
+- PvE/PvP returns use 2s equal-power fades. The same peaceful track resumes at its paused position even after >30s fights; changed activities use their appropriate category. Existing 12 tracks, calm fades, rotation, mute/volume and SFX preserved.
+- Files: src/main.ts, src/musicState.ts, src/musicSignals.ts, src/musicEngine.ts, tests/music.test.ts, MUSIC_AUDIT.md and project docs. 314 tests pass; production build passes (existing bundle warning). Browser checks pass for 1/5/6/10/5/0 counts, ignored small NPC hits, real-song bookmark resume, rapid reentry, one-player PvP/timeout and mute; no page errors. No simulation/network edits.
+- Multiplayer limitation: no explicit disengagement event, so PvP ends after the requested 3s without confirmed interactions. No conflicts; all changes local/uncommitted, nothing pushed/deployed. Next: human transition-balance playtest.
+
+- User authorized live publication: fetched origin and confirmed main unchanged at c44c087. Re-ran 314 tests and production build successfully. Publishing the reviewed combat-music thresholds, short returns and persistent bookmarks via normal fast-forward push and existing Pages workflow. No relay changes.

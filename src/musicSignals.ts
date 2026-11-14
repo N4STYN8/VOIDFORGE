@@ -12,3 +12,14 @@ export function musicEncounter(model:GameModel){
  }
  return {pve,boss};
 }
+
+/** All entries in model.enemies are hostile NPCs; human ships live in shared.targets.
+ * Mounted boss parts are not separate ships. Count partial hulls at viewport edges. */
+export function visibleHostileNpcs(model:GameModel,view:{x:number;y:number;width:number;height:number}){
+ let count=0;
+ for(const e of model.enemies){const def=ENEMIES[e.kind??'raider'];if(e.health<=0||def.part)continue;
+  const x=Math.max(view.x,Math.min(view.x+view.width,e.x)),y=Math.max(view.y,Math.min(view.y+view.height,e.y));
+  if((e.x-x)**2+(e.y-y)**2<=def.radius**2)count++;
+ }
+ return count;
+}
