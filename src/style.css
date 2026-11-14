@@ -182,7 +182,7 @@ body.horde-alert #outpost-panel { bottom:108px; }
 .mp-head { display:flex; align-items:center; gap:14px; padding-bottom:9px; border-bottom:1px solid #285160; }
 .mp-head>div { flex:1; } .mp-head small { font:10px ui-monospace,Consolas,monospace; letter-spacing:1.5px; color:#83bbc9; } .mp-head h2 { margin:3px 0 0; font:600 23px/1.2 system-ui,sans-serif; color:#e5f4fa; }
 .mp-status { font:11px ui-monospace,Consolas,monospace; letter-spacing:1px; padding:5px 9px; border:1px solid #2c5566; background:#091d2a; }
-.mp-status[data-state="online"] { color:#75e2ac; border-color:#2f6f57; } .mp-status[data-state="connecting"] { color:#e7b477; border-color:#6d5733; } .mp-status[data-state="offline"] { color:#8dabc0; }
+.mp-status[data-state="online"] { color:#75e2ac; border-color:#2f6f57; } .mp-status[data-state="online"][data-ping="fair"] { color:#e7d077; } .mp-status[data-state="online"][data-ping="poor"] { color:#ef8f6f; border-color:#6d3f33; } .mp-ping { color:#7f9db0; font:10px ui-monospace,Consolas,monospace; } .mp-status[data-state="connecting"] { color:#e7b477; border-color:#6d5733; } .mp-status[data-state="offline"] { color:#8dabc0; }
 .mp-body { display:grid; grid-template-columns:1fr 1fr; gap:16px; overflow:auto; min-height:0; }
 .mp-col { display:flex; flex-direction:column; gap:8px; min-width:0; }
 .mp-col h3 { margin:6px 0 0; font:10px ui-monospace,Consolas,monospace; letter-spacing:1.8px; color:#7bbfcf; text-transform:uppercase; }

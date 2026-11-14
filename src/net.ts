@@ -8,7 +8,26 @@ import { ClaimBook } from './shared.ts';
 export type LobbyInfo = { code: string; host: string; members: Member[]; world: WorldRef | null; open?: boolean };
 /** Seconds between reconnect attempts while staying online: doubling from the first, up to the last. */
 export const RECONNECT = { first: 2, max: 30 };
-export type Peer = { id: string; name: string; samples: { at: number; s: ShipState }[]; blocks: ShipBlock[] };
+/**
+ * Remote ship drawing. Ships are drawn `delay` seconds in the past, where `delay` adapts per pilot to how
+ * irregularly their updates arrive (`base` + `jitter` x measured jitter, within `min`..`max`). Past the newest
+ * sample the pose is carried forward on its velocity and turn rate (at most `ahead` seconds); when a new sample
+ * changes where the ship should be, the jump is eased out over about `smooth` seconds instead of snapping.
+ */
+export const INTERP = { base: 0.035, jitter: 2.5, min: 0.04, max: NET.interpolationDelay, ahead: 0.25, smooth: 0.1, maxTurn: 8 };
+/**
+ * Round-trip measurement: the client times the relay's reply to a `lobbies` request (one every `every` seconds),
+ * which needs no relay change. `weight` is how much each new sample moves the smoothed value.
+ */
+export const PING = { every: 5, weight: 0.3, stale: 10 };
+/**
+ * This client's own count of what it sends, kept a little under the relay's limit (NET.maxRate, burst NET.burst).
+ * Regular traffic always goes; optional early sends (an fx flush right after firing, hits right after landing them)
+ * go only while at least `reserve` messages are spare, so the relay never throttles this pilot.
+ */
+export const BUDGET = { rate: NET.maxRate - 4, burst: 24, reserve: 6 };
+type PoseError = { x: number; y: number; angle: number; at: number };
+export type Peer = { id: string; name: string; samples: { at: number; s: ShipState }[]; blocks: ShipBlock[]; /** Smoothed seconds between updates, and jitter around that. */ gap?: number; jitter?: number; error?: PoseError };
 export type PeerPose = ShipState & { id: string; name: string; blocks: ShipBlock[] };
 export type NetStatus = 'offline' | 'connecting' | 'online' | 'error';
 type SocketLike = { readyState: number; send(text: string): void; close(): void; addEventListener(type: string, listener: (event: { data?: unknown }) => void): void };
@@ -50,6 +69,14 @@ export class NetClient {
   private lastBlocksAt = -Infinity;
   private name = 'Pilot';
   private open: (url: string) => SocketLike;
+  /** Seconds, for ping and the send budget (tests may replace it). */
+  clock = () => performance.now() / 1000;
+  /** Smoothed round trip to the relay in seconds; undefined until measured. */
+  rtt?: number;
+  private pingAsked: number[] = [];
+  private lastPing = -Infinity;
+  private tokens: number = BUDGET.burst;
+  private refilled = -Infinity;
   constructor(open: (url: string) => SocketLike = url => new WebSocket(url) as unknown as SocketLike) { this.open = open; }
 
   get connected() { return this.status === 'online'; }
@@ -93,7 +120,20 @@ export class NetClient {
   /** `open` lobbies are listed for everyone to join; private ones only by code or invite link. */
   create(open = true) { this.send({ t: 'create', open: open || undefined }); }
   setOpen(open: boolean) { if (this.isHost) this.raw({ t: 'open', open }); }
-  requestLobbies() { if (this.connected) this.raw({ t: 'lobbies' }); }
+  requestLobbies() { if (this.connected) this.askLobbies(); }
+  /** Sends a `lobbies` request and remembers when, so the reply also measures the round trip. */
+  private askLobbies() { const at = this.clock(); if (this.raw({ t: 'lobbies' })) { this.pingAsked.push(at); this.lastPing = at; if (this.pingAsked.length > 8) this.pingAsked.shift(); } }
+  /** Call every frame: keeps the round-trip measurement fresh (one small request every PING.every seconds). */
+  heartbeat(now = this.clock()) { if (this.connected && now - this.lastPing >= PING.every) this.askLobbies(); }
+  /** Round trip in whole milliseconds, or undefined while offline or not yet measured. */
+  get pingMs() { return this.connected && this.rtt !== undefined ? Math.round(this.rtt * 1000) : undefined; }
+  /** Messages this client could still send right now without nearing the relay's limit. */
+  spare(now = this.clock()) { this.refill(now); return this.tokens; }
+  private refill(now: number) {
+    if (this.refilled === -Infinity) this.refilled = now;
+    this.tokens = Math.min(BUDGET.burst, this.tokens + Math.max(0, now - this.refilled) * BUDGET.rate); this.refilled = now;
+  }
+  private spend() { this.refill(this.clock()); this.tokens = Math.max(-BUDGET.burst, this.tokens - 1); }
   /** Sends to one lobby member, or (no `to`) all the others. Returns false when not in a lobby. */
   party(to: string | undefined, kind: PartyKind, data: unknown) { if (!this.connected || !this.lobby) return false; this.raw({ t: 'party', to, k: kind, d: data }); return true; }
   join(code: string) { this.send({ t: 'join', code }); }
@@ -104,7 +144,8 @@ export class NetClient {
     if (this.sector && this.sector.seed === world.seed && this.sector.x === world.x && this.sector.y === world.y && this.sector.home === world.home && this.owner === owner) return;
     if (this.sector?.seed !== world.seed) { this.peers.clear(); this.claims.clear(); this.room = undefined; }
     this.sector = { ...world }; this.owner = owner;
-    if (this.connected) this.raw({ t: 'sector', world: this.sector, owner: owner || undefined });
+    // Sent as soon as the socket is open (raw() waits for that), not only after `welcome`: a sector set in between would otherwise never reach the relay.
+    this.raw({ t: 'sector', world: this.sector, owner: owner || undefined });
   }
   private owner = false;
   private profileSent = '';
@@ -137,34 +178,62 @@ export class NetClient {
     const r = (n: number, k = 10) => Math.round(n * k) / k;
     const s: ShipState = { ...state, x: r(state.x), y: r(state.y), vx: r(state.vx), vy: r(state.vy), angle: r(state.angle, 1000), health: r(state.health), maxHealth: r(state.maxHealth) }, blocks = JSON.stringify(state.blocks ?? []);
     if (blocks !== this.lastBlocks || now - this.lastBlocksAt > 2) { this.lastBlocks = blocks; this.lastBlocksAt = now; } else delete s.blocks;
-    this.socket?.readyState === 1 && this.socket.send(JSON.stringify({ t: 'state', s: packState(s) }));
+    if (this.socket?.readyState === 1) { this.spend(); this.socket.send(JSON.stringify({ t: 'state', s: packState(s) })); }
   }
-  /** Remote ships drawn NET.interpolationDelay in the past, blended between the two samples around that time. */
+  /** How far in the past this pilot's ship is drawn: adapts to how regularly its updates arrive. */
+  delayFor(peer: Peer) { return Math.min(INTERP.max, Math.max(INTERP.min, INTERP.base + INTERP.jitter * (peer.jitter ?? 0.02))); }
+  /**
+   * Where each remote ship is drawn now: `delayFor` seconds in the past, blended between the two samples around
+   * that time, or carried forward on its velocity (and turn rate) past the newest one, plus what is left of the
+   * last correction (see INTERP).
+   */
   poses(now: number): PeerPose[] {
-    const result: PeerPose[] = [], target = now - NET.interpolationDelay;
+    const result: PeerPose[] = [];
     for (const [id, peer] of this.peers) {
-      const samples = peer.samples, last = samples[samples.length - 1];
+      const last = peer.samples[peer.samples.length - 1];
       if (!last || now - last.at > NET.peerTimeout) { this.peers.delete(id); continue; }
-      let s = last.s;
-      const after = samples.findIndex(sample => sample.at >= target);
-      if (after > 0) {
-        const a = samples[after - 1], b = samples[after], t = (target - a.at) / Math.max(1e-6, b.at - a.at);
-        let turn = b.s.angle - a.s.angle; turn = Math.atan2(Math.sin(turn), Math.cos(turn));
-        s = { ...b.s, x: a.s.x + (b.s.x - a.s.x) * t, y: a.s.y + (b.s.y - a.s.y) * t, angle: a.s.angle + turn * t };
-      } else if (after < 0) {
-        const ahead = Math.min(0.25, target - last.at);
-        if (ahead > 0) s = { ...last.s, x: last.s.x + last.s.vx * ahead, y: last.s.y + last.s.vy * ahead };
-      } else s = samples[0].s;
+      const s = this.rawPose(peer, now), e = this.errorAt(peer, now);
+      if (e) { s.x += e.x; s.y += e.y; s.angle += e.angle; }
       result.push({ ...s, id, name: peer.name, blocks: peer.blocks });
     }
     return result;
+  }
+  /** One remote ship's drawn pose, if known. */
+  pose(id: string, now: number) { return this.poses(now).find(p => p.id === id); }
+  private rawPose(peer: Peer, now: number): ShipState {
+    const samples = peer.samples, last = samples[samples.length - 1], target = now - this.delayFor(peer);
+    const after = samples.findIndex(sample => sample.at >= target);
+    if (after > 0) {
+      const a = samples[after - 1], b = samples[after], t = (target - a.at) / Math.max(1e-6, b.at - a.at);
+      let turn = b.s.angle - a.s.angle; turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+      return { ...b.s, x: a.s.x + (b.s.x - a.s.x) * t, y: a.s.y + (b.s.y - a.s.y) * t, angle: a.s.angle + turn * t };
+    }
+    if (after === 0) return { ...samples[0].s };
+    const ahead = Math.min(INTERP.ahead, target - last.at), prev = samples[samples.length - 2];
+    if (ahead <= 0) return { ...last.s };
+    // Turn rate from the last two samples, so a turning ship keeps turning instead of freezing its heading.
+    let spin = 0;
+    if (prev && last.at > prev.at) { const turn = last.s.angle - prev.s.angle; spin = Math.max(-INTERP.maxTurn, Math.min(INTERP.maxTurn, Math.atan2(Math.sin(turn), Math.cos(turn)) / (last.at - prev.at))); }
+    return { ...last.s, x: last.s.x + last.s.vx * ahead, y: last.s.y + last.s.vy * ahead, angle: last.s.angle + spin * ahead };
+  }
+  /** What is left of the last correction at `now` (it fades out over about INTERP.smooth seconds). */
+  private errorAt(peer: Peer, now: number) {
+    const e = peer.error; if (!e) return;
+    const k = Math.exp(-Math.max(0, now - e.at) / INTERP.smooth);
+    if (k < 0.01) { peer.error = undefined; return; }
+    return { x: e.x * k, y: e.y * k, angle: e.angle * k };
   }
   /** Feeds a relay message; public so tests can drive the client without a socket. */
   receive(raw: string, now = performance.now() / 1000) {
     const m = parseServer(raw); if (!m) return;
     switch (m.t) {
-      case 'welcome': this.id = m.id; this.status = 'online'; this.retryDelay = RECONNECT.first; this.setNote('Online.'); this.raw({ t: 'lobbies' }); return;
-      case 'lobbies': this.lobbyList = m.list; this.online = m.online; this.onLobbies(); return;
+      case 'welcome': this.id = m.id; this.status = 'online'; this.retryDelay = RECONNECT.first; this.setNote('Online.'); this.askLobbies(); return;
+      case 'lobbies': {
+        // The relay answers requests in order, so this reply belongs to the oldest one still waiting.
+        const asked = this.pingAsked.shift(), at = this.clock();
+        if (asked !== undefined && at - asked < PING.stale) { const sample = at - asked; this.rtt = this.rtt === undefined ? sample : this.rtt + (sample - this.rtt) * PING.weight; }
+        this.lobbyList = m.list; this.online = m.online; this.onLobbies(); return;
+      }
       case 'error': this.setNote(m.message); return;
       case 'gone': this.peers.delete(m.id); return;
       case 'room': this.room = { authority: m.authority, members: m.members }; return;
@@ -188,24 +257,39 @@ export class NetClient {
         let peer = this.peers.get(m.id);
         if (!peer) { peer = { id: m.id, name: m.name ?? 'Pilot', samples: [], blocks: [] }; this.peers.set(m.id, peer); }
         if (m.name) peer.name = m.name; if (m.s.blocks) peer.blocks = m.s.blocks;
+        const prior = peer.samples[peer.samples.length - 1];
+        // Where the ship was drawn just before this sample, so the change it makes is eased in rather than snapped.
+        const before = prior ? this.rawPose(peer, now) : undefined, left = this.errorAt(peer, now);
+        if (prior) {
+          // Arrival rhythm: how far apart updates come and how irregular that is, for the adaptive delay.
+          const gap = now - prior.at;
+          if (gap > 0 && gap < 1) { peer.gap = peer.gap === undefined ? gap : peer.gap + (gap - peer.gap) * 0.1; peer.jitter = peer.jitter === undefined ? 0.02 : peer.jitter + (Math.abs(gap - peer.gap) - peer.jitter) * 0.1; }
+        }
         peer.samples.push({ at: now, s: m.s }); if (peer.samples.length > 8) peer.samples.shift();
+        if (before) {
+          const after = this.rawPose(peer, now);
+          let turn = before.angle + (left?.angle ?? 0) - after.angle; turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+          const dx = before.x + (left?.x ?? 0) - after.x, dy = before.y + (left?.y ?? 0) - after.y;
+          // A big jump (respawn, sector entry) is not smoothed: the ship really is somewhere else.
+          peer.error = Math.hypot(dx, dy) < 300 ? { x: dx, y: dy, angle: turn, at: now } : undefined;
+        }
         return;
       }
     }
   }
   private send(m: ClientMessage) { if (this.connected) this.raw(m); else this.pending.push(m); }
   private raw(m: ClientMessage) {
-    if (!this.socket || this.socket.readyState !== 1) return;
+    if (!this.socket || this.socket.readyState !== 1) return false;
     // The relay closes a connection that sends an oversized frame, so never send one.
     const text = JSON.stringify(m);
-    if (text.length > NET.maxMessage / 4 && new TextEncoder().encode(text).length > NET.maxMessage - 16) { this.oversized++; return; }
-    this.socket.send(text);
+    if (text.length > NET.maxMessage / 4 && new TextEncoder().encode(text).length > NET.maxMessage - 16) { this.oversized++; return false; }
+    this.spend(); this.socket.send(text); return true;
   }
   /** Messages dropped locally because they were too large to send. */
   oversized = 0;
   private dropped(text: string) {
     const had = this.lobby;
-    this.status = 'offline'; this.socket = undefined; this.id = undefined; this.lobby = undefined; this.peers.clear(); this.pending = []; this.room = undefined; this.claims.clear(); this.profileSent = ''; this.matchWaiting?.(null);
+    this.status = 'offline'; this.socket = undefined; this.id = undefined; this.lobby = undefined; this.peers.clear(); this.pending = []; this.pingAsked = []; this.lastPing = -Infinity; this.room = undefined; this.claims.clear(); this.profileSent = ''; this.matchWaiting?.(null);
     if (this.keepOnline && text !== 'Offline.') {
       // Staying online: try again shortly, backing off while the relay is unreachable.
       const url = this.keepOnline.url, delay = this.retryDelay; this.retryDelay = Math.min(RECONNECT.max, delay * 2);

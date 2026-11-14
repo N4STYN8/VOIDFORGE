@@ -1,5 +1,13 @@
 # Progress
 
+## Multiplayer latency pass and ping readout (local branch claude/objective-darwin-32381a, uncommitted)
+- Lower lag the game adds on top of the network, measured with the new `scripts/latencyBench.ts` (two pilots over a real local relay with simulated delay). LAN: remote ships 175 → 87 ms behind, mirrored enemies 220 → 35 ms, enemy shots 75–90 → under 10 ms, pilot shots visible 60–73 → 31 ms after firing. 80 ms round trip: ships 247 → 161 ms, enemies 298 → 22 ms, enemy shots 161–176 → 20–27 ms.
+- How: adaptive interpolation delay with extrapolation and eased corrections for remote ships; enemy velocities and dead reckoning on followers; enemies ride in fx (nearby every fx, full list twice a second, removals at once); enemy shots fast-forwarded by age + one-way delay; pilot shots launched from the drawn shooter; fx and hits flushed early when the client's own send budget allows (stays under the relay limit). No relay change.
+- Ping: Multiplayer panel status shows `PING n MS` (green/amber/red) and each nearby pilot's ping; the command bar status adds it. Measured by timing `lobbies` replies every 5 s.
+- Fixed: a sector set between socket open and `welcome` never reached the relay.
+- Validation: 303 tests (12 new in tests/latency.test.ts, including an over-the-relay mirror-accuracy and message-rate test) and build pass; `npm run load-test -- 200 4 8` fine (p99 15 ms). Browser: joined a local `relayBot --horde --fire` lobby, horde mirrored and firing, panel showed PING 10 MS and the bot's 1 ms, no console errors. Not checked: feel over a real internet link, and older clients mixed with new ones (an old follower sees no enemies from a new authority until it reloads).
+- Next: play over the internet with a remote friend and tune INTERP/GHOST if ships or enemies wobble; consider the relay-side follow-ups in ARCHITECTURE.md (needs approval to redeploy the Pi).
+
 ## Shared space stage 6 — scaling (local branch claude/mmo-sectors, uncommitted)
 - Interest management, encode-once broadcast, backlog skipping, packed state, `/stats`, `npm run load-test`.
 - Load test, 1,000 pilots in 250 sectors for 20 s: relay 30% of one core, 111 MB, no skipped frames, latency p50 22 ms, p95 33 ms, p99 38 ms (generator on the same PC), 9,354 messages/s in, 28,062 frames/s and 40.7 Mbit/s out. Before the wire-format work it was 57 Mbit/s. Bandwidth, not CPU, is the Pi's likely limit.

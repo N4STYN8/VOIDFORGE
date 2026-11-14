@@ -623,24 +623,26 @@ class SpaceScene extends Phaser.Scene {
     const p = this.model.player;
     return { x: 0, y: 0, aim: { x: p.x + Math.cos(p.angle) * 100, y: p.y + Math.sin(p.angle) * 100 }, fire: false, mine: false, dock: false, view: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height } };
   }
-  /** The command bar's one-line multiplayer status. */
+  /** The command bar's one-line multiplayer status, with the measured round trip to the relay. */
   private get netSummary() {
-    const net = this.net;
-    if (net.status === 'online') return net.lobby ? `LOBBY ${net.lobby.code}` : `ONLINE${net.online ? ` · ${net.online}` : ''}`;
+    const net = this.net, ping = net.pingMs === undefined ? '' : ` · ${net.pingMs} MS`;
+    if (net.status === 'online') return (net.lobby ? `LOBBY ${net.lobby.code}` : `ONLINE${net.online ? ` · ${net.online}` : ''}`) + ping;
     if (net.status === 'connecting') return 'CONNECTING';
     return net.staysOnline ? 'RECONNECTING' : 'OFFLINE';
   }
   private renderNetPanel(force = false) {
     const net = this.net, lobby = net.lobby, here = [...net.peers.values()];
     const listing = net.lobbyList.map(l => `${l.code}${l.host}${l.members}${l.power}`).join();
-    const state = [this.netOpen, this.share.enabled, this.share.sharers.join(), JSON.stringify(this.share.pool), net.status, net.staysOnline, net.note, net.online, lobby?.code, lobby?.host, lobby?.open, lobby?.members.map(m => m.id + m.name).join(), net.id, listing, here.map(p => p.id + p.name).join()].join('|');
+    const state = [this.netOpen, this.share.enabled, this.share.sharers.join(), JSON.stringify(this.share.pool), net.status, net.staysOnline, net.note, net.online, lobby?.code, lobby?.host, lobby?.open, lobby?.members.map(m => m.id + m.name).join(), net.id, listing, here.map(p => p.id + p.name + this.link.pingOf(p.id)).join(), net.pingMs].join('|');
     if (!force && state === this.netContent) return; this.netContent = state;
     if (!this.netOpen) return;
     const esc = (text: string) => text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
     const q = <T extends HTMLElement = HTMLElement>(selector: string) => this.netPanel.querySelector<T>(selector)!;
     const status = q('[data-net-status]');
     status.dataset.state = net.status === 'online' ? 'online' : net.status === 'connecting' || net.staysOnline ? 'connecting' : 'offline';
-    status.textContent = net.status === 'online' ? `ONLINE · ${net.online || 1} pilot${net.online === 1 ? '' : 's'} online` : this.netSummary;
+    status.textContent = net.status === 'online' ? `ONLINE · ${net.online || 1} pilot${net.online === 1 ? '' : 's'} online${net.pingMs === undefined ? '' : ` · PING ${net.pingMs} MS`}` : this.netSummary;
+    status.dataset.ping = net.pingMs === undefined ? '' : net.pingMs < 80 ? 'good' : net.pingMs < 160 ? 'fair' : 'poor';
+    status.title = 'Round trip from this game to the multiplayer relay and back, measured every few seconds.';
     q<HTMLInputElement>('[data-net-offline]').checked = !net.staysOnline && net.status === 'offline';
     const allies = new Set(lobby?.members.map(m => m.id) ?? []);
     q('[data-net-lobby]').innerHTML = lobby
@@ -651,7 +653,7 @@ class SpaceScene extends Phaser.Scene {
       : `<p class="mp-empty">Not in a lobby. Create one, or join an open lobby to fly together.</p>`;
     q('[data-net-create]').hidden = Boolean(lobby);
     q('[data-net-here]').innerHTML = here.length
-      ? here.map(p => `<li><span>${esc(p.name)}</span><small class="${allies.has(p.id) ? 'ally' : 'hostile'}">${allies.has(p.id) ? 'ALLY' : 'HOSTILE'}</small></li>`).join('')
+      ? here.map(p => { const ping = this.link.pingOf(p.id); return `<li><span>${esc(p.name)}${ping === undefined ? '' : ` <small class="mp-ping" title="Their round trip to the relay">${ping} ms</small>`}</span><small class="${allies.has(p.id) ? 'ally' : 'hostile'}">${allies.has(p.id) ? 'ALLY' : 'HOSTILE'}</small></li>`; }).join('')
       : `<li class="mp-empty">${net.status === 'online' ? 'Nobody else nearby.' : 'Offline.'}</li>`;
     const power = progressionScore(this.model);
     q('[data-net-lobbies]').innerHTML = net.status !== 'online' ? '<li class="mp-empty">Go online to see open lobbies.</li>'
@@ -665,6 +667,7 @@ class SpaceScene extends Phaser.Scene {
   private updateNet(now: number) {
     const p = this.model.player, net = this.net;
     if (net.status !== 'offline') {
+      net.heartbeat();
       net.setSector({ ...worldRef(this.model), spot: [Math.round(p.x), Math.round(p.y)] }, ownsSector(this.model));
       net.profile(this.model.galaxy.home, progressionScore(this.model));
       const thrusting = this.keys.W.isDown || this.keys.A.isDown || this.keys.S.isDown || this.keys.D.isDown;
