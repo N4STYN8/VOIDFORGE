@@ -383,3 +383,11 @@ Compact HUD release: user explicitly requested push live. Origin fetched; HEAD/m
 - No conflicts, commits, push or deployment. Next: playtest missile durability/hit radius and pursuit timing.
 
 - User authorized live publication. Fetched origin and verified unchanged main 464c3df; reran 288 tests and production build successfully. Publishing pursuit/interception changes via normal fast-forward push and the existing Pages workflow; no relay changes.
+
+## Active-flight zoom correction — 2026-11-13
+- Clean start on codex/enemy-retaliation; fetched origin, HEAD equals origin/main 1beff1c, no pull required. Created local codex/zoom-aim-fix; no upstream selected.
+- Found wheel changes current zoom while Phaser getWorldPoint still uses the preceding rendered matrix. This mixed-state aim can rotate the ship abruptly; earlier paused texture tests missed it. Added current-value flightWorldPoint for input/reticle/build preview and disabled roundPixels on follow to avoid fractional-zoom snapping. Existing composite hull cache preserved.
+- Files: src/main.ts, new src/flightCamera.ts, tests/flightCamera.test.ts and project docs. Validation: 290 tests pass, production build passes (existing bundle warning). Real wheel browser checks during unpaused flight at world 49000/48000 show stable heading 0.302884868 across zoom changes in Canvas/WebGL, no browser errors. Projection tests cover fractional zoom, viewport offsets and scroll.
+- No conflicts, pre-existing edits, commits, push or deployment. Next: user visual check of active zoom; changes remain local/uncommitted.
+
+- User authorized live publication: fetched origin, confirmed main unchanged at 1beff1c, reran 290 tests and production build successfully. Publishing the reviewed camera fix via normal fast-forward push and existing Pages deployment; no relay changes.

@@ -260,3 +260,9 @@ Choices: own Node + WebSocket relay; sector grid; owners keep changes to their s
 - [x] Swept collision, cover priority, pooled health reset and legacy defaults
 - [x] Test multiple hits, interception, cover and visual-only shot exclusion
 - [ ] Playtest missile durability and hit radius
+
+## Active-flight zoom correction
+- [x] Eliminate stale camera-matrix aim jumps on the wheel-input frame
+- [x] Disable pixel-rounded follow at fractional zoom
+- [x] Check active Canvas/WebGL flight plus projection regressions
+- [ ] User verify zoom behavior on their ship

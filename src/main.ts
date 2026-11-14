@@ -1,3 +1,4 @@
+import { flightWorldPoint } from './flightCamera.ts';
 import { soundIsVisible } from './soundVisibility.ts';
 import { bakeShipImage, type ShipArtBlock } from './shipImage.ts';
 import { MainMenu } from './mainMenu.ts';
@@ -283,7 +284,7 @@ class SpaceScene extends Phaser.Scene {
     this.baseLabels = this.model.bases.map(base => this.add.text(base.x, base.y - 172, '', { fontFamily: 'monospace', fontSize: '10px', color: '#a0d6cc', align: 'center', lineSpacing: 5 }).setOrigin(0.5));
     this.targetLabel = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '10px', color: '#b5ebdf', backgroundColor: '#0b1423', padding: { x: 6, y: 3 } }).setOrigin(0.5, 0).setDepth(5);
     this.follow = this.add.zone(this.model.player.x, this.model.player.y, 1, 1);
-    this.cameras.main.setBounds(0, 0, WORLD.width, WORLD.height).setZoom(1.35).startFollow(this.follow, true, 0.15, 0.15);
+    this.cameras.main.setBounds(0, 0, WORLD.width, WORLD.height).setZoom(1.35).startFollow(this.follow, false, 0.15, 0.15);
     this.keys = this.input.keyboard!.addKeys(`W,A,S,D,SPACE,E,R,ESC,B,Q,M,N,G,V,P,SHIFT,C,${OUTPOST.key}`) as Record<string, Phaser.Input.Keyboard.Key>;
     this.input.on('wheel', (_pointer: Phaser.Input.Pointer, _objects: unknown, _dx: number, dy: number) => {
       if (!this.mapOpen && !this.building) this.cameras.main.setZoom(Phaser.Math.Clamp(this.cameras.main.zoom * Math.exp(-dy * 0.001), 0.55, 2.2));
@@ -380,7 +381,7 @@ class SpaceScene extends Phaser.Scene {
     const boost=Phaser.Input.Keyboard.JustDown(this.keys.SHIFT)||this.commandInput.has('boost');
     const dock = Phaser.Input.Keyboard.JustDown(this.keys.E)||this.commandInput.has('dock');
     const pointer = this.input.activePointer;
-    const aim = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+    const aim = flightWorldPoint(this.cameras.main,pointer.x,pointer.y);
     const bounds = this.cameras.main.worldView;
     // Guns and the mining beam answer only to clicks that started on the game view, never on a panel or menu.
     const onGame = !this.netOpen && pointer.downElement === this.game.canvas;
@@ -892,7 +893,7 @@ class SpaceScene extends Phaser.Scene {
     if (picked) { const s = picked.structure, c = OUTPOST.cell; g.lineStyle(2, 0xffe9a8, 0.6 + Math.sin(now * 6) * 0.3); g.strokeRect(s.cx * c - 1, s.cy * c - 1, c + 2, c + 2); }
     this.buildGhost.setVisible(this.buildMode && Boolean(builder) && !this.paused);
     if (!this.buildMode || !builder || this.paused) return;
-    const aim = this.cameras.main.getWorldPoint(this.input.activePointer.x, this.input.activePointer.y), cx = cellOf(aim.x), cy = cellOf(aim.y), size = OUTPOST.cell, ok = !this.buildHover, color = ok ? 0x5dff9a : 0xff4d6d;
+    const aim = flightWorldPoint(this.cameras.main,this.input.activePointer.x,this.input.activePointer.y), cx = cellOf(aim.x), cy = cellOf(aim.y), size = OUTPOST.cell, ok = !this.buildHover, color = ok ? 0x5dff9a : 0xff4d6d;
     g.lineStyle(1, 0xd9a441, 0.35 + Math.sin(now * 4) * 0.1); g.strokeCircle(p.x, p.y, builder.range);
     this.buildGhost.setTexture(`structure-${this.buildKind}`).setPosition(cellCenter(cx), cellCenter(cy)).setRotation(this.buildRot * Math.PI / 2);
     const over = Boolean(structureAt(this.model.outposts, cx, cy));
@@ -1172,7 +1173,7 @@ class SpaceScene extends Phaser.Scene {
     this.drawBuildPreview(now);
     if (!this.building && !this.paused) {
       const pointer = this.input.activePointer;
-      const aim = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+      const aim = flightWorldPoint(this.cameras.main,pointer.x,pointer.y);
       g.lineStyle(1, 0xc2dbe7, 0.7); g.strokeCircle(aim.x, aim.y, 7);
       g.lineBetween(aim.x - 12, aim.y, aim.x - 5, aim.y); g.lineBetween(aim.x + 5, aim.y, aim.x + 12, aim.y);
       g.lineBetween(aim.x, aim.y - 12, aim.x, aim.y - 5); g.lineBetween(aim.x, aim.y + 5, aim.x, aim.y + 12);

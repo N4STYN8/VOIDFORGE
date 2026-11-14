@@ -124,3 +124,5 @@ World sound follows visible event origins: off-screen weapon fire, ore/enemy hit
 Damaging an enemy provokes 10 seconds of pursuit of the shooter beyond normal detection, refreshed by further hits. Firing still requires visibility. Safe zones cancel pursuit; guard leashes and tactical retreats remain. After pursuit expires, normal last-known-position memory applies.
 
 Enemy missiles can be shot down. MISSILE_DEFENSE gives 90 durability (eight L1 autocannon hits) and a 10-unit hit radius. Interception consumes the defensive shot; survivors spark, destroyed missiles create a 38-unit visual explosion and positioned sound, with no loot or damaging splash. Ordinary hostile bullets remain uninterceptable.
+
+Wheel zoom preserves aiming direction; flight camera uses subpixel tracking so fractional zoom does not snap ship layers.
