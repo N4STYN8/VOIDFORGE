@@ -1,6 +1,8 @@
 /** Seconds of unpaused game time; these are local activity budgets, never world-wide caps. */
 export const POPULATION={
  tick:5,chunkRadius:2,extraAsteroidCandidates:32,asteroidBudget:2400,asteroidArrivalsPerTick:2,placementAttempts:4,
+  /** Candidate chunks generated per replenish tick at most; due slots beyond it wait for the next tick, so arrivals never stall a frame. */
+  placementBudget:12,
  asteroidIntervals:{iron:[120,300],copper:[120,300],ice:[180,300],crystal:[480,900],radioactive:[480,900]},
  asteroidDrift:[1,4],ambientChance:.2,ambientDrift:[1.5,3.5],ambientRange:360,ambientBaseClearance:650,spawnMargin:140,baseClearance:300,asteroidGap:18,playerClearance:260,retry:10,
  enemyRegionSize:3600,enemyArrivalsPerTick:3,enemyBudget:36,enemyLoadRadius:3200,enemyUnloadRadius:4200,enemyMinDistance:900,

@@ -399,3 +399,10 @@ Compact HUD release: user explicitly requested push live. Origin fetched; HEAD/m
 - No pre-existing edits or conflicts; uncommitted local changes only, nothing pushed/deployed. Next: user check the near-cursor zoom behavior.
 
 - User authorized live publication: fetched origin and confirmed main unchanged at c0443bf; 291 tests and production build pass. Publishing the reviewed wheel-heading fix via normal fast-forward push and existing Pages workflow; no relay changes.
+
+## Multiplayer performance pass — 2026-11-13
+- User request: deep performance review, slowdown when enemies arrive with other pilots connected; ten rounds until smooth.
+- Rounds: (1) streaming refresh reuses live rocks; (2) collision bodies pooled, numeric grids; (3) hostile-fire module positions once per frame, shot box rejection, allocation-free targeting; (4) sector sync keeps sprites/backdrop with fingerprint-verified, rate-limited repaints; (5) per-frame rock grid for enemy avoidance and shots, moving-rock list for steering; (6) asteroid arrival budget per tick; (7) bullet caps counted once per batch; (8) peer labels restyle only on change; (9) cached line of sight (0.1 s, cleared on rock changes); (10) enemy spacing grid.
+- Same machine, main vs this branch (simulation ms per frame, mean / p99): single-player 1.02/2.3 → 0.39/1.1; authority with two pilots 1.73/3.4 → 0.53/1.5; follower 0.49/1.4 → 0.24/0.9; authority with four hordes (69 enemies) 4.24/6.9 → 0.81/2.1; fast flight worst frame 59 → ~6 ms (14.7 ms start-up frame). GCs per 30 s 158 → 34.
+- Browser (DevTools Chrome, foreground, 1440×900): follower with a horde and authority with 90 enemies both ~60 fps, p99 frame ≈ 20 ms; sector sync no longer drops frames.
+- Validation: 275 tests and build pass. Local and uncommitted on claude/mmo-perf (from main after PR #7 merged).

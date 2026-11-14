@@ -15,9 +15,9 @@ import { LobbyShare } from '../src/lobbyShare.ts';
  * stranger for PvP tests, carrying 20 iron); `--orbit=N` sets the circle radius; `--fire` shoots at the nearest other
  * pilot (outside the station ring, so use a large orbit); `--mine` parks beside a rock outside the station ring
  * and mines it (to check remote beams); `--share` deposits plenty of minerals and shares them with the lobby.
- * It never touches browser saves.
+ * `--horde` brings a level-4 horde in every 40 s (to load-test shared enemies). It never touches browser saves.
  */
-const args = process.argv.slice(2), sharing = args.includes('--share'), mine = args.includes('--mine'), fire = args.includes('--fire'), raiders = args.includes('--raiders'), visitor = args.includes('--visitor'), orbit = Number(args.find(a => a.startsWith('--orbit='))?.slice(8) ?? 160), [url = 'ws://127.0.0.1:8787', code = '-', seed = 'relay-bot-world'] = args.filter(a => !a.startsWith('--'));
+const args = process.argv.slice(2), hordes = args.includes('--horde'), sharing = args.includes('--share'), mine = args.includes('--mine'), fire = args.includes('--fire'), raiders = args.includes('--raiders'), visitor = args.includes('--visitor'), orbit = Number(args.find(a => a.startsWith('--orbit='))?.slice(8) ?? 160), [url = 'ws://127.0.0.1:8787', code = '-', seed = 'relay-bot-world'] = args.filter(a => !a.startsWith('--'));
 const model = new GameModel(seed), net = new NetClient(), link = new SharedLink(net, () => model), centre = { x: model.bases[0].x, y: model.bases[0].y }, clock = () => performance.now() / 1000, start = clock();
 const share = new LobbyShare(net, () => model);
 if (sharing) { share.enabled = true; model.stored = { iron: 5000, copper: 5000, crystal: 500, ice: 500, radioactive: 100 }; }
@@ -25,12 +25,13 @@ net.onNote = text => console.log(`[bot] ${text}`);
 net.connect(url, visitor ? 'Stranger' : 'Test Pilot');
 if (visitor) model.cargo.iron = 20; else if (code !== '-') net.join(code); else net.create();
 if (raiders) for (let i = 0; i < 3; i++) (model as unknown as { spawnEnemy(kind: string, x: number, y: number, angle: number): Enemy }).spawnEnemy('raider', centre.x + 900 + i * 60, centre.y + 300, Math.PI);
-let announced = '', reported = 0, diedAt = 0;
+let announced = '', reported = 0, diedAt = 0, hordeAt = -Infinity;
 setInterval(() => {
   const now = clock(), angle = (now - start) * 0.4;
   const target = (model.shared?.targets ?? []).slice().sort((a, b) => Math.hypot(a.x - model.player.x, a.y - model.player.y) - Math.hypot(b.x - model.player.x, b.y - model.player.y))[0];
   // A test pilot that dies respawns at its station after a moment, so checks are not cut short.
   if (model.dead && !model.rebuildDue && clock() - (diedAt ||= clock()) > 3) { model.respawn(); diedAt = 0; }
+  if (hordes && clock() - hordeAt > 40 && model.enemies.filter(e => e.horde).length < 5) { hordeAt = clock(); (model as unknown as { horde: { angle: number }; spawnHorde(level: number): void }).horde.angle = Math.random() * 6.28; (model as unknown as { spawnHorde(level: number): void }).spawnHorde(4); console.log('[bot] horde incoming'); }
   const rock = mine ? model.asteroids.filter(a => Math.hypot(a.x - centre.x, a.y - centre.y) > 400 && a.amount > 0).sort((a, b) => Math.hypot(a.x - centre.x, a.y - centre.y) - Math.hypot(b.x - centre.x, b.y - centre.y))[0] : undefined;
   if (rock && !model.dead && Math.hypot(rock.x - model.player.x, rock.y - model.player.y) > rock.radius + 90) Object.assign(model.player, { x: rock.x - rock.radius - 60, y: rock.y, vx: 0, vy: 0 });
   model.update(0.05, { x: 0, y: 0, aim: rock ? { x: rock.x, y: rock.y } : target ? { x: target.x, y: target.y } : { x: centre.x, y: centre.y - 500 }, fire: fire && Boolean(target), mine: Boolean(rock), dock: false });

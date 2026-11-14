@@ -60,7 +60,8 @@ class SpaceScene extends Phaser.Scene {
   private peerLabels: Phaser.GameObjects.Text[] = [];
   private hudElapsed = 0;
   private mapElapsed = 0;
-  private asteroidCache = new Map<number, { revision: number; key: string; used: number }>();
+  /** Baked asteroid sprites: `sig` fingerprints the outline, so a rock whose state was replaced (a sector sync) is repainted only if its shape really differs. */
+  private asteroidCache = new Map<number, { revision: number; key: string; used: number; sig: number; verify?: boolean }>();
   private iconUrls = new Map<string, string>();
   private backdrop:{key:string;sprite:Phaser.GameObjects.TileSprite;factor:number;scale:number}[]=[];
   private stationSprites:Phaser.GameObjects.Image[]=[];
@@ -565,7 +566,7 @@ class SpaceScene extends Phaser.Scene {
       try {
         const next = adoptWorld(this.model, world); if (next === this.model) return;
         const keep = { build: this.building, map: this.mapOpen };
-        this.switchModel(next); this.building = keep.build; this.mapOpen = keep.map;
+        this.switchModel(next, true); this.building = keep.build; this.mapOpen = keep.map;
         const authority = this.net.room?.authority ?? '', name = this.net.peers.get(authority)?.name ?? this.net.lobby?.members.find(m => m.id === authority)?.name;
         this.model.message = `Synced with ${name ?? 'the sector'}${name ? "'s view of this sector" : ''}.`;
       } catch (error) { this.model.message = `Could not sync this sector: ${(error as Error).message}`; }
@@ -709,7 +710,10 @@ class SpaceScene extends Phaser.Scene {
       this.peerLabels[label++] = text;
       const hull = Math.round(100 * pose.health / Math.max(1, pose.maxHealth));
       // Lobby allies in cyan; anyone else can attack (open PvP), so they are red.
-      text.setVisible(true).setPosition(pose.x, pose.y - 46).setColor(allies.has(pose.id) ? '#9fe4ff' : '#ff8a7a').setText(pose.dead ? `${pose.name} · destroyed` : `${pose.name} · ${hull}%${allies.has(pose.id) ? '' : ' · hostile'}`);
+      // Phaser re-renders a text's texture on every colour change, so the colour is only set when it differs.
+      const color = allies.has(pose.id) ? '#9fe4ff' : '#ff8a7a';
+      if (text.style.color !== color) text.setColor(color);
+      text.setVisible(true).setPosition(pose.x, pose.y - 46).setText(pose.dead ? `${pose.name} · destroyed` : `${pose.name} · ${hull}%${allies.has(pose.id) ? '' : ' · hostile'}`);
     }
     for (; index < this.peerSprites.length; index++) this.peerSprites[index].setVisible(false);
     for (; label < this.peerLabels.length; label++) this.peerLabels[label].setVisible(false);
@@ -905,16 +909,25 @@ class SpaceScene extends Phaser.Scene {
     if (over) { g.lineStyle(1.5, 0xffe9a8, 0.9); g.strokeRect(cx * size, cy * size, size, size); return; }
     g.fillStyle(color, 0.28); g.fillRect(cx * size, cy * size, size, size); g.lineStyle(1.5, color, 0.95); g.strokeRect(cx * size, cy * size, size, size);
   }
-  private switchModel(model: GameModel) {
-    for (const sprite of this.asteroidSprites) sprite.destroy(); this.asteroidSprites = [];
-    for (const cache of this.asteroidCache.values()) this.textures.remove(cache.key); this.asteroidCache.clear();
+  /**
+   * Swaps in another model. `sameWorld` (the same sector, as when taking on the authority's copy of it) keeps
+   * the asteroid sprites and their canvases, repainting each rock in place on its next draw, and keeps the
+   * backdrop painted for this seed, so a sync does not cause a visible hitch.
+   */
+  private switchModel(model: GameModel, sameWorld = false) {
+    sameWorld &&= model.seed === this.model.seed;
+    if (sameWorld) for (const cache of this.asteroidCache.values()) cache.verify = true;
+    else {
+      for (const sprite of this.asteroidSprites) sprite.destroy(); this.asteroidSprites = [];
+      for (const cache of this.asteroidCache.values()) this.textures.remove(cache.key); this.asteroidCache.clear();
+    }
     this.effects.clear();this.audio.setLoop('mine',0);this.audio.setLoop('tractor',0);
     this.buildMode = false; for (const [id, entry] of this.outpostSprites) { entry.image.destroy(); if (this.textures.exists(`outpost-${id}`)) this.textures.remove(`outpost-${id}`); } this.outpostSprites.clear();
     this.model = model; this.building = false; this.mapOpen = false; this.paused = false; this.movingModule = false; this.selectedCell = { x: 0, y: 0 };this.detailMode='module';this.buildCenter={x:0,y:0};
     this.lastBullet = -1; this.builderContent = ''; this.hudElapsed = 100; this.mapElapsed = 200; this.saveElapsed = 0;
     this.baseLabels.forEach((label, i) => label.setPosition(model.bases[i].x, model.bases[i].y - 172));
     this.zoomAimLock=undefined; this.follow.setPosition(model.player.x, model.player.y); this.cameras.main.centerOn(model.player.x, model.player.y);
-    this.paintBackdropTextures();
+    if (!sameWorld) this.paintBackdropTextures();
     this.refreshSeedLabel(); this.input.keyboard!.enabled = true;
   }
   private static readonly RADAR_RANGES = [1200, 2400, 4800];
@@ -1023,17 +1036,21 @@ class SpaceScene extends Phaser.Scene {
       g.lineStyle(1.5,base.unlocked?0x8df0bf:0xf0c98a,(1-beat)*.55);g.strokeCircle(base.x,base.y,20+beat*22);
       this.baseLabels[i].setText(`${base.name.toUpperCase()} / ${base.unlocked ? 'ACTIVE' : 'LOCKED'}\n${base.unlocked ? 'E  REPAIR + UNLOAD   Q  SHOP' : 'G  ACTIVATE: ' + Object.entries(base.cost).filter(([, n]) => n).map(([ore, n]) => `${n} ${ore}`).join(' + ')}`);
     });
-    let rockIndex = 0;
+    let rockIndex = 0, repaints = 0;
+    const signature = (shape: ReturnType<typeof ensureAsteroidGeometry>) => { let sum = shape.vertices.length; for (const v of shape.vertices) sum = (sum * 31 + Math.round(v.x * 8) * 7 + Math.round(v.y * 8)) | 0; return sum; };
     for (const a of this.model.asteroids) if (visible(a)) {
       const shape = ensureAsteroidGeometry(a), cache = this.asteroidCache.get(a.id);
       const key = `asteroid-${a.id}`;
-      if (!cache || cache.revision !== shape.revision) {
+      if (cache?.verify) { cache.verify = false; if (cache.sig === signature(shape)) cache.revision = shape.revision; }
+      // Rocks already on screen repaint at most a few per frame (they keep their old picture meanwhile), so many
+      // changes at once never stall a frame; rocks with no picture yet always paint.
+      if (!cache || (cache.revision !== shape.revision && repaints++ < 6)) {
         // Re-rasterize only when a visible polygon changes.
         const pixels=ASTEROID_SPRITE.size*ASTEROID_SPRITE.scale;
         const fresh=!this.textures.exists(key),texture=(fresh?this.textures.createCanvas(key,pixels,pixels):this.textures.get(key)) as Phaser.Textures.CanvasTexture;
         if(fresh)texture.setFilter(Phaser.Textures.FilterMode.NEAREST);
         paintAsteroid(texture.context,a);texture.refresh();
-        this.asteroidCache.set(a.id, { revision: shape.revision, key, used: this.time.now });
+        this.asteroidCache.set(a.id, { revision: shape.revision, key, used: this.time.now, sig: signature(shape) });
       } else cache.used = this.time.now;
       const sprite = this.asteroidSprites[rockIndex] ?? this.add.image(0, 0, key).setDepth(-1);
       this.asteroidSprites[rockIndex++] = sprite;

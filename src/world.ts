@@ -234,7 +234,10 @@ export class ChunkWorld {
       for(let dx=-3;dx<=3;dx++)for(let dy=-3;dy<=3;dy++)if(x+dx>=0&&y+dy>=0&&(x+dx)*CHUNK_SIZE<WORLD.width&&(y+dy)*CHUNK_SIZE<WORLD.height)this.sourceKeys.add(`${x+dx},${y+dy}`);
     }
     const active:Asteroid[]=[],seen=new Set<number>(),near=(a:{x:number;y:number})=>Math.abs(a.x-point.x)<=CHUNK_SIZE*2.7&&Math.abs(a.y-point.y)<=CHUNK_SIZE*2.7;
-    const add=(stored:Asteroid)=>{if(seen.has(stored.id)||!near(motionPoint(stored,this.spec,this.time)))return;const a=structuredClone(stored);placeBeltAtTime(a,this.spec,this.time);if(!near(a))return;assignNaturalDrift(a,this.spec);active.push(a);seen.add(a.id);};
+    // Rocks already streamed in are kept as they are (their live state is what capture just stored), so a
+    // periodic refresh only builds objects for rocks entering range instead of re-cloning every rock.
+    const live=new Map(current.map(a=>[a.id,a]));
+    const add=(stored:Asteroid)=>{if(seen.has(stored.id))return;const kept=live.get(stored.id);if(kept){if(near(kept)){active.push(kept);seen.add(kept.id);}return;}if(!near(motionPoint(stored,this.spec,this.time)))return;const a=structuredClone(stored);placeBeltAtTime(a,this.spec,this.time);if(!near(a))return;assignNaturalDrift(a,this.spec);active.push(a);seen.add(a.id);};
     for(const source of this.sourceKeys){
       const [x,y]=source.split(',').map(Number),baseline=this.baseline(x,y),region=this.regions.get(source);this.baselines.set(source,baseline);if(region)region.target=baseline.length;
       for(const original of baseline){
@@ -264,22 +267,26 @@ export class ChunkWorld {
     for(const original of this.pendingPopulation){if(!this.changes.has(original.id)&&!this.findSlot(original.id)){this.changes.set(original.id,null);const slot=this.schedule(original);if(slot)slot.due=this.time;}}
     this.pendingPopulation=[];
     const jobs=[...this.loadedRegions(cx,cy)].flatMap(region=>region.slots.map(slot=>({region,slot}))).sort((a,b)=>Number(a.slot.sourceId>=200000000&&a.slot.generation===0)-Number(b.slot.sourceId>=200000000&&b.slot.generation===0)||a.slot.due-b.slot.due);
+    // Rocks per home chunk, counted once (not once per slot).
+    const counts=new Map<number,number>(),home=(a:Asteroid)=>Math.floor((a.originX??a.x)/CHUNK_SIZE)*65536+Math.floor((a.originY??a.y)/CHUNK_SIZE);
+    for(const a of current){const k=home(a);counts.set(k,(counts.get(k)??0)+1);}
+    let generated=0;
     for(const {region,slot} of jobs){
         if(slot.current||slot.due>this.time)continue;
-        if(spawned>=POPULATION.asteroidArrivalsPerTick||current.length>=POPULATION.asteroidBudget)return spawned;
-        const count=current.filter(a=>Math.floor((a.originX??a.x)/CHUNK_SIZE)===region.cx&&Math.floor((a.originY??a.y)/CHUNK_SIZE)===region.cy).length;
-        if(count>=region.target)continue;
+        if(spawned>=POPULATION.asteroidArrivalsPerTick||current.length>=POPULATION.asteroidBudget||generated>=POPULATION.placementBudget)return spawned;
+        if((counts.get(region.cx*65536+region.cy)??0)>=region.target)continue;
         let arrival:Asteroid|undefined;
-        for(let attempt=0;attempt<POPULATION.placementAttempts&&!arrival;attempt++){
+        for(let attempt=0;attempt<POPULATION.placementAttempts&&!arrival&&generated<POPULATION.placementBudget;attempt++){
+          generated++;
           const candidates=generateChunk(this.spec,region.cx,region.cy,`${slot.index}:${slot.generation+1}:${slot.attempt++}`);for(const candidate of candidates)placeBeltAtTime(candidate,this.spec,this.time);
           arrival=candidates.find(a=>a.ore===slot.ore&&(!slot.motionId||a.motion?.id===slot.motionId)&&Math.abs(a.x-point.x)<CHUNK_SIZE*2.7&&Math.abs(a.y-point.y)<CHUNK_SIZE*2.7&&this.spec.bases.every(base=>distance(a,base)>POPULATION.baseClearance+a.radius)&&outsideView(a,view,point,a.radius)&&distance(a,slot.last)>a.radius+slot.last.radius+24&&
             current.every(other=>distance(a,other)>a.radius+other.radius+POPULATION.asteroidGap)&&blockers.every(b=>distance(a,b)>a.radius+b.radius+POPULATION.asteroidGap));
         }
-        if(!arrival){slot.due=this.time+POPULATION.retry;continue;}
+        if(!arrival){if(generated>=POPULATION.placementBudget&&slot.attempt%POPULATION.placementAttempts!==0)return spawned;slot.due=this.time+POPULATION.retry;continue;}
         slot.generation++;slot.attempt=0;
         arrival.id=-1-((region.cy*EXPANDED_ID_STRIDE+region.cx)*128+slot.index)*100000000-slot.generation;
         const rng=new SeedRandom(`${this.spec.seed}:drift:${arrival.id}`),angle=rng.next()*Math.PI*2,speed=POPULATION.asteroidDrift[0]+rng.next()*(POPULATION.asteroidDrift[1]-POPULATION.asteroidDrift[0]);
-        if(!arrival.motion){arrival.vx=Math.cos(angle)*speed;arrival.vy=Math.sin(angle)*speed;}assignNaturalDrift(arrival,this.spec);slot.current=arrival;this.arrivals.set(arrival.id,slot);current.push(arrival);spawned++;
+        if(!arrival.motion){arrival.vx=Math.cos(angle)*speed;arrival.vy=Math.sin(angle)*speed;}assignNaturalDrift(arrival,this.spec);slot.current=arrival;this.arrivals.set(arrival.id,slot);current.push(arrival);counts.set(home(arrival),(counts.get(home(arrival))??0)+1);spawned++;
     }
     return spawned;
   }

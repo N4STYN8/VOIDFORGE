@@ -1,11 +1,16 @@
 import { ensureAsteroidGeometry,asteroidLocal, type Asteroid } from './mining.ts';
 import { containsPoint,segmentPolygonHit, type Vertex } from './asteroidGeometry.ts';
 export function clearLineOfSight(start: Vertex, end: Vertex, asteroids: Asteroid[]) {
-  const dx = end.x - start.x, dy = end.y - start.y, lengthSquared = dx * dx + dy * dy;
+  // Coordinates are read once: callers pass many object shapes, and repeated generic property reads are slow.
+  const sx = start.x, sy = start.y, dx = end.x - sx, dy = end.y - sy, lengthSquared = dx * dx + dy * dy;
   if (lengthSquared < 1e-8) return true;
-  for (const asteroid of asteroids) {
-    const t = Math.max(0, Math.min(1, ((asteroid.x - start.x) * dx + (asteroid.y - start.y) * dy) / lengthSquared));
-    if ((start.x + dx * t - asteroid.x) ** 2 + (start.y + dy * t - asteroid.y) ** 2 > asteroid.radius ** 2) continue;
+  const minX = Math.min(sx, sx + dx), maxX = Math.max(sx, sx + dx), minY = Math.min(sy, sy + dy), maxY = Math.max(sy, sy + dy);
+  for (let i = 0; i < asteroids.length; i++) {
+    const asteroid = asteroids[i], ax = asteroid.x, ay = asteroid.y, r = asteroid.radius;
+    // Rocks whose bounding box misses the sight line's box cannot block it.
+    if (ax + r < minX || ax - r > maxX || ay + r < minY || ay - r > maxY) continue;
+    const t = Math.max(0, Math.min(1, ((ax - sx) * dx + (ay - sy) * dy) / lengthSquared)), px = sx + dx * t - ax, py = sy + dy * t - ay;
+    if (px * px + py * py > r * r) continue;
     const vertices = ensureAsteroidGeometry(asteroid).vertices;
     const local=asteroidLocal(asteroid,start);
     if(containsPoint(local,vertices)||segmentPolygonHit(ensureAsteroidGeometry(asteroid),local,asteroidLocal(asteroid,end)))return false;
