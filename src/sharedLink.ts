@@ -156,8 +156,8 @@ export class SharedLink {
       if (kind === 'hit' && (model.shared?.role === 'authority' || from === 'crew-server' && this.net.authority)) for (const hit of decodeHits(data)) model.applyRemoteHit(hit.enemyId, hit.damage, from, hit.pierce);
       if (kind === 'loot') model.receiveLoot(decodeLoot(data));
       const name = this.net.peers.get(from)?.name ?? 'another pilot';
-      if (kind === 'pvp-hit') model.applyPvpHit(from, name, decodePvpHit(data), Boolean(this.net.lobby?.members.some(m => m.id === from) || this.net.crewState?.crewPeerIds.includes(from)));
-      if (kind === 'pvp-loot') model.receivePvpLoot(decodeCargo(data), name);
+      if (kind === 'pvp-hit' && !model.modularCombat) model.applyPvpHit(from, name, decodePvpHit(data), Boolean(this.net.lobby?.members.some(m => m.id === from) || this.net.crewState?.crewPeerIds.includes(from)));
+      if (kind === 'pvp-loot' && !model.modularCombat) model.receivePvpLoot(decodeCargo(data), name);
       if (kind === 'world-req' && model.shared?.role === 'authority') void this.sendWorld(from, model);
       if (kind === 'world') this.receiveChunk(from, data);
     };
@@ -265,7 +265,7 @@ export class SharedLink {
     if (now - o.at < 1 / OBSERVED.rate) return;
     o.at = now;
     const p = model.player, fx: Fx = { n: encodeEnemies(model.enemies.filter(e => e.health > 0 && Math.abs(e.x - p.x) < OBSERVED.range && Math.abs(e.y - p.y) < OBSERVED.range)), f: 1 };
-    const look = model.dead ? undefined : encodeLook(model.player, model.shield, model.maxShield, model.miningLinks, model.tractorLinks);
+    const look = model.dead ? undefined : encodeLook(model.player, model.shield, model.maxShield, model.miningLinks, [...model.tractorLinks,...model.salvageLinks]);
     if (look) fx.l = look;
     if (o.mine.length) fx.p = o.mine.splice(0);
     if (o.hostile.length) fx.e = o.hostile.splice(0);
@@ -300,7 +300,7 @@ export class SharedLink {
     const viewers = model.outposts.some(o => o.drones?.length) ? this.net.poses(now) : [];
     const drones = encodeDrones(model.outposts, (x, y) => viewers.some(t => Math.abs(t.x - x) < NEAR_ENEMIES && Math.abs(t.y - y) < NEAR_ENEMIES));
     if (drones.length || this.dronesSent) { fx.d = drones; this.dronesSent = drones.length > 0; }
-    const look = model.dead ? undefined : encodeLook(model.player, model.shield, model.maxShield, model.miningLinks, model.tractorLinks, model.boostActive, model.modules.some(m => m.kind === 'engine' && (m.ability?.phase ?? 0) > 0));
+    const look = model.dead ? undefined : encodeLook(model.player, model.shield, model.maxShield, model.miningLinks, [...model.tractorLinks,...model.salvageLinks], model.boostActive, model.operationalModules.some(m => m.kind === 'engine' && (m.ability?.phase ?? 0) > 0),model.modules);
     if (this.pendingVisuals.length) fx.v = this.pendingVisuals.splice(0, 48).map(encodeVisual);
     const turrets = this.turretRows(model, now); if (turrets.length) fx.t = turrets;
     if (look) fx.l = look;

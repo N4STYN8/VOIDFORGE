@@ -1,7 +1,12 @@
+import {ENEMIES,BASE_RADIUS} from '../src/data.ts';
+import {PvpArena} from './pvpArena.ts';
+import {ChunkWorld,createWorld,type WorldSpec} from '../src/world.ts';
+import {segmentCircleHit,segmentPolygonHit} from '../src/asteroidGeometry.ts';
+import {asteroidLocal,ensureAsteroidGeometry} from '../src/mining.ts';
 import {CrewStore} from './crewStore.ts';
 import {applyCrewEconomy} from './crewEconomy.ts';
 import {CrewOutposts} from './crewOutposts.ts';
-import {decodeRocks,decodeEnemies,decodeShots,type RockState} from '../src/shared.ts';
+import {decodeBumps,decodeRocks,decodeEnemies,decodeShots,type RockState} from '../src/shared.ts';
 import type {CrewCommandContext} from './crewStore.ts';
 import type {ShipState} from '../src/netProtocol.ts';
 import { createServer as createHttp, type Server } from 'node:http';
@@ -13,7 +18,8 @@ import { NET, CLAIMS, MATCH, packState, parseClient, roomTag, type ClientMessage
 import { ADMIN, type AdminCommand, type AdminEvent, type AdminPilot } from '../src/adminProtocol.ts';
 
 /**
- * VOIDFORGE relay: lobbies plus per-sector rooms. It never simulates the game; each client runs its
+ * VOIDFORGE relay: lobbies plus per-sector rooms. Clients run the world/NPC model; the optional modular
+ * PvP service owns combat projectiles and salvage. Each client otherwise runs its
  * own model and the relay forwards ship state to the other clients in the same sector (the room key
  * is the sector's world seed). That keeps the per-player cost small, which is what lets one relay aim
  * at many concurrent players. Lobbies hold up to NET.maxLobby pilots sharing the host's world.
@@ -22,6 +28,8 @@ import { ADMIN, type AdminCommand, type AdminEvent, type AdminPilot } from '../s
  * sockets that watch a sector get a copy of its traffic (`tap`), bounded so watching cannot stall the relay.
  */
 type Client = {
+  modularReady?:boolean;
+  combatParts?:{id:string;action:'sync'|'ack';total:number;parts:(string|undefined)[];bytes:number;at:number};
   pilotId?:string;ship?:ShipState;
   at?: { x: number; y: number }; angle?: number;
   /** Last reported ship state was destroyed: such a pilot's game is not simulating, so it never runs a room. */ dead?: boolean;
@@ -38,7 +46,7 @@ const ALERTS = { events: 20, eventsPerSecond: 1, floodWindow: 10000, floodDrops:
 /** A sector room: its pilots, who runs its enemies, and rock claim leases (rock id -> holder and expiry). */
 type Room = { clients: Set<Client>; authority?: Client; claims: Map<number, { holder: Client; until: number }> };
 type Lobby = { code: string; host: Client; members: Set<Client>; open?: boolean };
-export type RelayOptions = { port?: number; host?: string; tls?: { cert: string | Buffer; key: string | Buffer }; origins?: string[]; admin?: AdminOptions;crewFile?:string };
+export type RelayOptions = { port?: number; host?: string; tls?: { cert: string | Buffer; key: string | Buffer }; origins?: string[]; admin?: AdminOptions;crewFile?:string;pvpFile?:string };
 export type RelayStats = { clients: number; rooms: number; lobbies: number; messagesIn: number; framesOut: number; bytesOut: number; skipped: number; obsDropped: number; admins: number; uptime: number; rssMb: number; cpuMs: number };
 export type Relay = { server: Server; port: number; close(): Promise<void>; stats(): RelayStats };
 
@@ -69,6 +77,39 @@ export function startRelay(options: RelayOptions = {}): Promise<Relay> {
     const result=applyCrewEconomy(crew,pilotId,action,data,context);if(result===undefined)throw Error('Unknown crew action.');return result;
   },view:(crew,context)=>outpostService.view(crew,context)});
 
+  const combatSpecs=new Map<string,WorldSpec>(),combatSpecSignatures=new Map<string,string>();
+  const combatClocks=new Map<string,{game:number;at:number}>(),combatEnemies=new Map<string,ReturnType<typeof decodeEnemies>>();
+  const combatMotion=new Map<string,Map<number,{x:number;y:number;vx:number;vy:number;at:number}>>();
+  const combatWorlds=new Map<string,{world:ChunkWorld;at:number;point:{x:number;y:number};rocks:import('../src/mining.ts').Asteroid[]}>();
+  const combat=new PvpArena({
+    pose:id=>{const c=[...clients].find(c=>c.pilotId===id);return c?.modularReady&&c.room&&c.ship?{room:c.room,...c.ship}:undefined;},
+    members:room=>[...rooms.get(room)?.clients??[]].flatMap(c=>c.modularReady&&c.pilotId?[c.pilotId]:[]),
+    safe:(room,p)=>{let spec=combatSpecs.get(room);if(!spec){spec=createWorld(room);combatSpecs.set(room,spec);}return spec.bases.some(b=>Math.hypot(b.x-p.x,b.y-p.y)<BASE_RADIUS);},
+    allies:(a,b)=>{const first=[...clients].find(c=>c.pilotId===a),second=[...clients].find(c=>c.pilotId===b);return Boolean(first&&second&&(first.lobby&&first.lobby===second.lobby||crewStore.sameCrew(a,b)));},
+    rock:(room,start,end)=>{
+      const cacheKey=`${room}:${Math.floor(start.x/1600)},${Math.floor(start.y/1600)}`;
+      let cached=combatWorlds.get(cacheKey);
+      if(!cached){cached={world:new ChunkWorld(room,combatSpecs.has(room)?{spec:combatSpecs.get(room)!,changes:[],surveyed:[]}:undefined),at:0,point:{...start},rocks:[]};combatWorlds.set(cacheKey,cached);if(combatWorlds.size>64)combatWorlds.delete(combatWorlds.keys().next().value!);}
+      const epoch=combatClocks.get(room);
+      cached.world.time=epoch?epoch.game+(Date.now()-epoch.at)/1000:0;
+      if(Date.now()-cached.at>250){cached.rocks=cached.world.activate(start,[],true);cached.at=Date.now();cached.point={...start};}
+      let best:number|undefined;const seen=new Set<number>(),patches=rockCache.get(room),motion=combatMotion.get(room);
+      const consider=(original:import('../src/mining.ts').Asteroid)=>{
+        seen.add(original.id);const patch=patches?.get(original.id);if(patch?.gone)return;
+        let rock=patch?{...original,...patch}:original;const bump=motion?.get(original.id);
+        if(bump){const age=Math.min(2,(Date.now()-bump.at)/1000);rock={...rock,x:bump.x+bump.vx*age,y:bump.y+bump.vy*age};}
+        if(rock.amount<=0||segmentCircleHit(start,end,rock,rock.radius+4)===undefined)return;
+        const hit=segmentPolygonHit(ensureAsteroidGeometry(rock),asteroidLocal(rock,start),asteroidLocal(rock,end));if(hit&&(best===undefined||hit.t<best))best=hit.t;
+      };
+      for(const rock of cached.rocks)consider(rock);
+      // Renewable/field arrivals absent from the seed baseline still provide cover through the canonical feed.
+      if(patches)for(const patch of patches.values())if(!seen.has(patch.id)&&!patch.gone&&patch.geometry&&Math.abs(patch.x!-start.x)<patch.radius!+200&&Math.abs(patch.y!-start.y)<patch.radius!+200)consider({...patch,ore:'iron',angle:0,maxHealth:patch.health} as import('../src/mining.ts').Asteroid);
+      for(const enemy of combatEnemies.get(room)??[]){if(enemy[5]<=0)continue;const t=segmentCircleHit(start,end,{x:enemy[2],y:enemy[3]},ENEMIES[enemy[1] as keyof typeof ENEMIES].radius+4);if(t!==undefined&&(best===undefined||t<best))best=t;}
+      return best;
+    }
+  },options.pvpFile);
+  let combatAt=Date.now();
+  const combatTimer=setInterval(()=>{const at=Date.now();try{combat.tick((at-combatAt)/1000,at/1000);}catch{/* Persistence failure must never produce an unrecorded client grant. */}combatAt=at;},50);combatTimer.unref();
   // Totals since start, for /stats and load tests.
   const counters = { messagesIn: 0, framesOut: 0, bytesOut: 0, skipped: 0, obsDropped: 0 }, started = Date.now();
   /** Admin observers by sector seed, the sectors an admin locked, and per-room observer cast budgets. */
@@ -108,6 +149,7 @@ export function startRelay(options: RelayOptions = {}): Promise<Relay> {
   };
   const allowed = options.origins ?? DEFAULT_ORIGINS;
   const send = (c: Client, m: ServerMessage) => { const frame = textFrame(JSON.stringify(m)); c.peer.sendFrame(frame); counters.framesOut++; counters.bytesOut += frame.length; };
+  const sendCombat=(c:Client,m:Extract<ServerMessage,{t:'modular-result'}>)=>{const text=JSON.stringify(m);if(text.length<3000)send(c,m);else{const total=Math.ceil(text.length/3000);if(total>512){send(c,{t:'modular-result',requestId:m.requestId,ok:false,error:'Combat snapshot exceeds transfer budget.'});return;}for(let index=0;index<total;index++)send(c,{t:'modular-result-part',requestId:m.requestId,index,total,data:text.slice(index*3000,(index+1)*3000)});}};
   const crewContext=(c:Client):Partial<CrewCommandContext>=>({world:c.world,ship:c.ship});
   function announceCrews(){const online=[...clients].filter(c=>c.pilotId).map(c=>({pilotId:c.pilotId!,name:c.name,socketId:c.id}));for(const c of clients)if(c.pilotId){const state=crewStore.snapshot(c.pilotId,online,crewContext(c));const data=JSON.stringify(state);if(Buffer.byteLength(data)<NET.maxMessage-100)send(c,{t:'crew-state',state});else{const total=Math.ceil(data.length/3000),transferId=randomBytes(8).toString('hex');if(total>256){delete state.outpostView;send(c,{t:'crew-state',state});continue;}for(let index=0;index<total;index++)send(c,{t:'crew-state-part',transferId,index,total,data:data.slice(index*3000,(index+1)*3000)});}}}
   const members = (lobby: Lobby): Member[] => [...lobby.members].map(c => ({ id: c.id, name: c.name, host: c === lobby.host }));
@@ -148,7 +190,7 @@ export function startRelay(options: RelayOptions = {}): Promise<Relay> {
     for (const [id, claim] of room.claims) if (claim.holder === c) room.claims.delete(id);
     const gone: ServerMessage = { t: 'gone', id: c.id };
     tap(key, JSON.stringify(gone));
-    if (!room.clients.size) { rooms.delete(key); castBudget.delete(key); return; }
+    if (!room.clients.size) { rooms.delete(key); castBudget.delete(key);combatClocks.delete(key);combatEnemies.delete(key);combatMotion.delete(key);combatSpecs.delete(key);combatSpecSignatures.delete(key); return; }
     for (const other of room.clients) send(other, gone);
     elect(key, room);
   }
@@ -289,6 +331,16 @@ const result=c.pilotId?crewStore.execute(c.pilotId,m.requestId,m.action,m.data,c
           .map(l => ({ code: l.code, host: l.host.name, members: l.members.size, power: l.host.profile?.power }));
         send(c, { t: 'lobbies', online: clients.size, list }); return;
       }
+      case 'modular-part': {if(!c.combatParts||c.combatParts.id!==m.requestId||Date.now()-c.combatParts.at>30000)c.combatParts={id:m.requestId,action:m.action,total:m.total,parts:new Array(m.total),bytes:0,at:Date.now()};const p=c.combatParts;if(p.total!==m.total||p.action!==m.action)return;if(p.parts[m.index]===undefined){p.parts[m.index]=m.data;p.bytes+=m.data.length;}if(p.bytes>1536000){c.combatParts=undefined;return;}if(p.parts.filter(v=>v!==undefined).length===p.total){c.combatParts=undefined;try{handle(c,{t:'modular',requestId:p.id,action:p.action,data:JSON.parse(p.parts.join(''))});}catch{sendCombat(c,{t:'modular-result',requestId:p.id,ok:false,error:'Invalid combat transfer.'});}}return;}
+      case 'modular': {
+        if(!c.pilotId||!c.room){sendCombat(c,{t:'modular-result',requestId:m.requestId,ok:false,error:'Join a sector with an authenticated pilot identity.'});return;}
+        try{const data=m.data as Record<string,unknown>;
+          if(m.action==='sync'&&data.worldSpec&&rooms.get(c.room)?.authority===c){const spec=data.worldSpec as WorldSpec;const signature=JSON.stringify(spec);if(spec.seed!==c.room||spec.version!==1||signature.length>128000||!Array.isArray(spec.bases)||!spec.bases.length||!spec.bases.every(b=>Number.isFinite(b.x)&&Number.isFinite(b.y))||!Array.isArray(spec.belts)||spec.belts.length>256||!Array.isArray(spec.clusters)||spec.clusters.length>256||!Array.isArray(spec.starter)||spec.starter.length>2000)throw Error('Invalid canonical world specification.');if(combatSpecSignatures.get(c.room)!==signature){combatSpecs.set(c.room,structuredClone(spec));combatSpecSignatures.set(c.room,signature);for(const [key,entry]of combatWorlds)if(entry.world.spec.seed===c.room)combatWorlds.delete(key);}}
+          if(m.action==='ack'){if(Number.isSafeInteger(data.seq))combat.ack(c.pilotId,data.seq as number,data.actual as Record<string,number>,Array.isArray(data.removed)?data.removed.filter((v:unknown)=>typeof v==='string'):[]);}
+          else {combat.sync(c.pilotId,c.room,data.ship,Date.now()/1000);c.modularReady=true;if(Array.isArray(data.fire))for(const fire of data.fire.slice(0,64))if(fire&&[fire.x,fire.y,fire.angle].every(Number.isFinite))combat.fire(c.pilotId,fire.x,fire.y,fire.angle,Date.now()/1000);combat.tractors(c.pilotId,data.tractors,Date.now()/1000);}
+          sendCombat(c,{t:'modular-result',requestId:m.requestId,ok:true,data:combat.snapshot(c.pilotId)});
+        }catch(error){sendCombat(c,{t:'modular-result',requestId:m.requestId,ok:false,error:(error as Error).message});}return;
+      }
       case 'profile': c.profile = { home: m.home, power: m.power }; return;
       case 'match': {
         // The online pilot nearest in progression (within MATCH.maxRatio) becomes the asker's next sector.
@@ -340,6 +392,9 @@ const result=c.pilotId?crewStore.execute(c.pilotId,m.requestId,m.action,m.data,c
       case 'cast': {
         if (!c.room) return;
         const frame=m.d as Record<string,unknown>;
+        if(m.k==='fx'&&Array.isArray(frame?.b)){let motion=combatMotion.get(c.room);if(!motion)combatMotion.set(c.room,motion=new Map());for(const [id,x,y,vx,vy]of decodeBumps(frame.b))motion.set(id,{x,y,vx,vy,at:Date.now()});if(motion.size>5000)for(const id of [...motion.keys()].slice(0,motion.size-5000))motion.delete(id);}
+        if(rooms.get(c.room)?.authority===c){if(m.k==='fx'&&typeof frame?.c==='number'&&Number.isFinite(frame.c)&&frame.c>=0)combatClocks.set(c.room,{game:frame.c,at:Date.now()});if(m.k==='enemies'||m.k==='fx'&&Array.isArray(frame?.n))combatEnemies.set(c.room,decodeEnemies(m.k==='enemies'?m.d:frame.n));}
+
         const patches=m.k==='rocks'?crewRockPatches(m.d):m.k==='fx'?crewRockPatches(frame?.r):[];
         if(patches.length){let cache=rockCache.get(c.room);if(!cache)rockCache.set(c.room,cache=new Map());for(const patch of patches){const lock=crewClaims.get(c.room+':'+patch.id);if(lock&&lock.until>Date.now())continue;cache.set(patch.id,patch);}if(cache.size>5000)for(const id of [...cache.keys()].slice(0,cache.size-5000))cache.delete(id);}
         if(rooms.get(c.room)?.authority===c&&c.world&&(m.k==='fx'||m.k==='enemies'||m.k==='shots'))crewStore.inspectCrews(crew=>{if(crew.outposts?.length)outpostService.ingestCombat(crew,c.world!,{enemies:m.k==='enemies'?decodeEnemies(m.d):m.k==='fx'?decodeEnemies(frame?.n):undefined,shots:m.k==='shots'?decodeShots(m.d):m.k==='fx'?decodeShots(frame?.e):undefined});});
@@ -359,6 +414,7 @@ const result=c.pilotId?crewStore.execute(c.pilotId,m.requestId,m.action,m.data,c
       case 'direct': {
         if (!c.room) return;
         const target = [...rooms.get(c.room)?.clients ?? []].find(other => other.id === m.to && other !== c);
+        if((m.k==='pvp-hit'||m.k==='pvp-loot')&&target?.modularReady&&target.pilotId&&combat.hasPilot(target.pilotId))return;
         if(target&&m.k==='pvp-hit'&&crewStore.sameCrew(c.pilotId,target.pilotId))return;
         if (target) send(target, { t: 'direct', from: c.id, r: roomTag(c.room), k: m.k, d: m.d }); else send(c, { t: 'undelivered', to: m.to, k: m.k });
         return;
@@ -433,7 +489,7 @@ const result=c.pilotId?crewStore.execute(c.pilotId,m.requestId,m.action,m.data,c
       clients.delete(c); leaveRoom(c); leaveLobby(c, '', false);if(c.pilotId)announceCrews();
       for (const [ref, entry] of pending) if (entry.client === c) { pending.delete(ref); clearTimeout(entry.timer); entry.resolve({ ok: false, message: 'The pilot disconnected.' }); }
     };
-    send(c, { t: 'welcome', id: c.id,crewProtocol:1 });
+    send(c, { t: 'welcome', id: c.id,crewProtocol:1,modularPvp:1 });
     peer.ping();
   });
   const keepAlive = setInterval(() => { for (const c of clients) { if (!c.peer.alive) { c.peer.close(1001); continue; } c.peer.alive = false; c.peer.ping(); } }, NET.ping * 1000);
@@ -445,7 +501,7 @@ const result=c.pilotId?crewStore.execute(c.pilotId,m.requestId,m.action,m.data,c
     server.listen(options.port ?? 8787, options.host ?? '0.0.0.0', () => {
       const address = server.address(), port = typeof address === 'object' && address ? address.port : options.port ?? 8787;
       resolve({ server, port, stats,
-        close: () => new Promise(done => { clearInterval(keepAlive);clearInterval(crewTick); admin.close(); for (const c of clients) c.peer.close(1001); server.close(() => done()); server.closeIdleConnections?.(); }) });
+        close: () => new Promise(done => { clearInterval(keepAlive);clearInterval(crewTick);clearInterval(combatTimer); admin.close(); for (const c of clients) c.peer.close(1001); server.close(() => done()); server.closeIdleConnections?.(); }) });
     });
   });
 }

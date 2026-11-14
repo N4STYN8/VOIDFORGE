@@ -1,3 +1,5 @@
+import {validSalvageState,connectedModules,key,mineralTotal,type CombatShip,type CombatReceipt,type RecoveredModule,type SalvageObject} from './pvpSalvage.ts';
+import {minerals} from './economy.ts';
 import type {CrewPurchaseIntent,CrewEconomyMark} from './crewEconomyTypes.ts';
 import { ECONOMY, LEGACY_PURCHASES, missingMinerals, legacyInvestment, type Minerals } from './economy.ts';
 import { advanceBelt,spinFor,BELT_MOTION } from './beltMotion.ts';
@@ -22,8 +24,8 @@ export const GHOST = { extrapolate: 0.5, correct: 8, turn: 12, snap: 400 };
 /** Effect kinds a pilot's game sends to the others in a shared sector (muzzles and impacts are recreated there from the shots themselves). */
 export const SHARED_EFFECTS: ReadonlySet<EffectEvent['type']> = new Set(['explosion', 'debris', 'arc', 'shield']);
 import { collideAsteroid, collide, type Body } from './collisions.ts';
-import { CARGO_EJECTION, LOBBY_SHARE, PVP, SECTOR, WORLD, SHIP, MISSILE_DEFENSE, WEAPONS, ENEMIES, ENEMY_AI, ENEMY_SPAWN, HORDE, FLEET, WAYPOINTS, OUTPOST, STRUCTURES, STRUCTURE_SPECIAL, DRONES, type StructureKind, DANGER, BOSS, HEARING, type EnemyDefinition, type EnemyWeapon, COLLISION, ORE_COMBAT, PATROL, MODULE_DURABILITY, REPAIR, MODULES, BUILD_GRID, BASES, BASE_RADIUS, EXPLORATION, RESOURCES, type EnemyKind, CORE, ROCKET, WEAPON_TYPES, SHIP_SYSTEMS, VFX, type WeaponKind, equipment, upgradeCost, type EquipmentStats, type EquipmentKind, type ModuleKind, type Resource } from './data.ts';
-export type ShipModule = { invested?:Minerals; x: number; y: number; kind: ModuleKind; level: number; cooldown: number; integrity: number; ability?:AbilityState; targetIds?: number[]; boostRemaining?:number; boostCooldown?:number };
+import { MODULAR_PVP, CARGO_EJECTION, LOBBY_SHARE, PVP, SECTOR, WORLD, SHIP, MISSILE_DEFENSE, WEAPONS, ENEMIES, ENEMY_AI, ENEMY_SPAWN, HORDE, FLEET, WAYPOINTS, OUTPOST, STRUCTURES, STRUCTURE_SPECIAL, DRONES, type StructureKind, DANGER, BOSS, HEARING, type EnemyDefinition, type EnemyWeapon, COLLISION, ORE_COMBAT, PATROL, MODULE_DURABILITY, REPAIR, MODULES, BUILD_GRID, BASES, BASE_RADIUS, EXPLORATION, RESOURCES, type EnemyKind, CORE, ROCKET, WEAPON_TYPES, SHIP_SYSTEMS, VFX, type WeaponKind, equipment, upgradeCost, type EquipmentStats, type EquipmentKind, type ModuleKind, type Resource } from './data.ts';
+export type ShipModule = { offline?:boolean; invested?:Minerals; x: number; y: number; kind: ModuleKind; level: number; cooldown: number; integrity: number; ability?:AbilityState; targetIds?: number[]; boostRemaining?:number; boostCooldown?:number };
 export type Point = { x: number; y: number };
 /** A ship that is not being flown: everything that belongs to the hull rather than to the pilot. */
 export type StoredShip = { id: number; name: string; coreLevel: number; modules: ShipModule[]; health: number; paint?: number };
@@ -31,7 +33,7 @@ export type Waypoint = Point & { id: number };
 /** The world-bound part of a save (everything that stays behind in a sector when the pilot leaves it). */
 export type SectorWorld = Omit<GameSave, PilotKey | 'galaxy'>;
 /** Pilot-owned save fields: these travel with the ship from sector to sector. */
-export const PILOT_KEYS = ['crewEconomyMarks','rebuildDue','player','modules','coreAbility','coreLevel','shield','energy','heat','cargo','stored','kills','deaths','shipName','shipPaint','hangar','ultimateTimers','fabricatorDebt','systemsDisabled','empImmunity','shieldDelay'] as const;
+export const PILOT_KEYS = ['salvageState','crewEconomyMarks','rebuildDue','player','modules','coreAbility','coreLevel','shield','energy','heat','cargo','stored','kills','deaths','shipName','shipPaint','hangar','ultimateTimers','fabricatorDebt','systemsDisabled','empImmunity','shieldDelay'] as const;
 export type PilotKey = typeof PILOT_KEYS[number];
 /** Where the pilot is on the sector grid, plus the saved state of every other sector they have visited. */
 export type Galaxy = { home: string; x: number; y: number; sectors: Record<string, SectorWorld>;
@@ -63,6 +65,46 @@ export class GameModel {
 
   player = { x: WORLD.stationX, y: WORLD.stationY + 130, vx: 0, vy: 0, health: SHIP.health, angle: -Math.PI / 2 };
   modules: ShipModule[] = starterModules();
+  salvageState:{life:string;receipts:Record<string,number>;modules:RecoveredModule[];lastDebit?:{ledger:string;seq:number;actual:Minerals;removed?:string[]}}={life:"",receipts:{},modules:[]};
+  modularCombat=false;
+  combatFire:{x:number;y:number;angle:number}[]=[];
+  salvageObjects:SalvageObject[]=[];
+  salvageLinks:GameModel['tractorLinks']=[];
+  get operationalModules(){return this.modules.filter(m=>m.integrity>0&&!m.offline);}
+  combatManifest():CombatShip{return{life:this.salvageState.life,...this.player,shield:this.shield,coreLevel:this.coreLevel,modules:this.modules.map(({x,y,kind,level,integrity,offline,invested,ability})=>({x,y,kind,level,integrity,offline,invested,ability})),cargo:{...this.cargo}};}
+  /** Apply only server receipts, save before acknowledging; replays return the original debit. */
+  applyCombatReceipt(ledger:string,event:CombatReceipt):Minerals{
+    if((this.salvageState.receipts[ledger]??0)>=event.seq)return this.salvageState.lastDebit?.ledger===ledger&&this.salvageState.lastDebit.seq===event.seq?this.salvageState.lastDebit.actual:minerals();
+    const actual=minerals(),removedCells:string[]=[];
+    if(event.hit&&event.life===this.salvageState.life){
+      const hit=event.hit;this.musicEvents.add('pvp');
+      this.shield=Math.max(0,this.shield-hit.shieldDamage);this.shieldDelay=3;
+      for(const damage of hit.damage){const m=this.modules.find(m=>m.x===damage.x&&m.y===damage.y);if(m)m.integrity=Math.max(0,m.integrity-damage.amount);}
+      const removed=new Set(hit.detached.filter(d=>this.modules.some(m=>key(m)===key(d)&&m.kind===d.kind&&m.level===d.level)).map(key));removedCells.push(...removed);this.modules=this.modules.filter(m=>!removed.has(key(m)));
+      const connected=connectedModules(this.modules);for(const m of this.modules)m.offline=!connected.has(key(m));
+      for(const ore of Object.keys(RESOURCES) as Resource[]){actual[ore]=Math.min(this.cargo[ore],hit.released[ore]);this.cargo[ore]-=actual[ore];}
+      this.player.health=Math.max(0,this.player.health-hit.coreDamage);
+      this.effect({type:hit.detached.length?'explosion':'impact',...hit.point,radius:hit.detached.length?22:10,color:0xffb46b});
+      this.cue(hit.detached.length?'moduleLost':hit.shieldDamage?'shield':'impact',hit.point);
+      if(hit.detached.some(m=>m.kind==='cargo'))this.cue('cargoLoad',hit.point);
+      if(hit.damage.some(d=>this.modules.some(m=>m.kind==='reactor'&&m.x===d.x&&m.y===d.y)))this.effect({type:'arc',...hit.point,toX:this.player.x,toY:this.player.y,radius:14,color:0x8de7ff});
+      this.message=hit.detached.length?'Component detached! Use tractors to recover floating salvage.':'Structural hit — damaged components need repair.';
+      if(hit.defeat){for(const ore of Object.keys(RESOURCES) as Resource[]){if(this.cargo[ore]>0)this.releaseOre(this.player,ore,this.cargo[ore]);this.cargo[ore]=0;}this.player.health=0;this.rebuildDue=true;this.deaths++;this.message='Core destroyed. Press R to rebuild at home.';this.cue('death');}
+      this.player.health=Math.min(this.player.health,this.maxHealth);this.energy=Math.min(this.energy,this.maxEnergy);this.shield=Math.min(this.shield,this.maxShield);
+    }
+    if(event.kill){this.kills++;this.musicEvents.add('pvp');this.message='Enemy core destroyed. Cargo and components remain as tractor salvage.';}
+    if(event.cargo){for(const ore of Object.keys(RESOURCES) as Resource[]){const amount=event.cargo[ore]??0;if(event.target==='stored')this.stored[ore]+=amount;else{const fit=Math.min(amount,Math.max(0,this.cargoCapacity-this.cargoUsed));this.cargo[ore]+=fit;actual[ore]=fit;}}}
+    if(event.module&&!this.salvageState.modules.some(m=>m.id===event.module!.id))this.salvageState.modules.push(structuredClone(event.module));
+    if(event.module||event.cargo&&mineralTotal(event.cargo)>0){this.sound(event.module?'moduleInstall':'pickupHeavy');this.message=event.target==='stored'?'Expired salvage returned to station storage / salvage locker.':'Salvage recovered. Components need repair in the outfitter.';}
+    this.salvageState.receipts[ledger]=event.seq;this.salvageState.lastDebit={ledger,seq:event.seq,actual,removed:removedCells};return actual;
+  }
+  salvageRepairCost(id:string){const m=this.salvageState.modules.find(m=>m.id===id);const cost=minerals();if(m){cost.iron=Math.ceil((this.moduleMaxIntegrity(m)-m.integrity)*MODULAR_PVP.repairFraction);cost.copper=Math.ceil(cost.iron*.4);}return cost;}
+  repairSalvage(id:string){const m=this.salvageState.modules.find(m=>m.id===id),cost=this.salvageRepairCost(id);if(!m||!this.atStation||this.dead||Object.entries(cost).some(([ore,n])=>this.stored[ore as Resource]<n)){this.message='Repair salvage at a station. Missing: '+missingMinerals(cost,this.stored);return false;}for(const ore of Object.keys(RESOURCES) as Resource[])this.stored[ore]-=cost[ore];m.integrity=this.moduleMaxIntegrity(m);this.sound('repair');this.message='Recovered module repaired. Select Install, then an empty connected grid cell.';return true;}
+  installSalvage(id:string,x:number,y:number){const m=this.salvageState.modules.find(m=>m.id===id);if(!m||this.dead||!this.atStation||m.integrity<this.moduleMaxIntegrity(m)||m.level>this.coreLevel||m.kind==='builder'&&this.coreLevel<OUTPOST.coreLevel||!Number.isSafeInteger(x)||!Number.isSafeInteger(y)||!x&&!y||this.modules.some(m=>m.x===x&&m.y===y)||!this.connectedKeys().has(`${x+1},${y}`)&&!this.connectedKeys().has(`${x-1},${y}`)&&!this.connectedKeys().has(`${x},${y+1}`)&&!this.connectedKeys().has(`${x},${y-1}`)){this.message='Repair the salvage, unlock its tier, and choose an empty connected cell at a station.';return false;}
+    this.modules=[...this.modules,{...m,invested:m.invested?{...minerals(),...m.invested}:undefined,x,y,cooldown:0}];this.salvageState.modules=this.salvageState.modules.filter(n=>n.id!==id);const connected=this.connectedKeys();for(const n of this.modules)n.offline=!connected.has(key(n));this.sound('moduleInstall');this.message='Recovered module installed.';return true;}
+  scrapSalvage(id:string){const m=this.salvageState.modules.find(m=>m.id===id);if(!m||!this.atStation||this.dead)return false;const investment=m.invested??legacyInvestment(m.kind,m.level);for(const ore of Object.keys(RESOURCES) as Resource[])this.stored[ore]+=Math.floor((investment[ore]??0)*MODULAR_PVP.scrapFraction);this.salvageState.modules=this.salvageState.modules.filter(n=>n.id!==id);this.sound('moduleRemove');this.message='Recovered component scrapped into station storage.';return true;}
+  runSalvageTractor(m:ShipModule,dt:number){const stats=MODULES.tractor.levels[m.level-1];return !m.offline&&m.integrity>0&&this.operate((stats.power??0)*dt,(stats.heat??0)*dt);}
+
   /** Name of the ship being flown, and the other ships waiting in the hangar. */
   shipName = 'Ship 1';
   /** Index into FLEET.paints for the ship being flown. Cosmetic only. */
@@ -272,7 +314,7 @@ export class GameModel {
   outposts: Outpost[] = [];
   /** The best intact Build module on the ship, or undefined when construction is unavailable. */
   get builder() {
-    const module = this.modules.filter(m => m.kind === 'builder' && m.integrity > 0).sort((a, b) => b.level - a.level)[0];
+    const module = this.operationalModules.filter(m => m.kind === 'builder' && m.integrity > 0).sort((a, b) => b.level - a.level)[0];
     if (!module) return undefined;
     const stats = MODULES.builder.levels[module.level - 1];
     return { level: module.level, range: stats.buildRange ?? 0, speed: (stats.buildSpeed ?? 1)*this.commandOutput, discount: stats.buildDiscount ?? 0 };
@@ -760,7 +802,7 @@ export class GameModel {
       ultimateTimers:{...this.ultimateTimers},fabricatorDebt:this.fabricatorDebt,systemsDisabled:this.systemsDisabled,empImmunity:this.empImmunity,player: { ...this.player }, modules: structuredClone(this.modules), coreAbility:{...this.coreAbility},novaFields:structuredClone(this.novaFields), coreLevel: this.coreLevel, shield: this.shield, energy: this.energy, heat: this.heat, empPulses: structuredClone(this.empPulses),
       cargo: { ...this.cargo }, stored: { ...this.stored }, bases: structuredClone(this.bases), explored: [...this.explored],
       enemies: structuredClone(this.enemies), squads: structuredClone(this.squads), drops: structuredClone(this.drops), bullets: structuredClone(this.bullets), detachedModules: structuredClone(this.detachedModules),
-      kills: this.kills, shipName: this.shipName, shipPaint: this.shipPaint, hangar: structuredClone(this.hangar), waypoints: structuredClone(this.waypoints), outposts: structuredClone(this.outposts), horde: { ...this.horde }, deaths: this.deaths, galaxy: structuredClone(this.galaxy), ...(this.rebuildDue ? { rebuildDue: true } : {}), id: this.id, rng: this.rng.state, spawnTimer: this.spawnTimer, shieldDelay: this.shieldDelay, impactTimer: this.impactTimer };
+      salvageState:structuredClone(this.salvageState),kills: this.kills, shipName: this.shipName, shipPaint: this.shipPaint, hangar: structuredClone(this.hangar), waypoints: structuredClone(this.waypoints), outposts: structuredClone(this.outposts), horde: { ...this.horde }, deaths: this.deaths, galaxy: structuredClone(this.galaxy), ...(this.rebuildDue ? { rebuildDue: true } : {}), id: this.id, rng: this.rng.state, spawnTimer: this.spawnTimer, shieldDelay: this.shieldDelay, impactTimer: this.impactTimer };
   }
   static fromSave(value: unknown) {
     const data = value as GameSave;
@@ -770,6 +812,7 @@ export class GameModel {
     m.coreAbility={...freshAbility(),...data.coreAbility};m.novaFields=structuredClone(data.novaFields??[]).slice(-SPECIAL.plasma.maxFields);
     m.ultimateTimers={...m.ultimateTimers,...data.ultimateTimers};m.fabricatorDebt=Math.max(0,Math.min(.999999,data.fabricatorDebt??0));
     m.systemsDisabled=data.systemsDisabled??0;m.empImmunity=data.empImmunity??0;
+    if(data.salvageState){if(!validSalvageState(data.salvageState))throw Error('Invalid salvage inventory in save.');m.salvageState=structuredClone(data.salvageState);}
     m.player = { ...data.player }; m.modules = structuredClone(data.modules); m.coreLevel = data.coreLevel; m.shield = data.shield; m.energy = Math.max(0,Math.min(data.energy ?? m.maxEnergy,m.maxEnergy)); m.heat = data.heat ?? 0; m.empPulses = structuredClone(data.empPulses ?? []);
     const empty = () => Object.fromEntries((Object.keys(RESOURCES) as Resource[]).map(ore => [ore, 0])) as Record<Resource, number>;
     m.crewEconomyMarks=Array.isArray(data.crewEconomyMarks)?data.crewEconomyMarks.filter(mark=>mark&&typeof mark.id==='string'&&['debited','applied','refunded'].includes(mark.phase)):[];
@@ -785,7 +828,7 @@ export class GameModel {
     if(cached&&cached.source===this.modules&&cached.count===this.modules.length&&cached.core===this.coreLevel)return cached;
     const values:EquipmentStats={};let mass=CORE.mass,power=0,heat=0,weapons=0;
     for(const m of this.modules){
-      const definition=MODULES[m.kind],stats=definition.levels[m.level-1];mass+=definition.mass;
+      const definition=MODULES[m.kind],stats=definition.levels[m.level-1];mass+=definition.mass;if(m.offline||m.integrity<=0)continue;
       if(definition.weapon)weapons++;power+=(stats.power??0)/(definition.weapon?stats.cooldown!:1);heat+=(stats.heat??0)/(definition.weapon?stats.cooldown!:1);
       for(const [key,value]of Object.entries(definition.levels[m.level-1])){const stat=key as keyof EquipmentStats;values[stat]=(values[stat]??0)+value;}
     }
@@ -797,14 +840,14 @@ export class GameModel {
   get heatGeneration(){return this.aggregate.heat;}
   get installedWeapons(){return this.aggregate.weapons;}
   get tractorCapacity(){return this.bonus('targets');}
-  get boostActive(){return this.modules.some(m=>(m.boostRemaining??0)>0);}
-  get boostReady(){return this.modules.filter(m=>m.kind==='engine'&&m.level>=2&&(m.boostCooldown??0)<=0).length;}
-  private burst(stat:'burstSpeed'|'burstThrust'){return this.modules.reduce((sum,m)=>sum+((m.boostRemaining??0)>0?(MODULES[m.kind].levels[m.level-1][stat]??0):0),0)*this.engineRatio;}
+  get boostActive(){return this.operationalModules.some(m=>(m.boostRemaining??0)>0);}
+  get boostReady(){return this.operationalModules.filter(m=>m.kind==='engine'&&m.level>=2&&(m.boostCooldown??0)<=0).length;}
+  private burst(stat:'burstSpeed'|'burstThrust'){return this.operationalModules.reduce((sum,m)=>sum+((m.boostRemaining??0)>0?(MODULES[m.kind].levels[m.level-1][stat]??0):0),0)*this.engineRatio;}
   get maxEnergy() { return CORE.levels[this.coreLevel - 1].energyCapacity! + this.bonus('energyCapacity'); }
   get basePowerGeneration(){return CORE.levels[this.coreLevel-1].generation!+this.bonus('generation');}
   private get commandOutput(){return this.coreLevel>=5&&this.coreAbility.active>0?SPECIAL.core.output:1;}
-  get powerGeneration() { return (this.basePowerGeneration+this.modules.reduce((sum,m)=>sum+(m.kind==='reactor'&&m.level>=5&&(m.ability?.active??0)>0?MODULES.reactor.levels[m.level-1].generation!*SPECIAL.reactor.bonus:0),0))*this.commandOutput; }
-  get coolingRate() { return (CORE.levels[this.coreLevel - 1].cooling! + this.bonus('cooling')+this.modules.reduce((n,m)=>n+(m.kind==='cooler'&&m.level>=5&&(m.ability?.active??0)>0?MODULES.cooler.levels[4].cooling!*SPECIAL.cooler.bonus:0),0))*this.commandOutput; }
+  get powerGeneration() { return (this.basePowerGeneration+this.operationalModules.reduce((sum,m)=>sum+(m.kind==='reactor'&&m.level>=5&&(m.ability?.active??0)>0?MODULES.reactor.levels[m.level-1].generation!*SPECIAL.reactor.bonus:0),0))*this.commandOutput; }
+  get coolingRate() { return (CORE.levels[this.coreLevel - 1].cooling! + this.bonus('cooling')+this.operationalModules.reduce((n,m)=>n+(m.kind==='cooler'&&m.level>=5&&(m.ability?.active??0)>0?MODULES.cooler.levels[4].cooling!*SPECIAL.cooler.bonus:0),0))*this.commandOutput; }
   get heatCapacity() { return CORE.levels[this.coreLevel - 1].heatCapacity! + this.bonus('heatCapacity'); }
   private operate(energy: number, heat: number): boolean {
     if(this.systemsDisabled>0)return false;
@@ -930,7 +973,7 @@ export class GameModel {
     if (!Number.isSafeInteger(x) || !Number.isSafeInteger(y) || Math.abs(x) * BUILD_GRID.cellSize > WORLD.width / 2 || Math.abs(y) * BUILD_GRID.cellSize > WORLD.height / 2) return 'Outside the build grid.';
     if (kind === 'builder' && this.coreLevel < OUTPOST.coreLevel) return `The Build module requires Core level ${OUTPOST.coreLevel}.`;
     if ((x === 0 && y === 0) || this.modules.some(m => m.x === x && m.y === y)) return 'That cell is occupied.';
-    if (Math.abs(x) + Math.abs(y) !== 1 && !this.modules.some(m => Math.abs(m.x - x) + Math.abs(m.y - y) === 1)) return 'Attach to the core or an installed module.';
+    if (Math.abs(x) + Math.abs(y) !== 1 && !this.operationalModules.some(m => Math.abs(m.x - x) + Math.abs(m.y - y) === 1)) return 'Attach to the core or an installed module.';
     const def = MODULES[kind];
     if ((Object.keys(def.cost) as Resource[]).some(ore => this.stored[ore] < def.cost[ore])) return `Missing: ${missingMinerals(def.cost,this.stored)}. Unload with E first.`;
   }
@@ -942,11 +985,12 @@ export class GameModel {
     this.modules.push({ invested:{...MODULES[kind].cost}, x, y, kind, level: 1, cooldown: 0, integrity: MODULE_DURABILITY[kind][0] });
     this.player.health += this.maxHealth - oldHull;
     this.shield += this.maxShield - oldShield;
-    this.sound('moduleInstall');
+    this.refreshShipConnectivity();this.sound('moduleInstall');
     this.message = `${MODULES[kind].label} installed.`;
     return true;
   }
-  moduleMaxIntegrity(m: ShipModule) { return MODULE_DURABILITY[m.kind][m.level - 1]; }
+  moduleMaxIntegrity(m: Pick<ShipModule,'kind'|'level'>) { return MODULE_DURABILITY[m.kind][m.level - 1]; }
+  private refreshShipConnectivity(){const connected=connectedModules(this.modules);for(const m of this.modules)m.offline=!connected.has(key(m));this.modules=[...this.modules];}
   private connectedKeys(modules = this.modules) {
     const connected = new Set(['0,0']); let changed = true;
     while (changed) {
@@ -969,7 +1013,7 @@ export class GameModel {
     if (error) { this.message=error; return false; }
     const m=this.modules.find(m=>m.x===x&&m.y===y)!,other=this.modules.find(m=>m.x===toX&&m.y===toY);
     if (other) { other.x = x; other.y = y; }
-    m.x = toX; m.y = toY;this.sound('moduleMove'); this.message = other ? 'Modules swapped.' : 'Module moved. Ship layout updated.'; return true;
+    m.x = toX; m.y = toY;this.refreshShipConnectivity();this.sound('moduleMove'); this.message = other ? 'Modules swapped.' : 'Module moved. Ship layout updated.'; return true;
   }
   moduleRefund(m: ShipModule) {
     const paid = {...(m.invested??legacyInvestment(m.kind,m.level))};
@@ -1012,7 +1056,7 @@ export class GameModel {
     }
     this.player.health = this.maxHealth; this.shield = this.maxShield;
     for (const m of this.modules) m.integrity = this.moduleMaxIntegrity(m);
-    if(damaged)this.sound('repair');
+    this.refreshShipConnectivity();if(damaged)this.sound('repair');
     this.message = 'Ship repaired; mineral cost paid.'; return true;
   }
   private breakModule(m: ShipModule) {
@@ -1034,25 +1078,25 @@ export class GameModel {
     }
   }
   private damagePlayer(amount: number, hit?: Point, attackerId?:number) {
-    if(this.modules.some(m=>m.kind==='engine'&&m.level>=5&&(m.ability?.phase??0)>0))return;
+    if(this.operationalModules.some(m=>m.kind==='engine'&&m.level>=5&&(m.ability?.phase??0)>0))return;
     if(amount>0&&attackerId!==undefined)this.npcMusic(this.enemies.find(e=>e.id===attackerId));
     const incomingAmount=amount;
-    const fortress=this.modules.find(m=>m.kind==='armor'&&m.level>=5);
+    const fortress=this.operationalModules.find(m=>m.kind==='armor'&&m.level>=5);
     if(fortress)amount*=1-SPECIAL.armor.passive;
-    if(this.modules.some(m=>m.kind==='armor'&&m.level>=5&&(m.ability?.active??0)>0))amount*=1-SPECIAL.armor.reduction;
-    if(this.modules.some(m=>m.kind==='shield'&&m.level>=5&&(m.ability?.active??0)>0))amount*=1-SPECIAL.shield.reduction;
+    if(this.operationalModules.some(m=>m.kind==='armor'&&m.level>=5&&(m.ability?.active??0)>0))amount*=1-SPECIAL.armor.reduction;
+    if(this.operationalModules.some(m=>m.kind==='shield'&&m.level>=5&&(m.ability?.active??0)>0))amount*=1-SPECIAL.shield.reduction;
     if(fortress&&incomingAmount>=SPECIAL.armor.threshold&&(fortress.ability?.cooldown??0)<=0&&this.ultimateTimers.armor<=0&&this.operate(SPECIAL.armor.power,SPECIAL.armor.heat)){
       onDamageTaken(fortress,incomingAmount);this.cue('fortress');this.ultimateTimers.armor=SPECIAL.armor.cooldown;this.effect({type:'shield',...this.player,color:MODULES.armor.color,radius:38});
     }
     const absorbed = Math.min(this.shield, amount), damage = amount - absorbed;
     if (absorbed > 0) this.effect({type:'shield',...(hit??this.player),radius:22,color:0x71e1ff});
-    if(absorbed>0&&attackerId!==undefined&&this.modules.some(m=>m.kind==='shield'&&m.level>=5)){
+    if(absorbed>0&&attackerId!==undefined&&this.operationalModules.some(m=>m.kind==='shield'&&m.level>=5)){
       const attacker=this.enemies.find(e=>e.id===attackerId&&e.health>0);
       if(attacker){this.hitEnemy(attacker,absorbed*SPECIAL.shield.fraction);this.arc(hit??this.player,attacker,0xa4edff);}
     }
     this.shield -= absorbed;if(absorbed>0&&this.shield<=0)this.cue('shieldDown'); this.player.health = Math.max(0, this.player.health - damage);
     this.shieldDelay = 3;
-    const aegis=this.modules.find(m=>m.kind==='shield'&&m.level>=5);
+    const aegis=this.operationalModules.find(m=>m.kind==='shield'&&m.level>=5);
     if(aegis&&amount>0&&(aegis.ability?.cooldown??0)<=0&&this.ultimateTimers.shield<=0&&this.operate(SPECIAL.shield.power,SPECIAL.shield.heat)){activate(state(aegis),SPECIAL.shield.duration,SPECIAL.shield.cooldown);this.cue('aegis');this.ultimateTimers.shield=SPECIAL.shield.cooldown;this.effect({type:'shield',...this.player,color:MODULES.shield.color,radius:48});}
     if (damage <= 0 || !hit) return;
     const positions = (Object.keys(MODULES) as ModuleKind[]).flatMap(kind => this.modulePositions(kind));
@@ -1545,6 +1589,7 @@ export class GameModel {
   }
   /** Resets transient ship systems after a respawn or rebuild; the position is set by the caller. */
   respawnState() {
+    if(this.salvageState.life)this.salvageState.life=randomWorldSeed();this.combatFire=[];
     this.energy = this.maxEnergy; this.heat = 0; this.empPulses = [];this.novaFields=[];this.coreAbility.active=0;for(const m of this.modules)if(m.ability){m.ability.active=0;m.ability.phase=0;m.ability.sustained=0;}
     this.impactTimer = 0; this.shield = this.maxShield; this.shieldDelay = 0;
     this.revealExploration();
@@ -1812,14 +1857,14 @@ export class GameModel {
     this.systemsDisabled=Math.max(0,this.systemsDisabled-dt);this.empImmunity=Math.max(0,this.empImmunity-dt);
     this.world.advance(dt); this.expireBorrow();
     tick(this.coreAbility,dt);for(const key of Object.keys(this.ultimateTimers) as (keyof typeof this.ultimateTimers)[])this.ultimateTimers[key]=Math.max(0,this.ultimateTimers[key]-dt);
-    for(const m of this.modules)if(m.level>=5){const a=state(m);tick(a,dt);if(m.kind==='cannon')a.sustained=input.fire&&!this.atStation?a.sustained+dt:0;}
+    for(const m of this.operationalModules)if(m.level>=5){const a=state(m);tick(a,dt);if(m.kind==='cannon')a.sustained=input.fire&&!this.atStation?a.sustained+dt:0;}
     if(input.overclock&&this.coreLevel>=5&&this.coreAbility.cooldown<=0&&this.operate(SPECIAL.core.power,SPECIAL.core.heat)){
       activate(this.coreAbility,SPECIAL.core.duration,SPECIAL.core.cooldown);this.cue('overclock');this.effect({type:'shield',...this.player,color:CORE.color,radius:40});
     }
-    for(const m of this.modules)if(m.kind==='cooler'&&m.level>=5&&(m.ability?.cooldown??0)<=0&&this.ultimateTimers.cooler<=0&&this.heat>=this.heatCapacity*SPECIAL.cooler.threshold&&this.operate(SPECIAL.cooler.power,0)&&onOverheat(m,this.heat,this.heatCapacity)){
+    for(const m of this.operationalModules)if(m.kind==='cooler'&&m.level>=5&&(m.ability?.cooldown??0)<=0&&this.ultimateTimers.cooler<=0&&this.heat>=this.heatCapacity*SPECIAL.cooler.threshold&&this.operate(SPECIAL.cooler.power,0)&&onOverheat(m,this.heat,this.heatCapacity)){
       this.cue('coolingSurge');this.ultimateTimers.cooler=SPECIAL.cooler.cooldown;this.heat=Math.max(0,this.heat-this.heatCapacity*SPECIAL.cooler.fraction);this.effect({type:'shield',...this.modulePoint(m),color:MODULES.cooler.color,radius:55});
     }
-    for(const m of this.modules)if(m.kind==='reactor'&&m.level>=5){
+    for(const m of this.operationalModules)if(m.kind==='reactor'&&m.level>=5){
       if(onEnergyDeficit(m,this.energy,this.maxEnergy,this.powerDemand,this.basePowerGeneration)){this.cue('reactorOverdrive');this.effect({type:'shield',...this.modulePoint(m),color:MODULES.reactor.color,radius:25});}
       if(state(m).active>0){this.heat=Math.min(this.heatCapacity,this.heat+SPECIAL.reactor.heat*dt);}
     }
@@ -1827,13 +1872,13 @@ export class GameModel {
     this.energy = Math.min(this.maxEnergy, this.energy + this.powerGeneration * dt);
     this.heat = Math.max(0, this.heat - this.coolingRate * dt);
     this.powerLimited = false; this.heatLimited = false;
-    if ((this.shieldDelay <= 0||this.modules.some(m=>m.kind==='shield'&&(m.ability?.active??0)>0)) && this.shield < this.maxShield) for (const m of this.modules) if (m.kind === 'shield') {
+    if ((this.shieldDelay <= 0||this.operationalModules.some(m=>m.kind==='shield'&&(m.ability?.active??0)>0)) && this.shield < this.maxShield) for (const m of this.operationalModules) if (m.kind === 'shield') {
       const stats = MODULES.shield.levels[m.level - 1], field=m.level>=5&&(m.ability?.active??0)>0, amount = Math.min(this.maxShield - this.shield, stats.recharge! * dt*this.commandOutput*(field?SPECIAL.shield.regen:1));
       const fraction = amount / (stats.recharge!*this.commandOutput*(field?SPECIAL.shield.regen:1))*(field?SPECIAL.shield.cost:1);
       if (this.operate((stats.power ?? 0) * fraction, (stats.heat ?? 0) * fraction)) {if(this.shield<=0&&amount>0)this.cue('shieldReady');this.shield += amount;}
     }
     let engines=0,powered=0;
-    for(const m of this.modules)if(m.kind==='engine'){
+    for(const m of this.operationalModules)if(m.kind==='engine'){
       engines++;const stats=MODULES.engine.levels[m.level-1];
       m.boostRemaining=Math.max(0,(m.boostRemaining??0)-dt);m.boostCooldown=Math.max(0,(m.boostCooldown??0)-dt);
       const activate=Boolean(input.boost&&m.level>=2&&m.boostCooldown<=0);
@@ -1864,7 +1909,7 @@ export class GameModel {
     this.updateSectorEdge(dt, { x: thrustX, y: thrustY });
     p.angle = Math.atan2(input.aim.y - p.y, input.aim.x - p.x);
     if (input.fire && this.atStation) this.message = 'Weapons disabled inside active safe zones.';
-    for (const m of this.modules) {
+    for (const m of this.operationalModules) {
       m.cooldown = Math.max(0, m.cooldown - dt);
       const weapon=MODULES[m.kind].weapon;
       if (!input.fire || this.atStation || m.cooldown > 0 || !weapon) continue;
@@ -1873,6 +1918,7 @@ export class GameModel {
       if(!this.operate((stats.power??0)*cost.power,(stats.heat??0)*cost.heat)){if(m.ability)m.ability.sustained=0;continue;}
       const special=onFire(m);
       const source=this.modulePoint(m),angle=Math.atan2(input.aim.y-source.y,input.aim.x-source.x);
+      if(this.modularCombat&&this.combatFire.length<64)this.combatFire.push({x:m.x,y:m.y,angle});
       this.effect({type:'muzzle',x:source.x+Math.cos(angle)*10,y:source.y+Math.sin(angle)*10,angle,weapon,level:m.level,ultimate:Boolean(special.penetrating||special.overcharged||special.supernova||special.swarm||special.rate>2||m.level>=5&&(weapon==='flak'||weapon==='emp')),color:type.color});
       if(weapon==='emp')this.empPulses.push({...source,radius:0,maxRadius:stats.empRange!*(m.level>=5?SPECIAL.emp.radius:1),damage:stats.damage!*this.commandOutput,stun:stats.stun!,hits:[],cascade:m.level===5,secondary:0});
       else {const pellets=weapon==='flak'&&m.level>=5?SPECIAL.flak.pellets:type.pellets;for(let pellet=0;pellet<pellets;pellet++){
@@ -1899,7 +1945,7 @@ export class GameModel {
       const candidates = this.asteroids.filter(a => dist(p, a) <= SHIP.miningRange).sort((a, b) => dist(p, a) - dist(p, b));
       const focused = candidates.find(a => dist(input.aim, a) <= a.radius + 35) ?? candidates[0];
       const assigned = new Set<number>();
-      const beams = this.modulePositions('miner');
+      const beams = this.modulePositions('miner').filter(m=>m.integrity>0&&!m.offline);
       const sources = beams.length ? beams.map(beam => ({ ...beam, moduleX:beam.gridX,moduleY:beam.gridY,rate: MODULES.miner.levels[beam.level - 1].mining! })) : [{ x: p.x, y: p.y, level: 1,moduleX:undefined,moduleY:undefined, rate: REPAIR.emergencyMining }];
       for (const source of sources) {
         const targets = [focused, ...candidates.filter(a => a !== focused)].filter((a): a is Asteroid => Boolean(a && a.amount > 0));
@@ -1925,7 +1971,7 @@ export class GameModel {
     }
     for(const drop of this.drops){drop.x=clamp(drop.x+(drop.vx??0)*dt,0,WORLD.width);drop.y=clamp(drop.y+(drop.vy??0)*dt,0,WORLD.height);}
     const claimed = new Set<number>(), dropsById = new Map(this.drops.map(drop => [drop.id, drop]));
-    for (const module of this.modules) if (module.kind === 'tractor') {
+    for (const module of this.operationalModules) if (module.kind === 'tractor') {
       const stats = MODULES.tractor.levels[module.level-1];
       const source = this.modulePoint(module);
       const sweep=module.level>=5&&((state(module).active>0)||(state(module).cooldown<=0));
@@ -2268,7 +2314,7 @@ export class GameModel {
         }
         this.fragment(b,point);
         if (b.enemy) {this.npcMusic(this.enemies.find(e=>e.id===b.attackerId));if((b.splash??0)>0)this.enemyExplosion(b,point);else this.damagePlayer(b.damage ?? WEAPONS.enemy.damage, point,b.attackerId);}
-        else if (pilot) { this.musicEvents.add('pvp');this.shared!.pvpHits.push({ to: pilot.id, damage: b.damage ?? WEAPONS.player.damage }); if ((b.splash ?? 0) > 0) this.explodeRocket(b, point); else this.addBlast({ ...point, radius: 12, life: 0.1 }, b.weapon); }
+        else if (pilot) { this.musicEvents.add('pvp');if(!this.modularCombat)this.shared!.pvpHits.push({ to: pilot.id, damage: b.damage ?? WEAPONS.player.damage }); if ((b.splash ?? 0) > 0) this.explodeRocket(b, point); else this.addBlast({ ...point, radius: 12, life: 0.1 }, b.weapon); }
         else if ((b.splash ?? 0)>0) this.explodeRocket(b, point);
         else if (target) {
           this.hitEnemy(target,b.damage??WEAPONS.player.damage,b.armorPiercing??(b.enhanced&&b.weapon==='rail'));
@@ -2309,7 +2355,7 @@ export class GameModel {
 
 export type GameSave = {
   crewEconomyMarks?:CrewEconomyMark[];
-  ultimateTimers?:GameModel['ultimateTimers'];fabricatorDebt?:number;systemsDisabled?:number;empImmunity?:number;version: 1; seed: string; population?:EnemyPopulationSnapshot;world: WorldSnapshot; player: GameModel['player']; modules: ShipModule[];
+  salvageState?:GameModel['salvageState'];ultimateTimers?:GameModel['ultimateTimers'];fabricatorDebt?:number;systemsDisabled?:number;empImmunity?:number;version: 1; seed: string; population?:EnemyPopulationSnapshot;world: WorldSnapshot; player: GameModel['player']; modules: ShipModule[];
   coreAbility?:AbilityState;novaFields?:GameModel['novaFields'];coreLevel: number; shield: number; energy?:number; heat?:number; empPulses?:GameModel['empPulses']; cargo: Record<Resource, number>; stored: Record<Resource, number>;
   bases: GameModel['bases']; explored: string[]; enemies: Enemy[]; squads: GameModel['squads']; drops: Drop[];
   bullets: Bullet[]; detachedModules: GameModel['detachedModules']; kills: number; outposts?: Outpost[]; shipName?: string; shipPaint?: number; hangar?: StoredShip[]; waypoints?: Waypoint[]; horde?: GameModel['horde']; galaxy?: Galaxy; rebuildDue?: boolean; deaths: number; id: number; rng: number;

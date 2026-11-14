@@ -352,6 +352,8 @@ for(const durability of Object.values(MODULE_DURABILITY))durability.push(Math.ro
  * no full answer within `borrowTimeout` seconds of game time is given up.
  */
 export const LOBBY_SHARE = { poolInterval: 2, poolTtl: 8, borrowTimeout: 15 };
+/** Modular PvP tuning; server ledger/physics budgets are independent of ship-building freedom. */
+export const MODULAR_PVP = { protocol: 1, damageScale: .65, recoveredCondition: .5, maxQueuedHits: 128, adjacentFraction: .35, maxDetach: 2, lifetime: 180, drift: 34, spin: .6, serverShots: 512, roomSalvage: 256, snapshotRange: 2400, step: .05, sync: .2, combatLock: 12, repairFraction: .25, scrapFraction: .15 };
 export const PVP = { damageCap: 600, creditWindow: 12, rebuildPerCore: { iron: 30, copper: 18 }, rebuildRare: { crystal: 4 } };
 /** Sector grid: `matchChance` is how often a never-visited cell asks the relay for a matched pilot's sector while online. Flying into a world edge for `hold` seconds moves the ship to the next sector, `entryInset` units inside its opposite edge. `bound` matches the ship clamp. */
 export const SECTOR = { bound: 20, edge: 40, hold: 1.5, entryInset: 320, clearance: 45, slide: 90, matchChance: 0.5 };

@@ -243,3 +243,7 @@ Before restart, coordinate with the other developer, back up `/opt/voidforge/rel
 After installing the new relay and restarting `voidforge-relay`, check service health, existing admin login/observer behavior, crew capability on a real player connection, then a two-pilot invite/deposit/build/reconnect check. The site remains compatible with the older relay and shows crews unavailable until the relay is upgraded.
 
 Known observer scope: the existing global-admin feeds remain intact; crew-only server structures/mining do not yet have a dedicated admin observer overlay. Crew members see authoritative crew snapshots in the game. Crew leadership never grants global-admin credentials.
+
+## Modular PvP deployment
+
+See [PVP_RELAY_HANDOFF.md](../docs/PVP_RELAY_HANDOFF.md) for Zach's deployment checklist, acceptance checks and the explicit authority limitations. The new relay persists combat/salvage receipts in `PVP_DATA` (default `./data/pvp.json`). Production must use a durable path writable by the existing service user, alongside the existing `CREW_DATA`; preserve both databases and all admin settings during rollout. The site activates the new path only when the relay advertises `modularPvp: 1`; a site-only deployment leaves the old relay on legacy PvP.

@@ -369,3 +369,15 @@ Choices: own Node + WebSocket relay; sector grid; owners keep changes to their s
 - [x] Verify held moving clicks, keyboard selection, confirmation/reload and responsive layouts
 - [x] Full 389 tests and game/admin builds
 - [ ] User review; local fix awaits publication request
+
+## Modular PvP destruction and salvage
+- [x] Inspect builder, durability, PvE/PvP, relay authority, cargo, tractors, persistence, geometry, audio/effects
+- [x] Rotated swept module impacts, accumulated integrity, weapon/tier damage, bounded direct detachment and offline islands
+- [x] Actual hold allocations and finite containers; core defeat retains home-rebuild rules and kill credit once
+- [x] Server-owned salvage IDs, source escrow, concurrent/partial collection, durable grants and client-save-before-ack
+- [x] Existing tractor slots/power, rotating component/crate visuals, pooled effects/audio and damage appearance
+- [x] Persistent recovered locker; paid repair, tier-gated connected installation and one-time investment-based scrapping
+- [x] Preserve Zach's latest admin-v2 main in a clean integrated release worktree
+- [ ] Zach: deploy updated relay with persistent PVP_DATA, preserving CREW_DATA/admin settings; see docs/PVP_RELAY_HANDOFF.md
+- [ ] Live two/three-pilot acceptance and actual-Pi performance/balance pass after relay rollout
+- [ ] Follow-up authority: personal economy/movement validation and complete paid ultimate/defense parity; no anti-cheat claim

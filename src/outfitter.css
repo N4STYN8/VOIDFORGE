@@ -31,3 +31,5 @@
 #builder .economy-requirements th,#builder .economy-requirements td{padding:6px 3px;border-bottom:1px solid #25434c;text-align:right}
 #builder .economy-requirements th:first-child{text-align:left;text-transform:capitalize}
 #builder .economy-requirements .mineral-shortage td:last-child{color:#ffbf7e;font-weight:bold}
+
+.salvage-locker { border:1px solid #865e7f; padding:8px 12px; margin:8px 0; color:#dce7f0; background:#111d29; }.salvage-locker summary{cursor:pointer;color:#e4b4e8}.salvage-locker>div{display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding:7px 0;border-top:1px solid #344252}.salvage-locker small{flex:1;min-width:120px}.salvage-locker button{padding:5px 9px}

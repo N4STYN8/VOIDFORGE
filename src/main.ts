@@ -1,3 +1,4 @@
+import {PvpClient} from './pvpClient.ts';
 import {CrewOutpostClient} from './crewOutposts.ts';
 import {CrewPanel} from './crewPanel.ts';
 import {CrewEconomy} from './crewEconomy.ts';
@@ -53,6 +54,8 @@ class SpaceScene extends Phaser.Scene {
   private hudContent='';
   /** Relay connection, lobby state and remote ships. Presentation and transport only; the model stays local. */
   private net = new NetClient();
+  private combat=new PvpClient(this.net,()=>this.model,saveGameConfirmed);
+  private selectedSalvage?:string;
   private crewEconomy=new CrewEconomy(this.net,()=>this.model,saveGameConfirmed);
   private crewOutposts=new CrewOutpostClient(this.net,()=>this.model,saveGameConfirmed);
   private crewPanel?:CrewPanel;private crewBuild=false;
@@ -103,6 +106,7 @@ class SpaceScene extends Phaser.Scene {
   private saveFailed = (message: string) => { this.model.message = message; };
   private targetLabel!: Phaser.GameObjects.Text;
   private radar = document.createElement('section'); private radarCanvas = document.createElement('canvas'); private radarRange = 1; private compass = document.createElement('canvas');
+  private damageGraphics!: Phaser.GameObjects.Graphics;
   private effectsGraphics!: Phaser.GameObjects.Graphics;
   private graphics!: Phaser.GameObjects.Graphics;
   private follow!: Phaser.GameObjects.Zone;
@@ -177,7 +181,7 @@ class SpaceScene extends Phaser.Scene {
     });
     this.sessionControls.querySelector<HTMLInputElement>('#import-save')!.addEventListener('change', async event => {
       const input = event.target as HTMLInputElement, file = input.files?.[0]; if (!file) return;
-      if((this.crewEconomy.pending||this.crewOutposts.pending)){this.model.message='Resolve the pending crew transfer before importing a save.';input.value='';return;}
+      if((this.combat.pending||this.crewEconomy.pending||this.crewOutposts.pending)){this.model.message='Resolve the pending transfer before importing a save.';input.value='';return;}
       try { const model = GameModel.fromSave(JSON.parse(await file.text())); const backup = backupSavedGame(); this.switchModel(model); void backup.finally(() => saveGame(model, this.saveFailed)); }
       catch { this.model.message = 'That file is not a supported VOIDFORGE save.'; }
       input.value = '';
@@ -270,12 +274,15 @@ class SpaceScene extends Phaser.Scene {
     });
     this.builder.addEventListener('click',event=>{
       const button=(event.target as HTMLElement).closest<HTMLButtonElement>('button');if(!button)return;
-      if(button.dataset.ship){if(action(this.model.switchShip(Number(button.dataset.ship)))){this.selectedCell={x:0,y:0};this.detailMode='module';this.movingModule=false;this.buildCenter={x:0,y:0};}}
+      if(button.dataset.salvageRepair){action(this.model.repairSalvage(button.dataset.salvageRepair));}
+      else if(button.dataset.salvageScrap){action(this.model.scrapSalvage(button.dataset.salvageScrap));}
+      else if(button.dataset.salvageInstall){this.selectedSalvage=button.dataset.salvageInstall;this.detailMode='install';this.movingModule=false;this.model.message='Choose an empty connected cell for the repaired salvage.';}
+      else if(button.dataset.ship){if(action(this.model.switchShip(Number(button.dataset.ship)))){this.selectedCell={x:0,y:0};this.detailMode='module';this.movingModule=false;this.buildCenter={x:0,y:0};}}
       else if(button.dataset.buyShip)action(this.model.buyShip());
       else if(button.dataset.paint){this.model.setShipPaint(Number(button.dataset.paint));this.audio.play('build');}
       else if(button.dataset.pan){const direction=button.dataset.pan;if(direction==='home')this.buildCenter={x:0,y:0};else{this.buildCenter.x+=direction==='right'?2:direction==='left'?-2:0;this.buildCenter.y+=direction==='down'?2:direction==='up'?-2:0;}}
       else if(button.dataset.gridzoom)this.gridRadius=Math.max(1,Math.min(6,this.gridRadius+(button.dataset.gridzoom==='out'?1:-1)));
-      else if(button.dataset.kind){this.selectedModule=button.dataset.kind as ModuleKind;this.detailMode='install';this.movingModule=false;this.actionFailed=false;}
+      else if(button.dataset.kind){this.selectedSalvage=undefined;this.selectedModule=button.dataset.kind as ModuleKind;this.detailMode='install';this.movingModule=false;this.actionFailed=false;}
       else if(button.dataset.place){this.movingModule=false;this.model.message=`Choose an empty connected cell to install ${MODULES[this.selectedModule].label}.`;}
       else if(button.dataset.move)this.movingModule=!this.movingModule;
       else if(button.dataset.remove){if(action(this.model.removeModule(this.selectedCell.x,this.selectedCell.y))){this.selectedCell={x:0,y:0};this.detailMode='module';}}
@@ -283,7 +290,8 @@ class SpaceScene extends Phaser.Scene {
       else if(button.dataset.upgrade)action(this.model.upgradeModule(this.selectedCell.x,this.selectedCell.y));
       else if(button.dataset.x){
         const x=Number(button.dataset.x),y=Number(button.dataset.y),occupied=(x===0&&y===0)||this.model.modules.some(m=>m.x===x&&m.y===y);
-        if(this.movingModule){if(action(this.model.moveModule(this.selectedCell.x,this.selectedCell.y,x,y)))this.selectedCell={x,y};this.movingModule=false;}
+        if(this.selectedSalvage&&!occupied){if(action(this.model.installSalvage(this.selectedSalvage,x,y))){this.selectedSalvage=undefined;this.selectedCell={x,y};this.detailMode='module';}}
+        else if(this.movingModule){if(action(this.model.moveModule(this.selectedCell.x,this.selectedCell.y,x,y)))this.selectedCell={x,y};this.movingModule=false;}
         else if(occupied){this.selectedCell={x,y};this.detailMode='module';this.actionFailed=false;}
         else if(action(this.model.installModule(this.selectedModule,x,y))){this.selectedCell={x,y};this.detailMode='module';}
       }else if(button.dataset.close){this.building=false;restoreKeyboard();}
@@ -292,6 +300,7 @@ class SpaceScene extends Phaser.Scene {
     this.gridGraphics = this.add.graphics().setDepth(-2.5);
     this.buildGhost = this.add.image(0, 0, 'structure-wall').setDepth(2).setAlpha(0.6).setVisible(false);
     this.graphics = this.add.graphics();
+    this.damageGraphics=this.add.graphics().setDepth(1.2);
     this.effectsGraphics=this.add.graphics().setDepth(4).setBlendMode(Phaser.BlendModes.ADD);
     // Three parallax layers (gas clouds, far stars, near stars) baked once per world seed.
     this.paintBackdropTextures();
@@ -377,7 +386,7 @@ class SpaceScene extends Phaser.Scene {
     }, 250);
     this.menu=new MainMenu({
       continue:async()=>{if(!this.sessionStarted){const saved=await loadSavedGame();if(!saved)throw new Error('No valid saved game could be loaded. Start a new voyage or import a backup.');this.switchModel(saved);}this.beginSession();},
-      newGame:async seed=>{if((this.crewEconomy.pending||this.crewOutposts.pending))throw Error('Resolve the pending crew transfer before starting another world.');const next=seed?new GameModel(seed):new GameModel();if(this.sessionStarted){const error=await saveGameConfirmed(this.model);if(error)throw new Error(error);}if(!await backupSavedGame())throw new Error('Backup failed. Export your current save before starting a new world.');this.switchModel(next);this.beginSession();const error=await saveGameConfirmed(next);if(error)this.model.message=error;},
+      newGame:async seed=>{if((this.combat.pending||this.crewEconomy.pending||this.crewOutposts.pending))throw Error('Resolve the pending transfer before starting another world.');const next=seed?new GameModel(seed):new GameModel();if(this.sessionStarted){const error=await saveGameConfirmed(this.model);if(error)throw new Error(error);}if(!await backupSavedGame())throw new Error('Backup failed. Export your current save before starting a new world.');this.switchModel(next);this.beginSession();const error=await saveGameConfirmed(next);if(error)this.model.message=error;},
       settings:()=>this.settings.show(),
       sound:kind=>{if(kind!=='hover'&&kind!=='open')this.audio.unlock();this.audio.play(({hover:'uiHover',click:'uiClick',warning:'uiWarning',open:'uiOpen',confirm:'uiConfirm',cancel:'uiCancel',launch:'uiLaunch'} as const)[kind]);},
       multiplayer:async()=>{if(!this.sessionStarted){const saved=await loadSavedGame();if(!saved)throw new Error('Start a new voyage first, then open Multiplayer to use its pilot.');this.switchModel(saved);}this.beginSession();this.setNetOpen(true);},
@@ -434,7 +443,7 @@ class SpaceScene extends Phaser.Scene {
     // performance.now, not the Phaser loop clock: remote samples are stamped with it on arrival.
     this.updateNet(performance.now() / 1000);
     // Crossing a world edge swaps in the neighbouring sector's model; the pilot's ship and cargo travel with it.
-    if(this.model.sectorRequest&&(this.crewEconomy.pending||this.crewOutposts.pending)){this.model.sectorRequest=undefined;this.model.message='Crew transfer pending; wait before crossing the sector border.';}
+    if(this.model.sectorRequest&&(this.combat.pending||this.crewEconomy.pending||this.crewOutposts.pending)){this.model.sectorRequest=undefined;this.model.message='Transfer pending; wait before crossing the sector border.';}
     if (this.model.sectorRequest && !this.travelPending) {
       const direction = this.model.sectorRequest, step = SECTOR_STEPS[direction], g = this.model.galaxy, key = `${g.x + step.dx},${g.y + step.dy}`; this.model.sectorRequest = undefined;
       const go = (neighbour?: Parameters<typeof travel>[2]) => { try { const next = travel(this.model, direction, neighbour); this.switchModel(next); saveGame(next, this.saveFailed); this.audio.play('collect'); } catch (error) { this.model.message = `Sector travel failed: ${(error as Error).message}`; } };
@@ -516,9 +525,9 @@ class SpaceScene extends Phaser.Scene {
     const notice = this.model.deathNotice || (this.paused ? 'PAUSED — Press Esc to resume' : this.model.message);
     if (this.status.firstChild?.textContent !== notice) this.status.replaceChildren(document.createTextNode(notice));
     if (this.model.dead) {
-      const pending = this.crewEconomy.pending || this.crewOutposts.pending;
+      const pending = this.combat.pending || this.crewEconomy.pending || this.crewOutposts.pending;
       this.recoveryButton.disabled = pending;
-      this.recoveryButton.textContent = pending ? 'Waiting for crew transfer…' : this.model.rebuildDue ? 'Rebuild at home [R]' : 'Respawn [R]';
+      this.recoveryButton.textContent = pending ? 'Finishing pending transfer…' : this.model.rebuildDue ? 'Rebuild at home [R]' : 'Respawn [R]';
       if (this.recoveryButton.parentNode !== this.status) this.status.append(this.recoveryButton);
     } else this.recoveryButton.remove();
     this.status.classList.toggle('urgent', this.model.dead || this.paused);
@@ -541,6 +550,7 @@ class SpaceScene extends Phaser.Scene {
           <div class="mp-row"><input id="net-name" maxlength="${NET.maxName}" aria-label="Pilot name" placeholder="Pilot name"><button data-net="rename">Save name</button></div>
           <label class="mp-check"><input type="checkbox" data-net-offline> Play offline</label>
           <label class="mp-check"><input type="checkbox" data-net-share> Share my station deposits with my lobby</label>
+          <p data-net-combat></p>
           <h3>Your lobby</h3>
           <div data-net-lobby></div>
           <div class="mp-row" data-net-create><button data-net="create-open">Create open lobby</button><button data-net="create-private">Create private lobby</button></div>
@@ -681,11 +691,12 @@ class SpaceScene extends Phaser.Scene {
   private renderNetPanel(force = false) {
     const net = this.net, lobby = net.lobby, here = [...net.peers.values()];
     const listing = net.lobbyList.map(l => `${l.code}${l.host}${l.members}${l.power}`).join();
-    const state = [this.netOpen, this.share.enabled, this.share.sharers.join(), JSON.stringify(this.share.pool), net.status, net.staysOnline, net.note, net.online, lobby?.code, lobby?.host, lobby?.open, lobby?.members.map(m => m.id + m.name).join(), net.id, listing, here.map(p => p.id + p.name + this.link.pingOf(p.id)).join(), net.pingMs].join('|');
+    const state = [net.modularPvp,this.combat.note,this.netOpen, this.share.enabled, this.share.sharers.join(), JSON.stringify(this.share.pool), net.status, net.staysOnline, net.note, net.online, lobby?.code, lobby?.host, lobby?.open, lobby?.members.map(m => m.id + m.name).join(), net.id, listing, here.map(p => p.id + p.name + this.link.pingOf(p.id)).join(), net.pingMs].join('|');
     if (!force && state === this.netContent) return; this.netContent = state;
     if (!this.netOpen) return;
     const esc = (text: string) => text.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
     const q = <T extends HTMLElement = HTMLElement>(selector: string) => this.netPanel.querySelector<T>(selector)!;
+    q('[data-net-combat]').textContent = this.combat.note ? `Combat recovery pending: ${this.combat.note}` : net.connected ? net.modularPvp ? 'PvP: modular damage and tractor salvage.' : 'PvP: classic combat. Modular salvage is not available on this server yet.' : 'Connect to play PvP; combat mode depends on the connected server.';
     const status = q('[data-net-status]');
     status.dataset.state = net.status === 'online' ? 'online' : net.status === 'connecting' || net.staysOnline ? 'connecting' : 'offline';
     status.textContent = net.status === 'online' ? `ONLINE · ${net.online || 1} pilot${net.online === 1 ? '' : 's'} online${net.pingMs === undefined ? '' : ` · PING ${net.pingMs} MS`}` : this.netSummary;
@@ -724,6 +735,7 @@ class SpaceScene extends Phaser.Scene {
     }
     const wasShared = Boolean(this.model.shared?.targets.some(t => !this.model.shared!.allies.has(t.id)));
     this.link.frame(this.model, now);
+    this.combat.frame(this.model,now);
     this.share.frame(this.model, now);
     if (!wasShared && this.model.shared?.targets.some(t => !this.model.shared!.allies.has(t.id))) this.model.message = 'Another pilot is in this sector. Outside station rings they can attack you, and take your cargo.';
     const poses = net.poses(now);
@@ -753,6 +765,8 @@ class SpaceScene extends Phaser.Scene {
         }
       }
       if (!look) continue;
+      for(const [x,y,,offline]of look.h??[]){const cos=Math.cos(pose.angle),sin=Math.sin(pose.angle),overlay=this.damageGraphics;overlay.save();overlay.translateCanvas(pose.x+(x*cos-y*sin)*cell,pose.y+(x*sin+y*cos)*cell);overlay.rotateCanvas(pose.angle);overlay.fillStyle(offline?0x050a12:0x5b241c,offline?.65:.25);overlay.fillRect(-7,-7,14,14);overlay.lineStyle(1,offline?0x697b89:0xffa16e,.9);overlay.lineBetween(-5,-4,0,1);overlay.lineBetween(0,1,4,-2);overlay.restore();}
+
       if (look.d && this.effects.enabled) { g.lineStyle(1, 0x94ddff, .6); g.strokeCircle(pose.x - pose.vx * .07, pose.y - pose.vy * .07, 18); g.strokeCircle(pose.x - pose.vx * .14, pose.y - pose.vy * .14, 14); }
       if (look.s) {
         const radius = Math.max(24, ...pose.blocks.map(b => Math.hypot(b[1], b[2]) * cell + 12)), charge = look.s[0] / look.s[1];
@@ -990,7 +1004,7 @@ class SpaceScene extends Phaser.Scene {
    * backdrop painted for this seed, so a sync does not cause a visible hitch.
    */
   private switchModel(model: GameModel, sameWorld = false) {
-    if(this.crewEconomy.pending||this.crewOutposts.pending){this.model.message='Resolve the pending crew transfer before changing worlds.';return;}
+    if(this.combat.pending||this.crewEconomy.pending||this.crewOutposts.pending){this.model.message='Resolve the pending transfer before changing worlds.';return;}
     sameWorld &&= model.seed === this.model.seed;
     if (sameWorld) for (const cache of this.asteroidCache.values()) cache.verify = true;
     else {
@@ -1035,8 +1049,8 @@ class SpaceScene extends Phaser.Scene {
   }
   private recoverShip() {
     if (!this.model.dead) return;
-    if (this.crewEconomy.pending || this.crewOutposts.pending) {
-      this.recoveryButton.textContent = 'Waiting for crew transfer…'; return;
+    if (this.combat.pending || this.crewEconomy.pending || this.crewOutposts.pending) {
+      this.recoveryButton.textContent = 'Finishing pending transfer…'; return;
     }
     this.buildMode = false; this.building = false; this.mapOpen = false; this.paused = false;
     if (this.model.rebuildDue) {
@@ -1113,7 +1127,7 @@ class SpaceScene extends Phaser.Scene {
   private renderBuilder() {
     this.builder.hidden = !this.building;
     if (!this.building || this.moduleDragActive) return;
-    const content=outfitterMarkup(this.model,{selectedModule:this.selectedModule,selectedCell:this.selectedCell,mode:this.detailMode,query:this.catalogQuery,category:this.catalogCategory,center:this.buildCenter,radius:this.gridRadius,moving:this.movingModule,failed:this.actionFailed},this.iconUrls);
+    const content=outfitterMarkup(this.model,{selectedModule:this.selectedModule,selectedCell:this.selectedCell,mode:this.detailMode,query:this.catalogQuery,category:this.catalogCategory,center:this.buildCenter,radius:this.gridRadius,moving:this.movingModule,failed:this.actionFailed,salvageId:this.selectedSalvage,salvageOpen:this.builder.querySelector<HTMLDetailsElement>('.salvage-locker')?.open??false},this.iconUrls);
     if (content !== this.builderContent) {
       const scrolls=['.catalog-list','.detail-body','.grid-scroll'].map(selector=>{const element=this.builder.querySelector<HTMLElement>(selector);return {selector,top:element?.scrollTop??0,left:element?.scrollLeft??0};});
       const top=this.builder.scrollTop,left=this.builder.scrollLeft;
@@ -1130,7 +1144,7 @@ class SpaceScene extends Phaser.Scene {
     return ['→', '↘', '↓', '↙', '←', '↖', '↑', '↗'][(Math.round(a / (Math.PI / 4)) + 8) % 8];
   }
   private draw() {
-    const g = this.graphics; g.clear();this.effectsGraphics.clear();
+    const g = this.graphics; g.clear();this.effectsGraphics.clear();this.damageGraphics.clear();
     const view = this.cameras.main.worldView;
     const now=this.time.now/1000;
     for(const {sprite,factor,scale} of this.backdrop){
@@ -1177,11 +1191,16 @@ class SpaceScene extends Phaser.Scene {
       const oldest = [...this.asteroidCache.entries()].filter(([, c]) => c.used < this.time.now).sort((a, b) => a[1].used - b[1].used);
       for (const [id, entry] of oldest.slice(0, this.asteroidCache.size - 128)) { this.textures.remove(entry.key); this.asteroidCache.delete(id); }
     }
+    for(const salvage of this.model.salvageObjects){
+      if(!visible(salvage))continue;
+      if(salvage.module)drawModule(g,salvage.x,salvage.y,salvage.angle,salvage.module.kind,MODULES[salvage.module.kind].color,salvage.module.level);
+      else {g.save();g.translateCanvas(salvage.x,salvage.y);g.rotateCanvas(salvage.angle);g.fillStyle(0x030b12);g.fillRect(-11,-9,22,18);g.fillStyle(0x86664b);g.fillRect(-9,-7,18,14);g.fillStyle(0xd8bb72);g.fillRect(-7,-5,14,2);g.fillRect(-7,3,14,2);g.fillStyle(0x213b45);g.fillRect(-3,-3,6,6);g.restore();}
+    }
     for (const block of this.model.detachedModules) {
       if (!visible(block)) continue;
       drawModule(g, block.x, block.y, block.angle, block.kind, MODULES[block.kind].color, block.level);
     }
-    for (const link of this.model.tractorLinks) drawEnergyBeam(g,link,this.effects.time,'tractor',this.effects.enabled);
+    for (const link of [...this.model.tractorLinks,...this.model.salvageLinks]) drawEnergyBeam(g,link,this.effects.time,'tractor',this.effects.enabled);
     this.model.drops.forEach((d,i)=>{
       if (!visible(d)) return;
       // Pixel gem: stepped diamond, lit upper-left half, shaded lower-right, gentle bob.
@@ -1295,7 +1314,7 @@ class SpaceScene extends Phaser.Scene {
       // Engine exhaust: stepped pixel flames behind every booster while thrusting, longer during a burst.
       const thrusting=!this.building&&!this.paused&&(this.keys.W.isDown||this.keys.A.isDown||this.keys.S.isDown||this.keys.D.isDown),burst=this.model.boostActive;
       if(thrusting||burst)for(const m of this.model.modules){
-        if(m.kind!=='engine'||m.integrity<=0)continue;
+        if(m.kind!=='engine'||m.integrity<=0||m.offline)continue;
         const point=this.model.modulePoint(m,heading);if(!visible(point))continue;
         const length=(5+m.level*1.5)*(burst?2.1:1)+Math.sin(now*40+m.x*3+m.y)*1.5;
         g.save();g.translateCanvas(point.x,point.y);g.rotateCanvas(heading+Math.PI);
@@ -1303,6 +1322,11 @@ class SpaceScene extends Phaser.Scene {
         g.restore();
       }
     }else {this.shipImage?.setVisible(false);for(const sprite of this.shipSprites)sprite.setVisible(false);}
+    if(!this.model.dead)for(const m of this.model.modules){
+      if(!m.offline&&m.integrity>=this.model.moduleMaxIntegrity(m)*.75)continue;
+      const point=this.model.modulePoint(m);if(!visible(point))continue;const overlay=this.damageGraphics;overlay.save();overlay.translateCanvas(point.x,point.y);overlay.rotateCanvas(this.model.player.angle);
+      overlay.fillStyle(m.offline?0x050a12:0x5b241c,m.offline?.65:.25);overlay.fillRect(-7,-7,14,14);overlay.lineStyle(1,m.offline?0x697b89:0xffa16e,.9);overlay.lineBetween(-5,-4,0,1);overlay.lineBetween(0,1,4,-2);overlay.restore();
+    }
     for(const field of [...this.model.novaFields,...this.model.remoteFields])if(visible(field)){
       g.fillStyle(0x99ff80,this.effects.enabled?.09:.025);g.fillCircle(field.x,field.y,field.radius);
       g.lineStyle(1,0xb1ff91,this.effects.enabled?.5:.2);g.strokeCircle(field.x,field.y,field.radius);

@@ -35,6 +35,17 @@ export type NetStatus = 'offline' | 'connecting' | 'online' | 'error';
 type SocketLike = { readyState: number; send(text: string): void; close(): void; addEventListener(type: string, listener: (event: { data?: unknown }) => void): void };
 
 export class NetClient {
+  modularPvp=false;
+  private modularQueue:ClientMessage[]=[];private modularSending=false;
+  private modularParts?:{requestId:string;total:number;parts:(string|undefined)[];bytes:number};
+  private flushModular(){if(this.modularSending)return;this.modularSending=true;const flush=()=>{if(!this.connected){this.modularQueue=[];this.modularSending=false;return;}let sent=0;while(this.modularQueue.length&&this.spare()>=BUDGET.reserve&&sent++<2)this.raw(this.modularQueue.shift()!);if(this.modularQueue.length)setTimeout(flush,100);else this.modularSending=false;};flush();}
+
+  private modularWaiting=new Map<string,{resolve:(data:unknown)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>}>();
+  modularRequest(action:'sync'|'ack',data:unknown):Promise<unknown>{
+    if(!this.connected||!this.modularPvp)return Promise.reject(Error('Modular PvP relay unavailable.'));
+    const requestId=globalThis.crypto.randomUUID();
+    return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{this.modularWaiting.delete(requestId);reject(Error('Combat ledger response pending.'));},30000);this.modularWaiting.set(requestId,{resolve,reject,timer});const payload=JSON.stringify(data);if(payload.length>3000){const total=Math.ceil(payload.length/3000);if(total>512){clearTimeout(timer);this.modularWaiting.delete(requestId);reject(Error('Combat manifest exceeds the transfer byte budget.'));return;}for(let index=0;index<total;index++)this.modularQueue.push({t:'modular-part',requestId,action,index,total,data:payload.slice(index*3000,(index+1)*3000)});this.flushModular();}else if(!this.raw({t:'modular',requestId,action,data})){clearTimeout(timer);this.modularWaiting.delete(requestId);reject(Error('Combat ledger disconnected.'));}});
+  }
   crewSupported=false;crewState?:CrewClientState;pilotId?:string;
   onCrewState:()=>void=()=>{};onCrewIdentity:()=>void=()=>{};
   private credentialKey='';private credential?:string;
@@ -249,7 +260,9 @@ export class NetClient {
   receive(raw: string, now = performance.now() / 1000) {
     const m = parseServer(raw); if (!m) return;
     switch (m.t) {
-      case 'welcome': this.id = m.id; this.status = 'online'; this.retryDelay = RECONNECT.first; this.setNote('Online.'); this.askLobbies();this.crewSupported=m.crewProtocol===1;if(this.crewSupported)this.raw({t:'crew-auth',credential:this.credential});this.onCrewState();return;
+      case 'modular-result-part': {if(!this.modularWaiting.has(m.requestId))return;if(!this.modularParts||this.modularParts.requestId!==m.requestId)this.modularParts={requestId:m.requestId,total:m.total,parts:new Array(m.total),bytes:0};const p=this.modularParts;if(p.total!==m.total)return;if(p.parts[m.index]===undefined){p.parts[m.index]=m.data;p.bytes+=m.data.length;}if(p.bytes>1536000){this.modularParts=undefined;return;}if(p.parts.filter(v=>v!==undefined).length===m.total){this.modularParts=undefined;this.receive(p.parts.join(''),now);}return;}
+      case 'modular-result': {const wait=this.modularWaiting.get(m.requestId);if(wait){clearTimeout(wait.timer);this.modularWaiting.delete(m.requestId);if(m.ok)wait.resolve(m.data);else wait.reject(Error(m.error??'Combat request rejected.'));}return;}
+      case 'welcome': this.modularPvp=m.modularPvp===1;this.id = m.id; this.status = 'online'; this.retryDelay = RECONNECT.first; this.setNote('Online.'); this.askLobbies();this.crewSupported=m.crewProtocol===1;if(this.crewSupported)this.raw({t:'crew-auth',credential:this.credential});this.onCrewState();return;
       case 'crew-identity': this.pilotId=m.pilotId;this.credential=m.credential;try{localStorage.setItem(this.credentialKey,m.credential);}catch{/* Keep identity in memory when storage is disabled. */}this.onCrewIdentity();return;
       case 'crew-state-part': {
         if(m.total<1||m.total>256||m.index<0||m.index>=m.total||m.data.length>9000)return;
@@ -321,6 +334,7 @@ export class NetClient {
   /** Messages dropped locally because they were too large to send. */
   oversized = 0;
   private dropped(text: string) {
+    this.modularPvp=false;this.modularQueue=[];this.modularParts=undefined;for(const w of this.modularWaiting.values()){clearTimeout(w.timer);w.reject(Error('Combat transport disconnected; receipt status unknown.'));}this.modularWaiting.clear();
     this.crewParts=undefined;this.crewSupported=false;this.crewState=undefined;this.pilotId=undefined;for(const [requestId,w]of this.crewWaiting){clearTimeout(w.timer);w.reject(Error('Disconnected; outcome is unknown. Retry with the same request ID.'));}this.crewWaiting.clear();this.onCrewState();
     const had = this.lobby;
     this.status = 'offline'; this.socket = undefined; this.id = undefined; this.lobby = undefined; this.peers.clear(); this.pending = []; this.pingAsked = []; this.lastPing = -Infinity; this.room = undefined; this.claims.clear(); this.profileSent = ''; this.matchWaiting?.(null);

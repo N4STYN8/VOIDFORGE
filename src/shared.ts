@@ -1,4 +1,4 @@
-import { ENEMIES, RESOURCES, STRUCTURES, WEAPON_TYPES, type EnemyKind, type Resource, type WeaponKind } from './data.ts';
+import { ENEMIES, RESOURCES, STRUCTURES, WEAPON_TYPES, MODULE_DURABILITY, type ModuleKind, type EnemyKind, type Resource, type WeaponKind } from './data.ts';
 import type { Asteroid } from './mining.ts';
 import { CLAIMS } from './netProtocol.ts';
 
@@ -126,17 +126,18 @@ export function decodePilotShots(d: unknown): PilotShot[] {
  */
 export type BeamRow = [dx: number, dy: number, tx: number, ty: number, level: number, target: number];
 /** `b` engine burst active, `d` phase dash active: drawn as longer flames and a dash trail on that ship. */
-export type PilotLook = { s?: [shield: number, max: number]; m?: BeamRow[]; t?: BeamRow[]; b?: 1; d?: 1 };
+export type PilotLook = { s?: [shield: number, max: number]; m?: BeamRow[]; t?: BeamRow[]; b?: 1; d?: 1; h?: [number,number,number,number][] };
 type Link = { from: { x: number; y: number }; to: { x: number; y: number }; level: number; targetId: number };
-export function encodeLook(ship: { x: number; y: number }, shield: number, maxShield: number, mining: Link[], tractor: Link[], burst = false, dash = false): PilotLook | undefined {
+export function encodeLook(ship: { x: number; y: number }, shield: number, maxShield: number, mining: Link[], tractor: Link[], burst = false, dash = false, modules?:{x:number;y:number;kind:ModuleKind;level:number;integrity:number;offline?:boolean}[]): PilotLook | undefined {
   const row = (l: Link): BeamRow => [round(l.from.x - ship.x), round(l.from.y - ship.y), round(l.to.x), round(l.to.y), l.level, l.targetId];
   const look: PilotLook = {};
+  if(modules)look.h=modules.filter(m=>m.offline||m.integrity<MODULE_DURABILITY[m.kind][m.level-1]*.75).slice(0,64).map(m=>[m.x,m.y,Math.max(0,Math.min(1,m.integrity/MODULE_DURABILITY[m.kind][m.level-1])),m.offline?1:0]);
   if (maxShield > 0 && shield > 0) look.s = [Math.round(shield), Math.round(maxShield)];
   if (mining.length) look.m = mining.slice(0, 12).map(row);
   if (tractor.length) look.t = tractor.slice(0, 12).map(row);
   if (burst) look.b = 1;
   if (dash) look.d = 1;
-  return look.s || look.m || look.t || look.b || look.d ? look : undefined;
+  return look.s || look.m || look.t || look.b || look.d || look.h ? look : undefined;
 }
 export function decodeLook(d: unknown): PilotLook | undefined {
   if (!d || typeof d !== 'object') return;
@@ -145,6 +146,7 @@ export function decodeLook(d: unknown): PilotLook | undefined {
   if (Array.isArray(v.s) && v.s.length === 2 && v.s.every(num) && (v.s[1] as number) > 0) look.s = [Math.max(0, Math.min(v.s[0] as number, v.s[1] as number)), v.s[1] as number];
   const m = beams(v.m), t = beams(v.t);
   if (m?.length) look.m = m; if (t?.length) look.t = t;
+  if(Array.isArray(v.h))look.h=v.h.slice(0,64).filter((r):r is [number,number,number,number]=>Array.isArray(r)&&r.length===4&&r.every(num)&&Math.abs(r[0])<2000&&Math.abs(r[1])<2000&&r[2]>=0&&r[2]<=1&&(r[3]===0||r[3]===1));
   if (v.b === 1) look.b = 1; if (v.d === 1) look.d = 1;
   return look;
 }
