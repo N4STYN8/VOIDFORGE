@@ -222,3 +222,13 @@ Check afterwards:
 To roll back, copy the `.prev` file back over `relay.mjs` and restart the service.
 
 The in-game commands also need the matching game build on the live site, which a merge to `main` deploys.
+
+## Crew rollout (separate relay deployment)
+
+The crew-capable relay preserves the existing admin console/options. Build with `npm run relay-bundle` on the integrated source; use `dist-relay/relay.mjs` for the documented Node 16 Pi deployment. Do not replace existing admin secrets, drop-ins, bans or admin assets.
+
+Before restart, coordinate with the other developer, back up `/opt/voidforge/relay.mjs` and any existing crew database, and give the `voidforge` service a writable durable directory. Configure `CREW_DATA=/var/lib/voidforge/crews.json` in a separate systemd drop-in, preserving existing `ADMIN_PASSWORD`, `ADMIN_DIR`, `BANS_FILE` and `TRUST_PROXY`. The directory should be owned by `voidforge`, and the database must be backed up across releases. Build/check the admin page only if deploying admin assets separately.
+
+After installing the new relay and restarting `voidforge-relay`, check service health, existing admin login/observer behavior, crew capability on a real player connection, then a two-pilot invite/deposit/build/reconnect check. The site remains compatible with the older relay and shows crews unavailable until the relay is upgraded.
+
+Known observer scope: the existing global-admin feeds remain intact; crew-only server structures/mining do not yet have a dedicated admin observer overlay. Crew members see authoritative crew snapshots in the game. Crew leadership never grants global-admin credentials.

@@ -1,3 +1,4 @@
+import {readCrewClientState,validCrewRequest,type CrewRequest,type CrewResult,type CrewClientState} from './crewProtocol.ts';
 /**
  * Wire protocol shared by the browser client (src/net.ts) and the relay (server/relay.ts).
  * Plain JSON text frames. No Phaser, DOM or Node imports, so both sides and the tests can use it.
@@ -42,6 +43,8 @@ export type Member = { id: string; name: string; host: boolean };
 export type LobbySummary = { code: string; host: string; members: number; power?: number };
 
 export type ClientMessage =
+  | {t:'crew-auth';credential?:string}
+  | CrewRequest
   | { t: 'hello'; v: number; name: string }
   /** `open` lobbies appear in the public list; private ones are joined only by code or invite link. */
   | { t: 'create'; open?: boolean }
@@ -69,7 +72,11 @@ export type ClientMessage =
   | { t: 'admin-ack'; ref: number; ok: boolean; message?: string; data?: unknown };
 
 export type ServerMessage =
-  | { t: 'welcome'; id: string }
+  | { t: 'welcome'; id: string;crewProtocol?:number }
+  | {t:'crew-identity';pilotId:string;credential:string}
+  | {t:'crew-state';state:CrewClientState}
+  | {t:'crew-state-part';transferId:string;index:number;total:number;data:string}
+  | ({t:'crew-result'} & CrewResult)
   | { t: 'lobby'; code: string; host: string; members: Member[]; world: WorldRef | null; open?: boolean }
   | { t: 'lobbies'; online: number; list: LobbySummary[] }
   | { t: 'party'; from: string; k: PartyKind; d: unknown }
@@ -151,6 +158,8 @@ export function parseClient(raw: string): ClientMessage | undefined {
   try { m = JSON.parse(raw); } catch { return; }
   if (!m || typeof m !== 'object') return;
   switch (m.t) {
+    case 'crew-auth': return m.credential===undefined||typeof m.credential==='string'&&/^[a-f0-9]{64}$/.test(m.credential)?{t:'crew-auth',credential:m.credential as string|undefined}:undefined;
+    case 'crew': return validCrewRequest(m)?{t:'crew',requestId:m.requestId,action:m.action,data:m.data}:undefined;
     case 'hello': return Number.isInteger(m.v) && typeof m.name === 'string' ? { t: 'hello', v: m.v as number, name: cleanName(m.name) } : undefined;
     case 'create': return { t: 'create', open: m.open === true || undefined };
     case 'open': return typeof m.open === 'boolean' ? { t: 'open', open: m.open } : undefined;
@@ -181,7 +190,11 @@ export function parseServer(raw: string): ServerMessage | undefined {
   if (!m || typeof m !== 'object') return;
   switch (m.t) {
     case 'admin': { const c = Number.isSafeInteger(m.ref) ? readAdminCommand(m.c) : undefined; return c && { t: 'admin', ref: m.ref as number, c }; }
-    case 'welcome': return typeof m.id === 'string' ? { t: 'welcome', id: m.id } : undefined;
+    case 'welcome': return typeof m.id === 'string' ? { t: 'welcome', id: m.id,...(m.crewProtocol===1?{crewProtocol:1}:{}) } : undefined;
+    case 'crew-identity': return typeof m.pilotId==='string'&&typeof m.credential==='string'&&/^[a-f0-9]{64}$/.test(m.credential)?{t:'crew-identity',pilotId:m.pilotId,credential:m.credential}:undefined;
+    case 'crew-result': return typeof m.requestId==='string'&&typeof m.ok==='boolean'?{t:'crew-result',requestId:m.requestId,ok:m.ok,error:typeof m.error==='string'?m.error:undefined,result:m.result}:undefined;
+    case 'crew-state': {const state=readCrewClientState(m.state);return state?{t:'crew-state',state}:undefined;}
+    case 'crew-state-part': return typeof m.transferId==='string'&&Number.isInteger(m.index)&&Number.isInteger(m.total)&&(m.total as number)>0&&(m.total as number)<=256&&(m.index as number)>=0&&(m.index as number)<(m.total as number)&&typeof m.data==='string'&&m.data.length<=10000?{t:'crew-state-part',transferId:m.transferId,index:m.index as number,total:m.total as number,data:m.data}:undefined;
     case 'gone': return typeof m.id === 'string' ? { t: 'gone', id: m.id } : undefined;
     case 'error': return typeof m.message === 'string' ? { t: 'error', message: m.message } : undefined;
     case 'left-lobby': return typeof m.reason === 'string' ? { t: 'left-lobby', reason: m.reason } : undefined;

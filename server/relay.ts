@@ -1,3 +1,9 @@
+import {CrewStore} from './crewStore.ts';
+import {applyCrewEconomy} from './crewEconomy.ts';
+import {CrewOutposts} from './crewOutposts.ts';
+import {decodeRocks,decodeEnemies,decodeShots,type RockState} from '../src/shared.ts';
+import type {CrewCommandContext} from './crewStore.ts';
+import type {ShipState} from '../src/netProtocol.ts';
 import { createServer as createHttp, type Server } from 'node:http';
 import { createServer as createHttps } from 'node:https';
 import { randomBytes, randomInt } from 'node:crypto';
@@ -16,6 +22,7 @@ import { ADMIN, type AdminCommand, type AdminPilot } from '../src/adminProtocol.
  * sockets that watch a sector get a copy of its traffic (`tap`), bounded so watching cannot stall the relay.
  */
 type Client = {
+  pilotId?:string;ship?:ShipState;
   at?: { x: number; y: number }; angle?: number;
   /** Last reported ship state was destroyed: such a pilot's game is not simulating, so it never runs a room. */ dead?: boolean;
   profile?: { home: string; power: number }; id: string; name: string; peer: WebSocketPeer; room?: string; world?: WorldRef; owner?: boolean;
@@ -26,7 +33,7 @@ type Client = {
 /** A sector room: its pilots, who runs its enemies, and rock claim leases (rock id -> holder and expiry). */
 type Room = { clients: Set<Client>; authority?: Client; claims: Map<number, { holder: Client; until: number }> };
 type Lobby = { code: string; host: Client; members: Set<Client>; open?: boolean };
-export type RelayOptions = { port?: number; host?: string; tls?: { cert: string | Buffer; key: string | Buffer }; origins?: string[]; admin?: AdminOptions };
+export type RelayOptions = { port?: number; host?: string; tls?: { cert: string | Buffer; key: string | Buffer }; origins?: string[]; admin?: AdminOptions;crewFile?:string };
 export type RelayStats = { clients: number; rooms: number; lobbies: number; messagesIn: number; framesOut: number; bytesOut: number; skipped: number; obsDropped: number; admins: number; uptime: number; rssMb: number; cpuMs: number };
 export type Relay = { server: Server; port: number; close(): Promise<void>; stats(): RelayStats };
 
@@ -37,9 +44,26 @@ export function originAllowed(origin: string | undefined, allowed: string[]) {
   return allowed.some(a => origin === a || (a.startsWith('http://localhost') || a.startsWith('http://127.0.0.1')) && origin.startsWith(a + ':'));
 }
 
+/** Only bounded finite rock geometry enters server-owned crew simulation. */
+export function crewRockPatches(raw:unknown){return decodeRocks(raw).filter(p=>{if(p.gone)return true;if(p.amount!>1e6||p.radius!<=0||p.radius!>512||Math.abs(p.vx!)>10000||Math.abs(p.vy!)>10000)return false;const g=p.geometry;if(!g)return true;const n=g.angles?.length;return Number.isFinite(g.seed)&&Number.isFinite(g.baseRadius)&&g.baseRadius>0&&g.baseRadius<=512&&Number.isFinite(g.originalArea)&&g.originalArea>0&&Number.isFinite(g.revision)&&Number.isInteger(n)&&n>=10&&n<=16&&[g.angles,g.originalRadii,g.radii].every(a=>Array.isArray(a)&&a.length===n&&a.every(v=>Number.isFinite(v)&&v>=0&&v<=512))&&Array.isArray(g.vertices)&&g.vertices.length===n&&g.vertices.every(v=>v&&Number.isFinite(v.x)&&Number.isFinite(v.y)&&Math.abs(v.x)<=512&&Math.abs(v.y)<=512);});}
+
 export function startRelay(options: RelayOptions = {}): Promise<Relay> {
   const clients = new Set<Client>(), rooms = new Map<string, Room>(), lobbies = new Map<string, Lobby>();
   let joins = 0;
+  const rockCache=new Map<string,Map<number,RockState>>(),crewClaims=new Map<string,{crewId:string;until:number}>();
+  let pendingCrewEffects:(()=>void)[]=[];
+  const flushCrewEffects=()=>{const effects=pendingCrewEffects;pendingCrewEffects=[];for(const apply of effects)apply();};
+  const outpostService=new CrewOutposts({
+    claimRock:(crewId,world,id)=>{const room=rooms.get(world.seed),claim=room?.claims.get(id),now=Date.now();if(claim&&claim.until>now)return false;const key=world.seed+':'+id,held=crewClaims.get(key);if(held&&held.crewId!==crewId&&held.until>now)return false;crewClaims.set(key,{crewId,until:now+CLAIMS.lease});return true;},
+    readRock:(world,id)=>rockCache.get(world.seed)?.get(id),
+    onRock:(world,patch)=>{pendingCrewEffects.push(()=>{let cache=rockCache.get(world.seed);if(!cache)rockCache.set(world.seed,cache=new Map());cache.set(patch.id,patch);const room=rooms.get(world.seed);if(room)for(const c of room.clients)send(c,{t:'cast',from:'crew-server',r:roomTag(world.seed),k:'rocks',d:[patch]});});},
+    onEnemyHit:(world,id,damage)=>{pendingCrewEffects.push(()=>{const authority=rooms.get(world.seed)?.authority;if(authority)send(authority,{t:'direct',from:'crew-server',r:roomTag(world.seed),k:'hit',d:[{enemyId:id,damage}]});});}
+  });
+  const crewStore=new CrewStore({path:options.crewFile,command:(crew,pilotId,action,data,context)=>{
+    if(action.startsWith('outpost-'))return outpostService.command(crew,pilotId,action,data,context);
+    const result=applyCrewEconomy(crew,pilotId,action,data,context);if(result===undefined)throw Error('Unknown crew action.');return result;
+  },view:(crew,context)=>outpostService.view(crew,context)});
+
   // Totals since start, for /stats and load tests.
   const counters = { messagesIn: 0, framesOut: 0, bytesOut: 0, skipped: 0, obsDropped: 0 }, started = Date.now();
   /** Admin observers by sector seed, the sectors an admin locked, and per-room observer cast budgets. */
@@ -69,6 +93,8 @@ export function startRelay(options: RelayOptions = {}): Promise<Relay> {
   };
   const allowed = options.origins ?? DEFAULT_ORIGINS;
   const send = (c: Client, m: ServerMessage) => { const frame = textFrame(JSON.stringify(m)); c.peer.sendFrame(frame); counters.framesOut++; counters.bytesOut += frame.length; };
+  const crewContext=(c:Client):Partial<CrewCommandContext>=>({world:c.world,ship:c.ship});
+  function announceCrews(){const online=[...clients].filter(c=>c.pilotId).map(c=>({pilotId:c.pilotId!,name:c.name,socketId:c.id}));for(const c of clients)if(c.pilotId){const state=crewStore.snapshot(c.pilotId,online,crewContext(c));const data=JSON.stringify(state);if(Buffer.byteLength(data)<NET.maxMessage-100)send(c,{t:'crew-state',state});else{const total=Math.ceil(data.length/3000),transferId=randomBytes(8).toString('hex');if(total>256){delete state.outpostView;send(c,{t:'crew-state',state});continue;}for(let index=0;index<total;index++)send(c,{t:'crew-state-part',transferId,index,total,data:data.slice(index*3000,(index+1)*3000)});}}}
   const members = (lobby: Lobby): Member[] => [...lobby.members].map(c => ({ id: c.id, name: c.name, host: c === lobby.host }));
   const announce = (lobby: Lobby) => { const m: ServerMessage = { t: 'lobby', code: lobby.code, host: lobby.host.id, members: members(lobby), world: lobby.host.world ?? null, open: lobby.open || undefined }; for (const c of lobby.members) send(c, m); };
   const newCode = () => { for (;;) { let code = ''; for (let i = 0; i < NET.codeLength; i++) code += NET.codeAlphabet[randomInt(NET.codeAlphabet.length)]; if (!lobbies.has(code)) return code; } };
@@ -209,6 +235,15 @@ export function startRelay(options: RelayOptions = {}): Promise<Relay> {
 
   function handle(c: Client, m: ClientMessage) {
     switch (m.t) {
+      case 'crew-auth': {try{const identity=crewStore.authenticate(m.credential,c.name);c.pilotId=identity.pilotId;send(c,{t:'crew-identity',...identity});announceCrews();}catch(error){send(c,{t:'error',message:error instanceof Error?error.message:'Crew authentication failed.'});}return;}
+      case 'crew': {pendingCrewEffects=[];try{
+        if(m.action==='outpost-sync'){
+          const crew=c.pilotId?crewStore.crewOf(c.pilotId):undefined;if(!crew){send(c,{t:'crew-result',requestId:m.requestId,ok:false,error:'Join a crew first.'});return;}
+          if(c.room&&c.world&&c.ship&&rooms.get(c.room)?.authority===c){const data=m.data as {rocks?:unknown};let cache=rockCache.get(c.room);if(!cache)rockCache.set(c.room,cache=new Map());for(const patch of crewRockPatches(data?.rocks).slice(0,12)){if(patch.gone||patch.amount!>1e6||patch.radius!>512||Math.hypot(patch.x!-c.ship.x,patch.y!-c.ship.y)>2500||cache.has(patch.id))continue;cache.set(patch.id,patch);}}
+          send(c,{t:'crew-result',requestId:m.requestId,ok:true});announceCrews();return;
+        }
+const result=c.pilotId?crewStore.execute(c.pilotId,m.requestId,m.action,m.data,crewContext(c)):{requestId:m.requestId,ok:false,error:'Authenticate your crew identity first.'};send(c,{t:'crew-result',...result});if(result.ok){flushCrewEffects();announceCrews();}else pendingCrewEffects=[];}catch{pendingCrewEffects=[];send(c,{t:'error',message:'Crew persistence unavailable; outcome unknown. Retry the same request after reconnecting.'});}return;}
+
       case 'hello':
         if (m.v !== NET.version) { send(c, { t: 'error', message: 'This game version does not match the relay. Reload the page.' }); c.peer.close(4000); return; }
         c.name = m.name; if (c.lobby) announce(c.lobby); return;
@@ -258,13 +293,13 @@ export function startRelay(options: RelayOptions = {}): Promise<Relay> {
           let room = rooms.get(c.room); if (!room) rooms.set(c.room, room = { clients: new Set(), claims: new Map() });
           room.clients.add(c); elect(c.room, room);
         } else if (c.owner !== owner) { c.owner = owner; elect(c.room, rooms.get(c.room)!); }
-        c.world = m.world;
+        c.world = m.world;if(c.pilotId)announceCrews();
         if (c.lobby?.host === c) announce(c.lobby);
         return;
       }
       case 'state': {
         if (!c.room) return;
-        c.at = { x: m.s.x, y: m.s.y }; c.angle = m.s.angle;
+        c.at = { x: m.s.x, y: m.s.y }; c.angle = m.s.angle;c.ship={...m.s,blocks:m.s.blocks??c.ship?.blocks};
         if (Boolean(m.s.dead) !== Boolean(c.dead)) { c.dead = Boolean(m.s.dead) || undefined; const room = rooms.get(c.room); if (room) elect(c.room, room); }
         // Interest management: only pilots near enough to see or chart this ship get its state.
         const near = [...rooms.get(c.room)?.clients ?? []].filter(other => other !== c && (!other.at || Math.abs(other.at.x - m.s.x) < NET.interest && Math.abs(other.at.y - m.s.y) < NET.interest));
@@ -275,6 +310,11 @@ export function startRelay(options: RelayOptions = {}): Promise<Relay> {
       }
       case 'cast': {
         if (!c.room) return;
+        const frame=m.d as Record<string,unknown>;
+        const patches=m.k==='rocks'?crewRockPatches(m.d):m.k==='fx'?crewRockPatches(frame?.r):[];
+        if(patches.length){let cache=rockCache.get(c.room);if(!cache)rockCache.set(c.room,cache=new Map());for(const patch of patches){const lock=crewClaims.get(c.room+':'+patch.id);if(lock&&lock.until>Date.now())continue;cache.set(patch.id,patch);}if(cache.size>5000)for(const id of [...cache.keys()].slice(0,cache.size-5000))cache.delete(id);}
+        if(rooms.get(c.room)?.authority===c&&c.world&&(m.k==='fx'||m.k==='enemies'||m.k==='shots'))crewStore.inspectCrews(crew=>{if(crew.outposts?.length)outpostService.ingestCombat(crew,c.world!,{enemies:m.k==='enemies'?decodeEnemies(m.d):m.k==='fx'?decodeEnemies(frame?.n):undefined,shots:m.k==='shots'?decodeShots(m.d):m.k==='fx'?decodeShots(frame?.e):undefined});});
+
         const text = JSON.stringify({ t: 'cast', from: c.id, r: roomTag(c.room), k: m.k, d: m.d } satisfies ServerMessage);
         broadcast([...rooms.get(c.room)?.clients ?? []].filter(other => other !== c), text);
         if (watchers.get(c.room)?.size) {
@@ -290,6 +330,7 @@ export function startRelay(options: RelayOptions = {}): Promise<Relay> {
       case 'direct': {
         if (!c.room) return;
         const target = [...rooms.get(c.room)?.clients ?? []].find(other => other.id === m.to && other !== c);
+        if(target&&m.k==='pvp-hit'&&crewStore.sameCrew(c.pilotId,target.pilotId))return;
         if (target) send(target, { t: 'direct', from: c.id, r: roomTag(c.room), k: m.k, d: m.d }); else send(c, { t: 'undelivered', to: m.to, k: m.k });
         return;
       }
@@ -307,6 +348,7 @@ export function startRelay(options: RelayOptions = {}): Promise<Relay> {
         const t = Date.now(), ok: number[] = [], denied: number[] = [];
         for (const id of m.ids) {
           const claim = room.claims.get(id);
+          if((crewClaims.get(c.room!+':'+id)?.until??0)>t){denied.push(id);continue;}
           if (!claim || claim.holder === c || claim.until <= t || !room.clients.has(claim.holder)) { room.claims.set(id, { holder: c, until: t + CLAIMS.lease }); ok.push(id); } else denied.push(id);
         }
         if (room.claims.size > 4096) for (const [id, claim] of room.claims) if (claim.until <= t) room.claims.delete(id);
@@ -350,20 +392,22 @@ export function startRelay(options: RelayOptions = {}): Promise<Relay> {
     clients.add(c);
     peer.onmessage = text => { counters.messagesIn++; c.msgs++; if (!admit(c)) return; const m = parseClient(text); if (m) handle(c, m); };
     peer.onclose = () => {
-      clients.delete(c); leaveRoom(c); leaveLobby(c, '', false);
+      clients.delete(c); leaveRoom(c); leaveLobby(c, '', false);if(c.pilotId)announceCrews();
       for (const [ref, entry] of pending) if (entry.client === c) { pending.delete(ref); clearTimeout(entry.timer); entry.resolve({ ok: false, message: 'The pilot disconnected.' }); }
     };
-    send(c, { t: 'welcome', id: c.id });
+    send(c, { t: 'welcome', id: c.id,crewProtocol:1 });
     peer.ping();
   });
   const keepAlive = setInterval(() => { for (const c of clients) { if (!c.peer.alive) { c.peer.close(1001); continue; } c.peer.alive = false; c.peer.ping(); } }, NET.ping * 1000);
   keepAlive.unref();
+  const crewTick=setInterval(()=>{pendingCrewEffects=[];try{const changed=crewStore.systemUpdate(crews=>{let changed=false;for(const crew of crews)if(crew.outposts?.length){const contexts=[...clients].filter(c=>c.pilotId&&crew.members.some(m=>m.pilotId===c.pilotId)).map(c=>({pilotId:c.pilotId!,...crewContext(c)}));changed=outpostService.tick(crew,.5,contexts)||changed;}return changed;});if(changed){flushCrewEffects();announceCrews();}else pendingCrewEffects=[];const now=Date.now();for(const[key,claim]of crewClaims)if(claim.until<now)crewClaims.delete(key);}catch(error){pendingCrewEffects=[];console.error('Crew automation update failed:',error instanceof Error?error.message:'unknown');}},500);crewTick.unref();
+
   return new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(options.port ?? 8787, options.host ?? '0.0.0.0', () => {
       const address = server.address(), port = typeof address === 'object' && address ? address.port : options.port ?? 8787;
       resolve({ server, port, stats,
-        close: () => new Promise(done => { clearInterval(keepAlive); admin.close(); for (const c of clients) c.peer.close(1001); server.close(() => done()); server.closeIdleConnections?.(); }) });
+        close: () => new Promise(done => { clearInterval(keepAlive);clearInterval(crewTick); admin.close(); for (const c of clients) c.peer.close(1001); server.close(() => done()); server.closeIdleConnections?.(); }) });
     });
   });
 }
