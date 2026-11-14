@@ -211,6 +211,11 @@ Wheel heading stability: zoomAimLock captures pointer screen position and ship h
 - Sight: `canSee` reuses each enemy's line-of-sight answer for SIGHT_REFRESH (0.1 s), cleared whenever the rock list is replaced; `clearLineOfSight` rejects rocks by bounding box. chooseTargets picks without temporary lists.
 - Rendering: a same-sector model switch (sector sync) keeps asteroid sprites and the backdrop, verifies each rock by an outline fingerprint and repaints at most 6 changed rocks per frame; peer name tags only restyle when their colour changes.
 
+
+Build module unlock stays centralized in OUTPOST.coreLevel (now 2), consumed by install validation and Build Mode messaging. MODULES.builder description matches this requirement; no new unlock/save state.
+
+Dynamic music: musicState.ts owns priority, activity timers, shuffle bags and fade math; musicTracks.ts maps exact local MP3 filenames using Vite URLs; musicEngine.ts owns bounded streaming elements/overlapping gain automation. GameAudio owns that one engine on its existing music bus. main.ts supplies station/mining/encounter state, model.musicEvents carries only confirmed local combat (transient, not saved), and musicSignals.ts filters actual active encounters. No network protocol change, no audio-buffer bank. Full asset/verification/limitation list: MUSIC_AUDIT.md.
+
 ## Multiplayer latency pass (2026-11-13)
 - Measure with `node --experimental-strip-types scripts/latencyBench.ts [oneWayMs] [jitterMs] [seconds]`: two full pilots over a real local relay with an artificial delay on both sockets. It compares, every follower frame, what the follower shows with what the authority really has: remote ship lag, mirrored enemy lag (distance / speed), shot delay and how far behind the true shot a received shot appears, plus each pilot's messages and KB per second. "One-way 40 ms" is per client link, so pilot to pilot is about 80 ms.
 - Remote ships (`NetClient`, `INTERP` in src/net.ts): the interpolation delay adapts per pilot to arrival jitter (`base + jitter x measured`, 40–150 ms instead of a fixed 150 ms). Past the newest sample the pose is extrapolated on velocity and the turn rate of the last two samples. When a new sample moves the drawn pose, the difference is kept as an error that fades over `INTERP.smooth`, so ships never snap (jumps over 300 units, such as respawns, are not smoothed).
