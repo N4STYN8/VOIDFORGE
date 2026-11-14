@@ -236,3 +236,39 @@ Choices: own Node + WebSocket relay; sector grid; owners keep changes to their s
 - [x] Verify model accounting, real browser audio rendering/cleanup and integrated multiplayer regression suite
 - [ ] Human listening on headphones/small speakers; tune bass and confirmation balance
 - [ ] Optional future remote-pilot shot-audio protocol (no relay changes in this release)
+
+## Ship zoom rendering
+- [x] Sample the player's assembled hull as one core-anchored cached texture instead of independently transformed tiles
+- [x] Preserve paint/layout/levels, north preview and safe fallback for large ships
+- [x] Verify real wheel zoom in Canvas/WebGL and layout/texture-budget regressions
+- [ ] User visual check of their ship while zooming
+
+## Audio strength and visibility
+- [x] Replace global hit/kill audio with positioned cues and reject off-screen world events
+- [x] Strengthen effects, add metallic impact texture and music ducking with bounded output/source costs
+- [x] Verify viewport boundaries, real browser playback and offline mix/source cleanup
+- [ ] Human listening pass on headphones/speakers
+
+## Enemy retaliation
+- [x] Pursue a damaging shooter beyond detection, including remote shooters
+- [x] Preserve visibility-gated firing, safe zones, retreat and guard leash
+- [x] Regression-test pursuit, timeout, collisions and multiplayer targeting
+- [ ] Playtest pursuit duration and disengagement balance
+
+## Missile interception
+- [x] Tough hostile missiles with cumulative damage and explosion/sound on destruction
+- [x] Swept collision, cover priority, pooled health reset and legacy defaults
+- [x] Test multiple hits, interception, cover and visual-only shot exclusion
+- [ ] Playtest missile durability and hit radius
+
+## Active-flight zoom correction
+- [x] Eliminate stale camera-matrix aim jumps on the wheel-input frame
+- [x] Disable pixel-rounded follow at fractional zoom
+- [x] Check active Canvas/WebGL flight plus projection regressions
+- [ ] User verify zoom behavior on their ship
+
+## Zoom heading reversal
+- [x] Reproduce a 180-degree flip during moving, near-center-cursor zoom
+- [x] Hold heading across wheel zoom; resume normal aim on mouse movement
+- [x] Verify moving Canvas/WebGL zoom, aim release and projection regression
+- [ ] User check on their ship; changes remain local

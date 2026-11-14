@@ -4,6 +4,8 @@ export const WORLD = { width: 19200 * Math.sqrt(10), height: 19200 * Math.sqrt(1
 export const RESOURCES = { iron: { label: 'Iron', color: 0xb9bdc7 }, copper: { label: 'Copper', color: 0xd59460 }, crystal: { label: 'Crystal', color: 0x8ad6ed }, ice: { label: 'Ice', color: 0xc5ecff }, radioactive: { label: 'Radioactive', color: 0x9fe63f } };
 export type Resource = keyof typeof RESOURCES;
 export const SHIP = { speed: 280, acceleration: 650, drag: 1.6, radius: 18, health: 100, miningRange: 240, miningRate: 9, pickupRange: 65 };
+// Enemy missiles take eight level-1 autocannon hits; intercepted warheads detonate harmlessly.
+export const MISSILE_DEFENSE = { health: 90, radius: 10, explosionRadius: 38 };
 export const WEAPONS = { player: { damage: 12, speed: 700, cooldown: 0.18, lifetime: 1.1 }, enemy: { damage: 9, speed: 340, cooldown: 1.4, lifetime: 2.2 } };
 export type EnemyKind = ExtraEnemyKind | 'raider' | 'scout' | 'tank' | 'sniper' | 'frigate' | 'carrier' | 'defender' | 'drone' | 'warden' | 'wardenTurret' | 'wardenShield' | 'leviathan' | 'leviathanNode' | 'leviathanPod' | 'titan' | 'titanCannon' | 'titanPod' | 'titanReactor';
 export type FactionKind='rust'|'iron'|'void';
@@ -145,7 +147,7 @@ export const HORDE = {
 };
 export const ENEMY_AI = { strafe: { hold: 0.3, flank: 1, kite: 0.3, reload: 0.5, carrier: 0.2, guard: 0.45 } as Record<EnemyBehavior, number>, spacing: 70, avoid: 45, chargeLock: 0.3, shotMargin: 700,
   // State machine timing: seconds unless noted.
-  memory: 6, arrive: 70, retreatTime: 5, strafeFlip: 3, investigatePace: 0.75, stuckTime: 0.7, repositionTime: 1.1, postRadius: 220 };
+  retaliation: 10, memory: 6, arrive: 70, retreatTime: 5, strafeFlip: 3, investigatePace: 0.75, stuckTime: 0.7, repositionTime: 1.1, postRadius: 220 };
 export const BASES = [
   { id: 'forge', name: 'Forge / 01', x: 3200, y: 3200, cost: { iron: 0, copper: 0, crystal: 0, ice: 0, radioactive: 0 } },
   { id: 'relay', name: 'Relay / 02', x: 7000, y: 3200, cost: { iron: 80, copper: 40, crystal: 0, ice: 0, radioactive: 0 } },

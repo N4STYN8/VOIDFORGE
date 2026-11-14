@@ -116,3 +116,15 @@ Compact HUD now uses floating vitals/cargo and radar cards plus a short centered
 ## Industrial audio upgrade
 Successful Forge/outpost/fleet mineral transfers play clamps, a short rattle sequence and confirmation. 100+ loads sound heavier, with deeper pitch for 500+. Empty cargo has no deposit-success sound. Mining adds cutting crackle to its persistent hum; mineral pickups aggregate with light/heavy mechanical variations.
 All seven weapon identities remain, with deeper levels and a paid-ultimate discharge layer. Added bounded power/heat warnings, shield depletion/recovery, Overclock/Warp/reactor/cooling/defensive/tractor/excavator activations, respawn/rebuild, assembly/upgrades/move/removal/repairs, outfitter open/close, outpost construction completion/hits and menu open/confirm/cancel/launch cues. Volume/mute/music settings are unchanged; action cues survive the paused outfitter. See AUDIO_AUDIT.md for coverage and remaining remote-pilot audio/listening gaps.
+
+Ship zoom: the player's modular layout now renders from a single cached hull image so wheel zoom samples adjacent blocks together. Module art, ship dimensions and collision behavior are unchanged; moving/upgrading/repainting a block refreshes the image.
+
+World sound follows visible event origins: off-screen weapon fire, ore/enemy hits, destruction and tool targets are silent. Menu/inventory confirmations remain audible. Mechanical effects have stronger metallic texture and temporarily duck music; existing player volume controls remain authoritative.
+
+Damaging an enemy provokes 10 seconds of pursuit of the shooter beyond normal detection, refreshed by further hits. Firing still requires visibility. Safe zones cancel pursuit; guard leashes and tactical retreats remain. After pursuit expires, normal last-known-position memory applies.
+
+Enemy missiles can be shot down. MISSILE_DEFENSE gives 90 durability (eight L1 autocannon hits) and a 10-unit hit radius. Interception consumes the defensive shot; survivors spark, destroyed missiles create a 38-unit visual explosion and positioned sound, with no loot or damaging splash. Ordinary hostile bullets remain uninterceptable.
+
+Wheel zoom preserves aiming direction; flight camera uses subpixel tracking so fractional zoom does not snap ship layers.
+
+Scrolling flight zoom preserves current ship heading until the mouse moves; zoom itself never commands a turn. Mouse movement immediately resumes normal aiming.

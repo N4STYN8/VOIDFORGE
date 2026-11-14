@@ -135,7 +135,7 @@ test('a hit from out of sight alerts the enemy to the attacker', () => {
   m.update(0.05, input); assert.equal(m.enemies[0].state, 'patrol');
   m.bullets = [{ id: 2, x: 5000, y: 3660, vx: 0, vy: -700, life: 1, enemy: false, damage: 5 }];
   for (let i = 0; i < 4; i++) m.update(0.05, input);
-  assert.equal(m.enemies[0].health, 55); assert.equal(m.enemies[0].state, 'investigate'); const y = m.enemies[0].y;
+  assert.equal(m.enemies[0].health, 55); assert.equal(m.enemies[0].state, 'chase'); const y = m.enemies[0].y;
   for (let i = 0; i < 20; i++) m.update(0.05, input);
   assert.ok(m.enemies[0].y > y + 30);
 });

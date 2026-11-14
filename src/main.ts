@@ -1,3 +1,6 @@
+import { flightWorldPoint, zoomAimPoint, type ZoomAimLock } from './flightCamera.ts';
+import { soundIsVisible } from './soundVisibility.ts';
+import { bakeShipImage, type ShipArtBlock } from './shipImage.ts';
 import { MainMenu } from './mainMenu.ts';
 import {FACTIONS} from './fleetConfig.ts';
 import Phaser from 'phaser';
@@ -63,7 +66,9 @@ class SpaceScene extends Phaser.Scene {
   private backdrop:{key:string;sprite:Phaser.GameObjects.TileSprite;factor:number;scale:number}[]=[];
   private stationSprites:Phaser.GameObjects.Image[]=[];
   private enemySprites:Phaser.GameObjects.Image[]=[];
+  private zoomAimLock?:ZoomAimLock;
   private shipSprites:Phaser.GameObjects.Image[]=[];
+  private shipImage?:Phaser.GameObjects.Image;private shipImageSignature='';private shipImageReady=false;
   private builderElapsed=0;
   private asteroidSprites: Phaser.GameObjects.Image[] = [];
   private mapFollow = true;
@@ -281,10 +286,13 @@ class SpaceScene extends Phaser.Scene {
     this.baseLabels = this.model.bases.map(base => this.add.text(base.x, base.y - 172, '', { fontFamily: 'monospace', fontSize: '10px', color: '#a0d6cc', align: 'center', lineSpacing: 5 }).setOrigin(0.5));
     this.targetLabel = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '10px', color: '#b5ebdf', backgroundColor: '#0b1423', padding: { x: 6, y: 3 } }).setOrigin(0.5, 0).setDepth(5);
     this.follow = this.add.zone(this.model.player.x, this.model.player.y, 1, 1);
-    this.cameras.main.setBounds(0, 0, WORLD.width, WORLD.height).setZoom(1.35).startFollow(this.follow, true, 0.15, 0.15);
+    this.cameras.main.setBounds(0, 0, WORLD.width, WORLD.height).setZoom(1.35).startFollow(this.follow, false, 0.15, 0.15);
     this.keys = this.input.keyboard!.addKeys(`W,A,S,D,SPACE,E,R,ESC,B,Q,M,N,G,V,P,SHIFT,C,${OUTPOST.key}`) as Record<string, Phaser.Input.Keyboard.Key>;
     this.input.on('wheel', (_pointer: Phaser.Input.Pointer, _objects: unknown, _dx: number, dy: number) => {
-      if (!this.mapOpen && !this.building) this.cameras.main.setZoom(Phaser.Math.Clamp(this.cameras.main.zoom * Math.exp(-dy * 0.001), 0.55, 2.2));
+      if (!this.mapOpen && !this.building) {
+        this.zoomAimLock={x:_pointer.x,y:_pointer.y,angle:this.model.player.angle};
+        this.cameras.main.setZoom(Phaser.Math.Clamp(this.cameras.main.zoom * Math.exp(-dy * 0.001), 0.55, 2.2));
+      }
     });
     this.mapCanvas.addEventListener('wheel', event => {
       event.preventDefault();
@@ -373,12 +381,12 @@ class SpaceScene extends Phaser.Scene {
     if (this.buildMode && (this.model.buildModeError && !this.model.builder || this.building || this.mapOpen)) this.buildMode = false;
     if (Phaser.Input.Keyboard.JustDown(this.keys.N)){this.audio.toggleMute();this.settings.sync();}
     if(Phaser.Input.Keyboard.JustDown(this.keys.V)){this.effects.enabled=!this.effects.enabled;this.settings.persist();}
-    const beforeHull = this.model.player.health, beforeShield = this.model.shield, beforeKills = this.model.kills, beforeHits = this.model.enemyHits, beforeOreHits = this.model.oreHits;
+    const beforeHull = this.model.player.health;
     if (Phaser.Input.Keyboard.JustDown(this.keys.G) && !this.paused && !this.building && !this.settings.open) { if (this.model.unlockBase()) this.audio.play('build');else this.audio.play('fail'); }
     const boost=Phaser.Input.Keyboard.JustDown(this.keys.SHIFT)||this.commandInput.has('boost');
     const dock = Phaser.Input.Keyboard.JustDown(this.keys.E)||this.commandInput.has('dock');
     const pointer = this.input.activePointer;
-    const aim = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+    const aim = this.flightAim(pointer);
     const bounds = this.cameras.main.worldView;
     // Guns and the mining beam answer only to clicks that started on the game view, never on a panel or menu.
     const onGame = !this.netOpen && pointer.downElement === this.game.canvas;
@@ -402,22 +410,19 @@ class SpaceScene extends Phaser.Scene {
       } else { go(); return; }
     }
     if (!this.paused && !this.building && !this.settings.open) {
-      for(const event of this.model.effects){if(event.type==='cue'&&event.cue)this.audio.play(event.cue,event.pitch,event.volume);else if(event.type==='muzzle'&&event.weapon&&!event.silent)this.audio.playWeapon(event.weapon,event.pitch??1,event.volume??1,event.level??1,Boolean(event.ultimate));if(event.type==='arc')this.audio.play('pulse');if(event.type==='shield')this.audio.play('shield');}
-      const picked=this.model.effects.filter(e=>e.type==='collection').reduce((n,e)=>n+(e.amount??1),0);if(picked)this.audio.pickup(picked);
+      for(const event of this.model.effects){if(!soundIsVisible(event,bounds))continue;if(event.type==='cue'&&event.cue)this.audio.play(event.cue,event.pitch,event.volume);else if(event.type==='muzzle'&&event.weapon&&!event.silent)this.audio.playWeapon(event.weapon,event.pitch??1,event.volume??1,event.level??1,Boolean(event.ultimate));if(event.type==='arc')this.audio.play('pulse');if(event.type==='shield')this.audio.play('shield');}
+      const picked=this.model.effects.filter(e=>e.type==='collection'&&soundIsVisible(e,bounds)).reduce((n,e)=>n+(e.amount??1),0);if(picked)this.audio.pickup(picked);
       if(!this.model.powerLimited&&this.model.energy>this.model.maxEnergy*.35)this.energyWarned=false;if(!this.model.heatLimited&&this.model.heat<this.model.heatCapacity*.55)this.heatWarned=false;
       if((this.model.powerLimited||this.model.energy<this.model.maxEnergy*.12)&&!this.energyWarned){this.audio.play('lowEnergy');this.energyWarned=true;}if((this.model.heatLimited||this.model.heat>this.model.heatCapacity*.9)&&!this.heatWarned){this.audio.play('overheat');this.heatWarned=true;}
       // Hull hits crunch, shield hits ring (the shield cue comes from its own event), and losing the ship has its own sound.
-      if (this.model.dead && beforeHull > 0) this.audio.play('death'); else if (this.model.player.health < beforeHull) this.audio.play('hull');
-      if (this.model.oreHits > beforeOreHits) this.audio.play('impact');
-      if (this.model.enemyHits > beforeHits) this.audio.play('hit');
-      if (this.model.kills > beforeKills) this.audio.play('explosion');
+      if(soundIsVisible(this.model.player,bounds)){if (this.model.dead && beforeHull > 0) this.audio.play('death'); else if (this.model.player.health < beforeHull) this.audio.play('hull');}
     }
     // UI actions can happen while the simulation is paused. Drain their queue exactly once.
-    for(const event of this.model.actionSounds.splice(0)){if(event.cue==='deposit')this.audio.deposit(event.amount??0);else if(event.cue)this.audio.play(event.cue,event.pitch??1,event.volume??1);}
+    for(const event of this.model.actionSounds.splice(0)){if(!soundIsVisible(event,bounds))continue;if(event.cue==='deposit')this.audio.deposit(event.amount??0);else if(event.cue)this.audio.play(event.cue,event.pitch??1,event.volume??1);}
     if(this.building!==this.outfitterWasOpen){this.audio.play(this.building?'outfitterOpen':'outfitterClose');this.outfitterWasOpen=this.building;}
     this.commandInput.clear();
     const audible=!this.paused&&!this.building&&!this.settings.open&&!this.model.dead;
-    this.audio.setLoop('mine',audible?this.model.miningLinks.length:0);this.audio.setLoop('tractor',audible?this.model.tractorLinks.length:0);
+    this.audio.setLoop('mine',audible?this.model.miningLinks.filter(link=>soundIsVisible(link.to,bounds)).length:0);this.audio.setLoop('tractor',audible?this.model.tractorLinks.filter(link=>soundIsVisible(link.to,bounds)).length:0);
     for (const b of this.model.bullets) this.lastBullet = Math.max(this.lastBullet, b.id);
     if (!this.paused && !this.building && !this.settings.open) {
       this.effects.update(Math.min(delta/1000,.05),bounds);this.effects.consume(this.model.effects,bounds);this.effects.continuous(this.model.miningLinks,this.model.bullets,bounds);this.effects.ambient(this.model.asteroids,bounds);
@@ -896,7 +901,7 @@ class SpaceScene extends Phaser.Scene {
     if (picked) { const s = picked.structure, c = OUTPOST.cell; g.lineStyle(2, 0xffe9a8, 0.6 + Math.sin(now * 6) * 0.3); g.strokeRect(s.cx * c - 1, s.cy * c - 1, c + 2, c + 2); }
     this.buildGhost.setVisible(this.buildMode && Boolean(builder) && !this.paused);
     if (!this.buildMode || !builder || this.paused) return;
-    const aim = this.cameras.main.getWorldPoint(this.input.activePointer.x, this.input.activePointer.y), cx = cellOf(aim.x), cy = cellOf(aim.y), size = OUTPOST.cell, ok = !this.buildHover, color = ok ? 0x5dff9a : 0xff4d6d;
+    const aim = flightWorldPoint(this.cameras.main,this.input.activePointer.x,this.input.activePointer.y), cx = cellOf(aim.x), cy = cellOf(aim.y), size = OUTPOST.cell, ok = !this.buildHover, color = ok ? 0x5dff9a : 0xff4d6d;
     g.lineStyle(1, 0xd9a441, 0.35 + Math.sin(now * 4) * 0.1); g.strokeCircle(p.x, p.y, builder.range);
     this.buildGhost.setTexture(`structure-${this.buildKind}`).setPosition(cellCenter(cx), cellCenter(cy)).setRotation(this.buildRot * Math.PI / 2);
     const over = Boolean(structureAt(this.model.outposts, cx, cy));
@@ -921,7 +926,7 @@ class SpaceScene extends Phaser.Scene {
     this.model = model; this.building = false; this.mapOpen = false; this.paused = false; this.movingModule = false; this.selectedCell = { x: 0, y: 0 };this.detailMode='module';this.buildCenter={x:0,y:0};
     this.lastBullet = -1; this.builderContent = ''; this.hudElapsed = 100; this.mapElapsed = 200; this.saveElapsed = 0;
     this.baseLabels.forEach((label, i) => label.setPosition(model.bases[i].x, model.bases[i].y - 172));
-    this.follow.setPosition(model.player.x, model.player.y); this.cameras.main.centerOn(model.player.x, model.player.y);
+    this.zoomAimLock=undefined; this.follow.setPosition(model.player.x, model.player.y); this.cameras.main.centerOn(model.player.x, model.player.y);
     if (!sameWorld) this.paintBackdropTextures();
     this.refreshSeedLabel(); this.input.keyboard!.enabled = true;
   }
@@ -960,6 +965,24 @@ class SpaceScene extends Phaser.Scene {
     if(action==='shop'){if(!this.mapOpen&&this.model.atStation&&!this.model.dead)this.building=!this.building;return;}
     if(this.paused||this.building||this.mapOpen||this.model.dead)return;
     if(action==='build')this.toggleBuildMode();else this.commandInput.add(action);
+  }
+  private flightAim(pointer:Phaser.Input.Pointer){
+    if(this.zoomAimLock&&Math.hypot(pointer.x-this.zoomAimLock.x,pointer.y-this.zoomAimLock.y)>.5)this.zoomAimLock=undefined;
+    return zoomAimPoint(flightWorldPoint(this.cameras.main,pointer.x,pointer.y),this.model.player,this.zoomAimLock,pointer.x,pointer.y);
+  }
+  private renderShipImage(blocks:ShipArtBlock[],heading:number){
+    const signature=`${this.model.shipPaint}|${blocks.map(b=>`${b.x},${b.y},${b.kind},${b.level}`).join(';')}`;
+    if(signature!==this.shipImageSignature){
+      const art=bakeShipImage(blocks,b=>{const source=this.textures.get(this.shipTexture(b.kind,b.level)).getSourceImage();return source instanceof HTMLCanvasElement?source:undefined;},BUILD_GRID.cellSize);
+      this.shipImageSignature=signature;this.shipImageReady=Boolean(art);
+      if(art){const key='player-assembly';if(this.textures.exists(key))this.textures.remove(key);this.textures.addCanvas(key,art.canvas)!.setFilter(Phaser.Textures.FilterMode.NEAREST);
+        this.shipImage??=this.add.image(0,0,key).setDepth(1);this.shipImage.setTexture(key).setOrigin(art.originX,art.originY);
+      }
+    }
+    this.shipImage?.setVisible(this.shipImageReady);
+    if(!this.shipImageReady)return false;
+    this.shipImage!.setPosition(this.model.player.x,this.model.player.y).setRotation(heading);
+    for(const sprite of this.shipSprites)sprite.setVisible(false);return true;
   }
   /** Texture for one block of the flown ship in its paint. Painted variants are baked once, on first use. */
   private shipTexture(kind: EquipmentKind, level: number, paint = this.model.shipPaint) {
@@ -1135,10 +1158,12 @@ class SpaceScene extends Phaser.Scene {
       }
       const heading=this.building?-Math.PI/2:p.angle;
       const blocks=[{x:0,y:0,kind:'core' as EquipmentKind,level:this.model.coreLevel},...this.model.modules];
-      const occupied=new Set(blocks.map(m=>`${m.x},${m.y}`));let index=0;
       // World-fixed cast shadow: the ship reads as flying above stations and debris.
       g.fillStyle(0x000000,.3);
       for(const m of blocks){const point=this.model.modulePoint(m,heading);if(!visible(point))continue;g.save();g.translateCanvas(point.x+5,point.y+8);g.rotateCanvas(heading);g.fillRect(-8,-8,16,16);g.restore();}
+      // The entire hull is sampled/rotated once, preventing independently rounded module seams on zoom.
+      if(!this.renderShipImage(blocks,heading)){
+      const occupied=new Set(blocks.map(m=>`${m.x},${m.y}`));let index=0;
       g.lineStyle(6,0x172b3c);
       for(const m of blocks){
         const point=this.model.modulePoint(m,heading);
@@ -1148,6 +1173,7 @@ class SpaceScene extends Phaser.Scene {
         this.shipSprites[index++]=sprite;sprite.setVisible(true).setPosition(point.x,point.y).setTexture(key).setRotation(heading+Math.PI/2);
       }
       for(;index<this.shipSprites.length;index++)this.shipSprites[index].setVisible(false);
+      }
       // Engine exhaust: stepped pixel flames behind every booster while thrusting, longer during a burst.
       const thrusting=!this.building&&!this.paused&&(this.keys.W.isDown||this.keys.A.isDown||this.keys.S.isDown||this.keys.D.isDown),burst=this.model.boostActive;
       if(thrusting||burst)for(const m of this.model.modules){
@@ -1158,7 +1184,7 @@ class SpaceScene extends Phaser.Scene {
         g.fillStyle(0xff7a3c,.85);g.fillRect(8,-3,length,6);g.fillStyle(0xffc46b,.95);g.fillRect(8,-2,length*.65,4);g.fillStyle(0xfff3d0);g.fillRect(8,-1,length*.35,2);
         g.restore();
       }
-    }else for(const sprite of this.shipSprites)sprite.setVisible(false);
+    }else {this.shipImage?.setVisible(false);for(const sprite of this.shipSprites)sprite.setVisible(false);}
     for(const field of this.model.novaFields)if(visible(field)){
       g.fillStyle(0x99ff80,this.effects.enabled?.09:.025);g.fillCircle(field.x,field.y,field.radius);
       g.lineStyle(1,0xb1ff91,this.effects.enabled?.5:.2);g.strokeCircle(field.x,field.y,field.radius);
@@ -1172,7 +1198,7 @@ class SpaceScene extends Phaser.Scene {
     this.drawBuildPreview(now);
     if (!this.building && !this.paused) {
       const pointer = this.input.activePointer;
-      const aim = this.cameras.main.getWorldPoint(pointer.x, pointer.y);
+      const aim = this.flightAim(pointer);
       g.lineStyle(1, 0xc2dbe7, 0.7); g.strokeCircle(aim.x, aim.y, 7);
       g.lineBetween(aim.x - 12, aim.y, aim.x - 5, aim.y); g.lineBetween(aim.x + 5, aim.y, aim.x + 12, aim.y);
       g.lineBetween(aim.x, aim.y - 12, aim.x, aim.y - 5); g.lineBetween(aim.x, aim.y + 5, aim.x, aim.y + 12);

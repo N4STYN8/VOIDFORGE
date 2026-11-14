@@ -354,6 +354,52 @@ Compact HUD release: user explicitly requested push live. Origin fetched; HEAD/m
 - User explicitly requested main/live publication while away. Origin advanced to ac5af55 during final checks; built clean E:/AI Projects/VOIDFORGE-audio-release on codex/audio-release and transplanted only audio edits, preserving all new MMO synchronization/panel/always-online behavior. Earlier checkout remains intact. No merge conflicts or destructive operations; no production relay deployment/restart. Fresh remote comparison precedes publishing.
 - Next: human speaker/headphone balance review. Remaining gap: per-remote-pilot shot sounds are not newly transmitted; relay/wire protocol unchanged by this audio update.
 
+## Ship zoom rendering fix — 2026-11-13
+- Clean start; fetched origin and safely fast-forwarded 819939b → 5c827ff, preserving the latest lobby/resource-sharing changes. Created local codex/ship-zoom-rendering without changing upstream settings.
+- Replaced independent player-module image transforms with one cached assembled hull image: original module textures/paint and connection art baked on one local pixel grid, anchored at the core and rotated/scaled once. Rebuilds only for layout/level/paint edits, never camera zoom/motion. Physics, aiming, zoom limits, effects and saved layouts unchanged.
+- Added src/shipImage.ts for layout/baking with a bounded 2048px texture budget; oversized ships retain the old per-block renderer, with no ship-building cap. Full hull texture is replaced/reused without accumulating texture keys. Existing remote-pilot renderer is unchanged.
+- Validation: production build and full tests pass (existing bundle warning). Browser tested Canvas/WebGL with actual wheel changes across 0.55–2.2 and fractional intermediate zooms: same source canvas, fixed core anchor/angle/layout, one assembly texture, rebuild after move/upgrade/repaint, north-facing preview and safe oversized fallback. No page errors. Unit coverage checks asymmetric negative-coordinate layout bounds, core anchor and texture budget.
+- Files: src/main.ts, new src/shipImage.ts, tests/shipImage.test.ts and project docs. Local uncommitted changes only; no conflicts, commits, push or deployment. Next: user visual verification of the zoom fix on their ship.
+
+## Stronger, visible-only effects — 2026-11-13
+- Continued on codex/ship-zoom-rendering with the known local zoom fix intact. Origin had been fetched/pulled to 5c827ff at session start; no upstream was selected and no collaborator work was overwritten.
+- World audio uses exact camera bounds, including tool targets, pickups and structure events. Enemy/ore hits and kills carry positions; removed unconditional global-counter sounds. UI confirmations remain audible.
+- Effects gain 2.6x, restrained low-priority cues, decaying metallic modulation on mechanical sounds, stronger mining grit, brief music ducking and bounded output saturation. Existing settings/music, 24-source cap and cleanup preserved.
+- Validation: 280 tests and production build pass (existing bundle-size warning). Browser verifies off-screen shots/hits/structures silent, visible equivalents audible, duck/restore, no page errors. Offline comparison RMS 0.009278 → 0.024117 (2.599x); crowded stress peak 0.269604, max 24 sources, zero left afterward.
+- Files: src/audio.ts, src/model.ts, src/main.ts, src/effectEvents.ts, new src/soundVisibility.ts and tests/soundVisibility.test.ts; project docs and AUDIO_AUDIT.md. Earlier shipImage files remain local. No conflicts; all changes uncommitted, nothing pushed or deployed. Next: user listening pass and zoom visual check.
+
+- Publication authorized by user ('push live'): fetched origin, confirmed HEAD equals origin/main 5c827ff and no collaborator commits to integrate. Re-ran all 280 tests; build and diff checks pass. Publishing only the reviewed audio/visibility and ship-zoom fixes via a normal fast-forward push; Pages workflow handles deployment. No relay restart.
+
+## Enemy retaliation — 2026-11-13
+- Fetched origin; clean HEAD matched origin/main 464c3df, so no pull/integration needed. Created local codex/enemy-retaliation; no upstream selected.
+- Damaging hits now start/refresh a configured 10-second pursuit, following the shooter beyond detection. Authority prefers the remote attacker over nearer pilots. Visibility still gates fire; safe zones cancel pursuit, guard leashes/tactical retreats remain. Collision damage does not provoke. Existing memory handles searching after timeout.
+- Files: src/model.ts, src/enemyAI.ts, src/data.ts, tests/enemies.test.ts, new tests/retaliation.test.ts and project docs. Validation: 284 tests pass, production build passes (existing bundle warning), diff checks clean. Updated old out-of-sight hit regression to expect chase; it exercises actual projectile damage.
+- No conflicts or pre-existing local edits; changes remain local/uncommitted. Nothing pushed or deployed. Next: playtest pursuit/disengagement duration.
+
+## Destructible enemy missiles — 2026-11-13
+- Continued the requested changes on codex/enemy-retaliation, preserving known uncommitted pursuit work after user steering. Fetched origin; HEAD still matches origin/main 464c3df. No upstream selected or pull needed.
+- Enemy missiles now have 90 durability, cumulative shot damage, impact feedback and a visual/audio explosion when destroyed. Defensive interception disarms the warhead without splash damage or rewards. Relative sweeps and nearest-contact priority preserve asteroid cover. Existing pooled bullets clear health on reuse; legacy shots default health lazily. Remote visual-only shots cannot damage missiles; network protocol unchanged.
+- Files added/changed for this feature: src/model.ts, src/data.ts, tests/missileDefense.test.ts and project docs. Validation: 288 full-suite tests pass; build passes with existing bundle-size warning; diff checks pass. Prior pursuit changes remain intact.
+- No conflicts, commits, push or deployment. Next: playtest missile durability/hit radius and pursuit timing.
+
+- User authorized live publication. Fetched origin and verified unchanged main 464c3df; reran 288 tests and production build successfully. Publishing pursuit/interception changes via normal fast-forward push and the existing Pages workflow; no relay changes.
+
+## Active-flight zoom correction — 2026-11-13
+- Clean start on codex/enemy-retaliation; fetched origin, HEAD equals origin/main 1beff1c, no pull required. Created local codex/zoom-aim-fix; no upstream selected.
+- Found wheel changes current zoom while Phaser getWorldPoint still uses the preceding rendered matrix. This mixed-state aim can rotate the ship abruptly; earlier paused texture tests missed it. Added current-value flightWorldPoint for input/reticle/build preview and disabled roundPixels on follow to avoid fractional-zoom snapping. Existing composite hull cache preserved.
+- Files: src/main.ts, new src/flightCamera.ts, tests/flightCamera.test.ts and project docs. Validation: 290 tests pass, production build passes (existing bundle warning). Real wheel browser checks during unpaused flight at world 49000/48000 show stable heading 0.302884868 across zoom changes in Canvas/WebGL, no browser errors. Projection tests cover fractional zoom, viewport offsets and scroll.
+- No conflicts, pre-existing edits, commits, push or deployment. Next: user visual check of active zoom; changes remain local/uncommitted.
+
+- User authorized live publication: fetched origin, confirmed main unchanged at 1beff1c, reran 290 tests and production build successfully. Publishing the reviewed camera fix via normal fast-forward push and existing Pages deployment; no relay changes.
+
+## Zoom heading reversal — 2026-11-13
+- Clean start; fetched origin, HEAD equals origin/main c0443bf, no pull needed. Created codex/zoom-heading-lock; no upstream selected.
+- Previous distant-cursor test missed near-cursor camera-follow lag: reproduced heading 0 → pi during wheel zoom in WebGL while moving. Kept current-value projection but added a wheel heading lock until actual mouse movement; input and reticle use the same direction. Model switches clear lock. No ship layout/rendering rewrite.
+- Files: src/main.ts, src/flightCamera.ts, tests/flightCamera.test.ts and project docs. 291 tests pass; build passes with existing bundle warning; diff checks clean. Browser moving-flight near-center-cursor wheel test now shows constant heading in Canvas/WebGL; mouse movement releases lock; no page errors.
+- No pre-existing edits or conflicts; uncommitted local changes only, nothing pushed/deployed. Next: user check the near-cursor zoom behavior.
+
+- User authorized live publication: fetched origin and confirmed main unchanged at c0443bf; 291 tests and production build pass. Publishing the reviewed wheel-heading fix via normal fast-forward push and existing Pages workflow; no relay changes.
+
 ## Multiplayer performance pass — 2026-11-13
 - User request: deep performance review, slowdown when enemies arrive with other pilots connected; ten rounds until smooth.
 - Rounds: (1) streaming refresh reuses live rocks; (2) collision bodies pooled, numeric grids; (3) hostile-fire module positions once per frame, shot box rejection, allocation-free targeting; (4) sector sync keeps sprites/backdrop with fingerprint-verified, rate-limited repaints; (5) per-frame rock grid for enemy avoidance and shots, moving-rock list for steering; (6) asteroid arrival budget per tick; (7) bullet caps counted once per batch; (8) peer labels restyle only on change; (9) cached line of sight (0.1 s, cleared on rock changes); (10) enemy spacing grid.
