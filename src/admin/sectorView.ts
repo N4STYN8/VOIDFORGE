@@ -44,8 +44,10 @@ export function liveFor(seed: string): SectorLive {
   return s;
 }
 const MAX_SHOTS = 400;
-function applyEnemies(s: SectorLive, rows: EnemyRow[], t: number) {
-  const next = new Map<number, LiveEnemy>();
+/** A full list replaces the sector's enemies; a partial one (fx `n` without `f`) only updates the rows it carries. */
+function applyEnemies(s: SectorLive, rows: EnemyRow[], t: number, full = true) {
+  const next = full ? new Map<number, LiveEnemy>() : s.enemies;
+  if (!full) for (const e of s.enemies.values()) { e.px = e.x; e.py = e.y; }
   for (const row of rows) { const old = s.enemies.get(row[0]); next.set(row[0], { row, x: row[2], y: row[3], px: old ? old.x : row[2], py: old ? old.y : row[3], t }); }
   s.enemies = next; s.enemiesAt = t;
 }
@@ -64,8 +66,9 @@ export function applyCast(seed: string, from: string, kind: string, data: unknow
   for (const shot of decodeShots(fx.e)) pushShot(s, 'beam' in shot ? { x: shot.x, y: shot.y, vx: 0, vy: 0, life: 0.15, t, enemy: true, beam: { ex: shot.ex, ey: shot.ey } } : { x: shot.x, y: shot.y, vx: shot.vx, vy: shot.vy, life: shot.life, t, enemy: true });
   for (const [id, x, y, vx, vy] of decodeBumps(fx.b)) rock({ id, x, y, vx, vy } as RockState);
   for (const r of decodeRocks(fx.r)) rock(r);
-  // Newer clients carry enemies inside fx (`n`); older ones use the separate enemies cast.
-  if (Array.isArray(fx.n)) applyEnemies(s, decodeEnemies(fx.n), t);
+  // Enemies ride inside fx: `x` lists removed ids, `n` carries rows (the whole list when `f` is 1). Older clients use the enemies cast.
+  if (Array.isArray(fx.x)) for (const id of fx.x) if (Number.isSafeInteger(id)) s.enemies.delete(id as number);
+  if (Array.isArray(fx.n)) applyEnemies(s, decodeEnemies(fx.n), t, fx.f === 1);
 }
 /** Drops expired shots and stale looks. */
 export function pruneLive(t: number) {

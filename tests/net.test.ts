@@ -26,7 +26,8 @@ test('remote ships interpolate between samples, take the short way round, and ti
   net.setSector({ home: 'h', x: 0, y: 0, seed: 'a' });
   net.receive(state('a', { ...ship(0, Math.PI - 0.1), blocks: [['core', 0, 0, 1]] }), 10);
   net.receive(state('a', ship(100, -Math.PI + 0.1)), 10.1);
-  const [mid] = net.poses(10.1 + NET.interpolationDelay - 0.05);
+  const peer = net.peers.get('a')!; peer.error = undefined; // Pure interpolation here; easing of corrections is tested below.
+  const [mid] = net.poses(10.1 + net.delayFor(peer) - 0.05);
   assert.ok(Math.abs(mid.x - 50) < 1e-6);
   assert.ok(Math.abs(Math.abs(mid.angle) - Math.PI) < 0.02, 'turns through pi, not through zero');
   assert.deepEqual(mid.blocks, [['core', 0, 0, 1]], 'layout kept from the earlier message');

@@ -3,6 +3,7 @@ import { GameModel, type Enemy } from '../src/model.ts';
 import { worldRef, progressionScore } from '../src/sectors.ts';
 import { SharedLink } from '../src/sharedLink.ts';
 import { LobbyShare } from '../src/lobbyShare.ts';
+import { OUTPOST } from '../src/data.ts';
 
 /**
  * Developer test pilot for the relay. It runs a real headless GameModel as the owner (and so the
@@ -15,9 +16,10 @@ import { LobbyShare } from '../src/lobbyShare.ts';
  * stranger for PvP tests, carrying 20 iron); `--orbit=N` sets the circle radius; `--fire` shoots at the nearest other
  * pilot (outside the station ring, so use a large orbit); `--mine` parks beside a rock outside the station ring
  * and mines it (to check remote beams); `--share` deposits plenty of minerals and shares them with the lobby.
- * `--horde` brings a level-4 horde in every 40 s (to load-test shared enemies). It never touches browser saves.
+ * `--horde` brings a level-4 horde in every 40 s (to load-test shared enemies). `--outpost` founds an outpost 700 units
+ * east of the station and adds a wall block every 2 s (to check outposts reach other pilots). It never touches browser saves.
  */
-const args = process.argv.slice(2), hordes = args.includes('--horde'), sharing = args.includes('--share'), mine = args.includes('--mine'), fire = args.includes('--fire'), raiders = args.includes('--raiders'), visitor = args.includes('--visitor'), orbit = Number(args.find(a => a.startsWith('--orbit='))?.slice(8) ?? 160), [url = 'ws://127.0.0.1:8787', code = '-', seed = 'relay-bot-world'] = args.filter(a => !a.startsWith('--'));
+const args = process.argv.slice(2), outposting = args.includes('--outpost'), hordes = args.includes('--horde'), sharing = args.includes('--share'), mine = args.includes('--mine'), fire = args.includes('--fire'), raiders = args.includes('--raiders'), visitor = args.includes('--visitor'), orbit = Number(args.find(a => a.startsWith('--orbit='))?.slice(8) ?? 160), [url = 'ws://127.0.0.1:8787', code = '-', seed = 'relay-bot-world'] = args.filter(a => !a.startsWith('--'));
 const model = new GameModel(seed), net = new NetClient(), link = new SharedLink(net, () => model), centre = { x: model.bases[0].x, y: model.bases[0].y }, clock = () => performance.now() / 1000, start = clock();
 const share = new LobbyShare(net, () => model);
 if (sharing) { share.enabled = true; model.stored = { iron: 5000, copper: 5000, crystal: 500, ice: 500, radioactive: 100 }; }
@@ -25,7 +27,11 @@ net.onNote = text => console.log(`[bot] ${text}`);
 net.connect(url, visitor ? 'Stranger' : 'Test Pilot');
 if (visitor) model.cargo.iron = 20; else if (code !== '-') net.join(code); else net.create();
 if (raiders) for (let i = 0; i < 3; i++) (model as unknown as { spawnEnemy(kind: string, x: number, y: number, angle: number): Enemy }).spawnEnemy('raider', centre.x + 900 + i * 60, centre.y + 300, Math.PI);
-let announced = '', reported = 0, diedAt = 0, hordeAt = -Infinity;
+let announced = '', reported = 0, diedAt = 0, hordeAt = -Infinity, builtAt = -Infinity;
+if (outposting) {
+  const cx = Math.floor((centre.x + 700) / OUTPOST.cell), cy = Math.floor(centre.y / OUTPOST.cell);
+  model.outposts.push({ id: 1, name: 'Bot Outpost', cx, cy, structures: [{ id: 1, kind: 'outpostCore', cx, cy, rot: 0, level: 1, health: 400, progress: 1 }], revision: 1, energy: 0, drones: [] } as unknown as (typeof model.outposts)[number]);
+}
 setInterval(() => {
   const now = clock(), angle = (now - start) * 0.4;
   const target = (model.shared?.targets ?? []).slice().sort((a, b) => Math.hypot(a.x - model.player.x, a.y - model.player.y) - Math.hypot(b.x - model.player.x, b.y - model.player.y))[0];
@@ -41,6 +47,12 @@ setInterval(() => {
   net.sendState(now, { x: p.x, y: p.y, vx: p.vx, vy: p.vy, angle: p.angle, health: p.health, maxHealth: model.maxHealth, paint: 3, thrust: true,
     blocks: [['core', 0, 0, model.coreLevel], ...model.modules.map(m => [m.kind, m.x, m.y, m.level] as [string, number, number, number])] });
   if (!visitor) net.profile(model.galaxy.home, progressionScore(model));
+  if (outposting && now - builtAt > 2 && model.outposts[0] && model.outposts[0].structures.length < 40) {
+    // A wall that grows east one block every two seconds, each one under construction for a moment.
+    builtAt = now; const o = model.outposts[0], n = o.structures.length;
+    for (const s of o.structures) s.progress = 1;
+    o.structures.push({ id: n + 1, kind: 'wall', cx: o.cx + 1 + (n - 1) % 12, cy: o.cy + Math.floor((n - 1) / 12) - 1, rot: 0, level: 1, health: 60, progress: 0.3 } as (typeof o.structures)[number]); o.revision++;
+  }
   link.frame(model, now);
   share.frame(model, now);
   const lobby = net.lobby ? `${net.lobby.code}:${net.lobby.members.map(m => m.name).join(',')}` : '';

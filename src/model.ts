@@ -12,7 +12,12 @@ import { ensureAsteroidGeometry,asteroidLocal,asteroidWorld, miningImpact, mineM
 export type { Asteroid } from './mining.ts';
 import type { EffectEvent } from './effectEvents.ts';
 import { edgeDirection, sectorKey, sectorLabel, type SectorDirection } from './sectorGrid.ts';
-import type { SharedSector, SharedShot, SharedTarget, RockState, EnemyRow, BumpRow, PilotShot } from './shared.ts';
+import { leadTime, type SharedSector, type SharedShot, type SharedTarget, type RockState, type EnemyRow, type BumpRow, type PilotShot } from './shared.ts';
+/**
+ * Mirrored enemies on a follower: reports are carried forward on their velocity for at most `extrapolate` seconds;
+ * the remaining error closes at `correct` per second, heading at `turn` per second; beyond `snap` units it jumps.
+ */
+export const GHOST = { extrapolate: 0.5, correct: 8, turn: 12, snap: 400 };
 import { collideAsteroid, collide, type Body } from './collisions.ts';
 import { LOBBY_SHARE, PVP, SECTOR, WORLD, SHIP, MISSILE_DEFENSE, WEAPONS, ENEMIES, ENEMY_AI, ENEMY_SPAWN, HORDE, FLEET, WAYPOINTS, OUTPOST, STRUCTURES, STRUCTURE_SPECIAL, DRONES, type StructureKind, DANGER, BOSS, HEARING, type EnemyDefinition, type EnemyWeapon, COLLISION, ORE_COMBAT, PATROL, MODULE_DURABILITY, REPAIR, MODULES, BUILD_GRID, BASES, BASE_RADIUS, EXPLORATION, RESOURCES, type EnemyKind, CORE, ROCKET, WEAPON_TYPES, SHIP_SYSTEMS, VFX, type WeaponKind, equipment, upgradeCost, type EquipmentStats, type EquipmentKind, type ModuleKind, type Resource } from './data.ts';
 export type ShipModule = { invested?:Minerals; x: number; y: number; kind: ModuleKind; level: number; cooldown: number; integrity: number; ability?:AbilityState; targetIds?: number[]; boostRemaining?:number; boostCooldown?:number };
@@ -80,7 +85,9 @@ export class GameModel {
   /** Last pilot who damaged this ship, for kill credit; damage taken from each attacker this second, for the cap. */
   private attackers = new Map<string, { name: string; at: number; window: number; taken: number }>();
   /** Follower only: the authority's latest enemy positions, eased toward each update. */
-  private ghostGoals = new Map<number, { x: number; y: number; angle: number }>();
+  /** Follower: the authority's last report per mirrored enemy (with velocity), and when it applies on `ghostClock`. */
+  private ghostGoals = new Map<number, { x: number; y: number; angle: number; vx: number; vy: number; at: number }>();
+  private ghostClock = 0;
   /** Reused collision bodies for nearby rocks (resolveContacts), so contact checks allocate nothing per rock. */
   private rockBodies: (Body & { id: number; geometry: Asteroid['geometry'] })[] = [];
   /**
@@ -1263,32 +1270,87 @@ export class GameModel {
     }
     return choice;
   }
-  /** Follower only: eases mirrored enemies toward the authority's latest positions. */
+  /**
+   * Follower only: dead reckoning for mirrored enemies. Each report is carried forward on its velocity to where
+   * the enemy should be now (at most GHOST.extrapolate seconds past the report); the mirror moves with that
+   * velocity and closes the remaining error at GHOST.correct per second, so it neither lags nor snaps.
+   */
   private updateGhosts(dt: number) {
-    const k = Math.min(1, dt * 10);
+    this.ghostClock += dt;
+    const k = Math.min(1, dt * GHOST.correct);
     for (const e of this.enemies) {
       const goal = this.ghostGoals.get(e.id); if (!goal) continue;
-      const px = e.x, py = e.y;
-      e.x += (goal.x - e.x) * k; e.y += (goal.y - e.y) * k;
-      let turn = goal.angle - e.angle; turn = Math.atan2(Math.sin(turn), Math.cos(turn)); e.angle += turn * k;
+      const age = this.ghostClock - goal.at, moving = age < GHOST.extrapolate, carried = Math.min(age, GHOST.extrapolate);
+      const tx = goal.x + goal.vx * carried, ty = goal.y + goal.vy * carried, px = e.x, py = e.y;
+      if (Math.hypot(tx - e.x, ty - e.y) > GHOST.snap) { e.x = tx; e.y = ty; }
+      else {
+        const nx = e.x + (moving ? goal.vx * dt : 0), ny = e.y + (moving ? goal.vy * dt : 0);
+        e.x = nx + (tx - nx) * k; e.y = ny + (ty - ny) * k;
+      }
+      let turn = goal.angle - e.angle; turn = Math.atan2(Math.sin(turn), Math.cos(turn)); e.angle += turn * Math.min(1, dt * GHOST.turn);
       e.vx = dt > 0 ? (e.x - px) / dt : 0; e.vy = dt > 0 ? (e.y - py) / dt : 0;
     }
   }
-  /** Follower: replaces the enemy list with the authority's. Enemies it no longer reports are gone (no loot here). */
-  applyEnemies(rows: EnemyRow[]) {
-    const known = new Map(this.enemies.map(e => [e.id, e])), next: Enemy[] = [];
-    this.ghostGoals.clear();
-    for (const [id, kind, x, y, angle, health, maxHealth, shield, state, parent] of rows) {
-      const e = known.get(id) ?? { id, x, y, angle, health, cooldown: 0, kind: kind as EnemyKind, vx: 0, vy: 0 } as Enemy;
+  /**
+   * Follower: the authority's enemies. `lead` is how many seconds old the rows already are (network delay), so
+   * they are carried forward to the present. A `full` list replaces the mirror (enemies it no longer reports are
+   * gone, no loot here); a partial one (nearby enemies between full lists) updates and adds only the rows it has.
+   */
+  applyEnemies(rows: EnemyRow[], lead = 0, full = true) {
+    const known = new Map(this.enemies.map(e => [e.id, e])), next: Enemy[] = full ? [] : this.enemies, at = this.ghostClock - Math.max(0, lead);
+    // Boss parts are placed on their hull each tick and report no velocity of their own: they move with the hull.
+    const hull = new Map<number, [number, number]>();
+    for (const r of rows) hull.set(r[0], [r[10] ?? 0, r[11] ?? 0]);
+    for (const [id, goal] of this.ghostGoals) if (!hull.has(id)) hull.set(id, [goal.vx, goal.vy]);
+    if (full) this.ghostGoals.clear();
+    for (const [id, kind, x, y, angle, health, maxHealth, shield, state, parent, ownVx = 0, ownVy = 0] of rows) {
+      const [vx, vy] = parent >= 0 && !ownVx && !ownVy ? hull.get(parent) ?? [0, 0] : [ownVx, ownVy];
+      let e = known.get(id);
+      if (!e) {
+        // A new mirror starts where the enemy is now, not where it was when the row was sent.
+        const ahead = Math.min(Math.max(0, lead), GHOST.extrapolate);
+        e = { id, x: x + vx * ahead, y: y + vy * ahead, angle, health, cooldown: 0, kind: kind as EnemyKind, vx, vy } as Enemy;
+        if (!full) next.push(e);
+      }
       e.kind = kind as EnemyKind; e.health = health; e.maxHealth = maxHealth; e.shield = shield; e.state = state as EnemyState; e.populationExempt = true;
       if (parent >= 0) e.parent = parent; else delete e.parent;
-      this.ghostGoals.set(id, { x, y, angle });
-      next.push(e);
+      this.ghostGoals.set(id, { x, y, angle, vx, vy, at });
+      if (full) next.push(e);
     }
     this.enemies = next;
   }
-  /** Follower: enemy fire from the authority. Bullets fly here and hit this ship if they reach it. */
-  applyShots(shots: SharedShot[]) {
+  /** Follower: enemies the authority reports destroyed or gone since its last message. */
+  removeEnemies(ids: number[]) {
+    if (!ids.length) return;
+    const gone = new Set(ids);
+    this.enemies = this.enemies.filter(e => !gone.has(e.id));
+    for (const id of ids) this.ghostGoals.delete(id);
+  }
+  /**
+   * Carries a received shot `t` seconds along its flight. Rocks stop it on the way (with an impact). A hostile
+   * shot is held just short of this ship, so the normal shot loop still decides whether it hits.
+   */
+  private advanceShot(b: Bullet, t: number) {
+    if (t <= 0 || b.life <= 0) return;
+    const start = { x: b.x, y: b.y }, end = { x: b.x + b.vx * t, y: b.y + b.vy * t };
+    let f = 1;
+    if (b.enemy && !this.dead) { const hit = segmentCircleHit(start, end, this.player, pilotRadius(this.modules.map(m => [m.x, m.y])) + 30); if (hit !== undefined) f = Math.max(0, hit - 0.02); }
+    if (f <= 0) return;
+    end.x = start.x + (end.x - start.x) * f; end.y = start.y + (end.y - start.y) * f;
+    for (const asteroid of this.asteroids) {
+      if (asteroid.amount <= 0 || segmentCircleHit(start, end, asteroid, asteroid.radius + 4) === undefined) continue;
+      const local = segmentPolygonHit(ensureAsteroidGeometry(asteroid), asteroidLocal(asteroid, start), asteroidLocal(asteroid, end));
+      if (!local) continue;
+      b.life = 0; this.effect({ type: 'impact', ...asteroidWorld(asteroid, local), radius: b.rocket ? 22 : 10, weapon: b.weapon, color: b.weapon ? WEAPON_TYPES[b.weapon].color : 0xfff1a8 });
+      return;
+    }
+    b.x = end.x; b.y = end.y; b.life -= t * f;
+  }
+  /**
+   * Follower: enemy fire from the authority. Bullets fly here and hit this ship if they reach it. Each is carried
+   * forward by its age when sent (`a`) plus `oneWay` seconds of network delay, to where it really is now.
+   */
+  applyShots(shots: SharedShot[], oneWay = 0) {
     let hostile = 0; for (const b of this.bullets) if (b.enemy) hostile++;
     for (const shot of shots) {
       if ('beam' in shot) {
@@ -1299,19 +1361,26 @@ export class GameModel {
       }
       if (hostile >= 256) break;
       hostile++;
-      this.bullets.push({ id: this.id++, x: shot.x, y: shot.y, vx: shot.vx, vy: shot.vy, life: shot.life, enemy: true, damage: shot.damage, weapon: shot.weapon as WeaponKind | undefined, homing: shot.homing, rocket: shot.rocket, splash: shot.splash });
+      const bullet: Bullet = { id: this.id++, x: shot.x, y: shot.y, vx: shot.vx, vy: shot.vy, life: shot.life, enemy: true, damage: shot.damage, weapon: shot.weapon as WeaponKind | undefined, homing: shot.homing, rocket: shot.rocket, splash: shot.splash };
+      this.bullets.push(bullet);
+      this.advanceShot(bullet, leadTime(shot.a, oneWay));
     }
   }
-  /** Other pilots' own shots: drawn flying here and stopped by rocks, without damaging anything. */
-  applyPilotShots(shots: PilotShot[]) {
+  /**
+   * Other pilots' own shots: drawn flying here and stopped by rocks, without damaging anything. With `from` (where
+   * this pilot draws the shooter's ship) a shot that carries its offset from the ship leaves from that drawn ship,
+   * so it comes out of the visible gun the moment it arrives.
+   */
+  applyPilotShots(shots: PilotShot[], from?: Point) {
     let remote = 0; for (const b of this.bullets) if (b.remote) remote++;
     for (const shot of shots) {
       if (remote >= 192) break;
       remote++;
       const weapon = shot.weapon && shot.weapon in WEAPON_TYPES ? shot.weapon as WeaponKind : undefined;
-      this.bullets.push({ id: this.id++, x: shot.x, y: shot.y, vx: shot.vx, vy: shot.vy, life: shot.life, enemy: false, remote: true, weapon, level: shot.level, rocket: shot.rocket });
-      const angle = Math.atan2(shot.vy, shot.vx), near = dist(shot, this.player) < 900;
-      this.effect({ type: 'muzzle', x: shot.x, y: shot.y, angle, weapon, level: shot.level, color: weapon ? WEAPON_TYPES[weapon].color : 0xfff1a8, silent: !near });
+      const x = from && shot.o ? from.x + shot.o[0] : shot.x, y = from && shot.o ? from.y + shot.o[1] : shot.y;
+      this.bullets.push({ id: this.id++, x, y, vx: shot.vx, vy: shot.vy, life: shot.life, enemy: false, remote: true, weapon, level: shot.level, rocket: shot.rocket });
+      const angle = Math.atan2(shot.vy, shot.vx), near = dist({ x, y }, this.player) < 900;
+      this.effect({ type: 'muzzle', x, y, angle, weapon, level: shot.level, color: weapon ? WEAPON_TYPES[weapon].color : 0xfff1a8, silent: !near });
     }
   }
   private updateRemoteBullet(b: Bullet, dt: number) {

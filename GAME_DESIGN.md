@@ -132,3 +132,5 @@ Scrolling flight zoom preserves current ship heading until the mouse moves; zoom
 Build module unlocks at hull/core level 2 (previously 4). Installation costs, construction cargo/energy rules and higher module tier requirements remain unchanged.
 
 Dynamic soundtrack: menu > boss > PvP > PvE > station/outfitter > mining > exploration. Mining needs 5 seconds, holds through 15 seconds idle; PvE/PvP hold 12/15 seconds after interaction. Calm fades 6 seconds, rotations 8, menu 4, PvE entry 1.5, PvP/boss entry 1. Songs rotate fairly and brief returns resume. Pause/mute/hidden tabs retain playback position. New games at the station use station music until leaving.
+
+Updated combat music rules: 0–5 visible living hostile NPC ships do not initiate PvE music. Six initiate it; once active it continues until zero remain visible. Exiting PvE immediately resumes the previous appropriate song with a 2s fade. One confirmed hostile human interaction triggers PvP; after 3s inactivity it returns with a 2s fade. Peaceful playback position survives long fights; changed activities select the appropriate category. Boss priority and calm fades remain.

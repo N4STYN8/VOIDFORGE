@@ -1,13 +1,13 @@
 # Progress
 
-## Relay admin console (branch claude/gallant-tereshkova-aabb3e, uncommitted)
+## Relay admin console (branch claude/gallant-tereshkova-aabb3e)
 - Built:
   - Password-protected `/admin` served by the relay, with login lockout, IP bans file and audit log.
   - Live pilot and lobby tables with IP, sector, lobby, authority, position, power, ping and message rate.
   - Kick, ban, unban, rename, broadcast, lobby disband, remove and open, sector lock and evict.
   - Universe map with follow and spectate, real generated asteroid fields, live ships with block layouts, enemies, shots and beams.
   - In-game admin commands: teleport (point, own-grid cell, or visit another sector), spawn and clear enemies, evict, inspect, and edits to cargo, storage, stations and outposts.
-- Validation: 324 tests (new: adminProtocol 3, admin relay integration 13, adminControl 10) and both builds, plus the Node 16 relay bundle.
+- Validation: 342 tests after merging main (PR #9 latency, PR #10 outpost sync; 22 new admin tests: adminProtocol 3, admin relay integration 13, adminControl 10), both builds and the Node 16 relay bundle. The admin map reads the new enemy format inside `fx`: partial `n` rows, `f` full lists and `x` removals.
 - Browser check against a local relay with `relay-bot --horde --fire` plus the real game on a fresh origin joined to its lobby:
   - A wrong password was refused; login worked.
   - Pilots showed with ping and rate. Following tracked the bot over the asteroid field with ship blocks at close zoom.
@@ -16,6 +16,19 @@
 - Found during the check: solo pilots send no enemy traffic, so their enemies are not visible to admins (follow-up).
 - Final review fixes: parallel-login lockout bypass, stalled admin sockets (backlog skip + keep-alive reaping), outpost destroy now moves its minerals to station storage, loopback addresses are never banned (warns when TRUST_PROXY is missing behind a proxy), oversized inspect acks keep their outcome, NUL asset paths return 400.
 - Not deployed. Deploying needs explicit approval: the relay restart on the Pi, plus a site deploy for the in-game handler. Pi setup is in server/README.md.
+
+## Shared outposts in multiplayer (local branch claude/outpost-sync, uncommitted)
+- Fixed: outposts built with Build Mode (F) in a shared sector did not appear for the other pilot. Each pilot now shares its own outposts live with everyone in the sector (new blocks, construction progress, damage, shield, losses), display only, with nothing stored in them sent. No relay change.
+- Validation: 312 tests (2 new in tests/outpost-share.test.ts: codec with multi-part outposts, and two pilots over a real relay seeing each other's outposts built, extended, progressing and lost, and a departed pilot's outposts removed) and build pass. Browser: joined a local `relayBot --outpost` lobby and the bot's outpost was drawn on the browser client; no console errors.
+- Not done: other pilots' turret aim, turret fire and drones are not shown; visitor outposts block nothing.
+
+## Multiplayer latency pass and ping readout (local branch claude/objective-darwin-32381a, uncommitted)
+- Lower lag the game adds on top of the network, measured with the new `scripts/latencyBench.ts` (two pilots over a real local relay with simulated delay). LAN: remote ships 175 → 87 ms behind, mirrored enemies 220 → 35 ms, enemy shots 75–90 → under 10 ms, pilot shots visible 60–73 → 31 ms after firing. 80 ms round trip: ships 247 → 161 ms, enemies 298 → 22 ms, enemy shots 161–176 → 20–27 ms.
+- How: adaptive interpolation delay with extrapolation and eased corrections for remote ships; enemy velocities and dead reckoning on followers; enemies ride in fx (nearby every fx, full list twice a second, removals at once); enemy shots fast-forwarded by age + one-way delay; pilot shots launched from the drawn shooter; fx and hits flushed early when the client's own send budget allows (stays under the relay limit). No relay change.
+- Ping: Multiplayer panel status shows `PING n MS` (green/amber/red) and each nearby pilot's ping; the command bar status adds it. Measured by timing `lobbies` replies every 5 s.
+- Fixed: a sector set between socket open and `welcome` never reached the relay.
+- Validation: 303 tests (12 new in tests/latency.test.ts, including an over-the-relay mirror-accuracy and message-rate test) and build pass; `npm run load-test -- 200 4 8` fine (p99 15 ms). Browser: joined a local `relayBot --horde --fire` lobby, horde mirrored and firing, panel showed PING 10 MS and the bot's 1 ms, no console errors. Not checked: feel over a real internet link, and older clients mixed with new ones (an old follower sees no enemies from a new authority until it reloads).
+- Next: play over the internet with a remote friend and tune INTERP/GHOST if ships or enemies wobble; consider the relay-side follow-ups in ARCHITECTURE.md (needs approval to redeploy the Pi).
 
 ## Shared space stage 6 — scaling (local branch claude/mmo-sectors, uncommitted)
 - Interest management, encode-once broadcast, backlog skipping, packed state, `/stats`, `npm run load-test`.
@@ -440,3 +453,12 @@ Compact HUD release: user explicitly requested push live. Origin fetched; HEAD/m
 - Limitation: follower snapshots omit target/boss-projectile identity; follower boss music requires confirmed boss interaction, never proximity alone. New game at a station correctly starts station music. Next: human listening balance pass. All changes local/uncommitted; nothing pushed/deployed.
 
 - User authorized live publication: fetched origin and confirmed main unchanged at 26681ed. Re-ran all 298 tests and production build successfully. Publishing dynamic music, all 12 original MP3s and the preserved Core-2 Build module unlock via normal fast-forward push and existing Pages workflow. No relay changes.
+
+## Combat music trigger refinement — 2026-11-13
+- Clean start; fetched and safely pulled main 8374223 → c44c087, preserving the latest multiplayer latency changes. Created codex/combat-music-threshold; no upstream selected for this local branch.
+- PvE now counts living hostile NPC hulls overlapping the camera viewport, excluding mounted parts. Starts at six, stays active down to one, exits immediately at zero; NPC hit events cannot trigger it. PvP still uses confirmed real-player hits, with a 3s inactivity timeout. Boss priority unchanged.
+- PvE/PvP returns use 2s equal-power fades. The same peaceful track resumes at its paused position even after >30s fights; changed activities use their appropriate category. Existing 12 tracks, calm fades, rotation, mute/volume and SFX preserved.
+- Files: src/main.ts, src/musicState.ts, src/musicSignals.ts, src/musicEngine.ts, tests/music.test.ts, MUSIC_AUDIT.md and project docs. 314 tests pass; production build passes (existing bundle warning). Browser checks pass for 1/5/6/10/5/0 counts, ignored small NPC hits, real-song bookmark resume, rapid reentry, one-player PvP/timeout and mute; no page errors. No simulation/network edits.
+- Multiplayer limitation: no explicit disengagement event, so PvP ends after the requested 3s without confirmed interactions. No conflicts; all changes local/uncommitted, nothing pushed/deployed. Next: human transition-balance playtest.
+
+- User authorized live publication: fetched origin and confirmed main unchanged at c44c087. Re-ran 314 tests and production build successfully. Publishing the reviewed combat-music thresholds, short returns and persistent bookmarks via normal fast-forward push and existing Pages workflow. No relay changes.

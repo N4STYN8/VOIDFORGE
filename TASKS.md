@@ -7,8 +7,24 @@
 - [x] In-game command handler (src/adminControl.ts) with tests
 - [ ] Review the uncommitted change, then commit, PR and merge on request
 - [ ] Deploy (needs approval and coordination): `npm run relay-bundle` and copy `dist-admin/` to the Pi; set ADMIN_PASSWORD/TRUST_PROXY/BANS_FILE; check nginx forwards Host, X-Forwarded-For and X-Forwarded-Proto; restart the relay; deploy the site so clients run admin commands
-- [ ] Follow-up after PR #9 merges: let a watched solo pilot share enemies/shots/look with admins (sharedLink.ts), and confirm the page's `fx.n` enemy decoding against the new format
+- [x] Admin map reads PR #9's enemy format inside `fx` (partial `n`, full `f`, removals `x`)
+- [ ] Follow-up: let a watched solo pilot share enemies, shots and look with admins (sharedLink.ts); today the map shows only their ship
 - [ ] Optional: show outpost blocks on the spectator map; reproduce belt motion and population-field rocks
+
+## Shared outposts — built, needs play
+- [x] Live outpost sharing between pilots in a sector (blocks, progress, damage, shield, removal)
+- [ ] Show other pilots' turret aim/fire and drones if wanted
+- [ ] Play-test two players building in one sector
+
+## Multiplayer latency — built, needs internet play
+- [x] Latency benchmark over a real relay with simulated delay (scripts/latencyBench.ts)
+- [x] Adaptive remote-ship interpolation with extrapolation and eased corrections
+- [x] Enemy velocities, dead reckoning, enemies in fx with partial/full lists and removals
+- [x] Enemy shots fast-forwarded by age + one-way delay; pilot shots launched from the drawn shooter
+- [x] Early fx/hit flushes inside a client-side send budget under the relay limit
+- [x] Ping readout (panel, command bar, other pilots) without a relay change
+- [ ] Play over a real internet link (20–80 ms) and tune INTERP / GHOST constants
+- [ ] With relay redeploy approval: `ping`/`pong` message, sender timestamps on ship state
 
 ## Space-station outposts — built, needs play
 - [x] Distinct module art for all sixteen block types, continuous hull walls, corridor tubes
@@ -296,3 +312,11 @@ Choices: own Node + WebSocket relay; sector grid; owners keep changes to their s
 - [x] Preserve controls/unlock/SFX; test states, interruptions, playback and production build
 - [ ] Human listening pass for soundtrack/SFX balance
 - [ ] Optional future follower boss targeting metadata (requires separate relay scope)
+
+## Combat music trigger refinement
+- [x] Six visible living NPC ships to start; latch until zero
+- [x] Ignore individual NPC hits and offscreen/dead/component counts
+- [x] Single confirmed hostile player triggers PvP; 3s inactivity ends it
+- [x] Resume peaceful song/position after long fights with 2s return fades
+- [x] Test threshold sequence, viewport filtering, real playback, rapid returns, priority and PvP events
+- [ ] Human playtest combat/peaceful transition balance
