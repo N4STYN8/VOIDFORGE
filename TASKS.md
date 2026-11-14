@@ -1,5 +1,12 @@
 # Tasks
 
+## Admin console v2: built locally, not deployed
+- [x] Game-art sector view, roster with bulk actions, pilot drawer, activity feed with alerts
+- [x] Relay events, alerts, `pilot` and `bulk` requests, with tests
+- [ ] Review, then commit, PR and merge on request
+- [ ] Deploy (needs approval): install the new relay bundle and copy `dist-admin/` to `/opt/voidforge/admin/` on the Pi
+- [ ] Optional: draw outposts on the map from shared outpost parts; reproduce moving-belt rock poses
+
 ## Relay admin console — built locally, not deployed
 - [x] Auth, sessions, lockout, bans, audit log (server/admin.ts, server/bans.ts)
 - [x] Pilot/lobby management and sector lock/evict through RelayHooks

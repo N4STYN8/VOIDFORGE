@@ -10,7 +10,7 @@ import { randomBytes, randomInt } from 'node:crypto';
 import { upgrade, textFrame, type WebSocketPeer } from './websocket.ts';
 import { createAdmin, clientIp, type Admin, type AdminOptions, type AdminSocket, type CommandResult, type RelayHooks } from './admin.ts';
 import { NET, CLAIMS, MATCH, packState, parseClient, roomTag, type ClientMessage, type Member, type ServerMessage, type WorldRef } from '../src/netProtocol.ts';
-import { ADMIN, type AdminCommand, type AdminPilot } from '../src/adminProtocol.ts';
+import { ADMIN, type AdminCommand, type AdminEvent, type AdminPilot } from '../src/adminProtocol.ts';
 
 /**
  * VOIDFORGE relay: lobbies plus per-sector rooms. It never simulates the game; each client runs its
@@ -29,7 +29,12 @@ type Client = {
   joined: number; lobby?: Lobby; tokens: number; refilled: number; dropped: number;
   /** Address (behind the proxy when trusted), connect time, and message-rate window for the admin console. */
   ip: string; since: number; msgs: number; rateAt: number; rate: number;
+  /** Activity feed state: first hello seen, flood window, recent death times. */
+  greeted?: boolean; floodAt?: number; floodCount?: number; flooded?: boolean; deaths?: number[]; deathsAlerted?: number;
+  /** Token bucket for this pilot's ordinary activity events (alerts always pass). */ evTokens?: number; evAt?: number;
 };
+/** Alert thresholds for the admin activity feed. */
+const ALERTS = { events: 20, eventsPerSecond: 1, floodWindow: 10000, floodDrops: 30, deaths: 5, deathWindow: 120000, joinBurst: 5, joinWindow: 60000, retryEvery: 60000 };
 /** A sector room: its pilots, who runs its enemies, and rock claim leases (rock id -> holder and expiry). */
 type Room = { clients: Set<Client>; authority?: Client; claims: Map<number, { holder: Client; until: number }> };
 type Lobby = { code: string; host: Client; members: Set<Client>; open?: boolean };
@@ -71,6 +76,16 @@ export function startRelay(options: RelayOptions = {}): Promise<Relay> {
   /** Admin commands awaiting the pilot's ack. */
   const pending = new Map<number, { client: Client; resolve: (r: CommandResult) => void; timer: ReturnType<typeof setTimeout> }>();
   let refs = 0, warnedProxy = false;
+  /** Records an activity event about a pilot; ordinary ones are rate limited per pilot so one client cannot flood the feed. */
+  const pilotEvent = (c: Client, e: Omit<AdminEvent, 'at'>) => {
+    if (!e.alert) {
+      const t = Date.now(); c.evTokens = Math.min(ALERTS.events, (c.evTokens ?? ALERTS.events) + (t - (c.evAt ?? t)) / 1000 * ALERTS.eventsPerSecond); c.evAt = t;
+      if (c.evTokens < 1) return; c.evTokens--;
+    }
+    admin.event(e);
+  };
+  /** Alert bookkeeping by address: recent connection times and when each alert last fired. Pruned as it grows. */
+  const joinTimes = new Map<string, number[]>(), burstAlerted = new Map<string, number>(), retried = new Map<string, number>();
   const now = options.admin?.now ?? Date.now;
   const stats = (): RelayStats => { const cpu = process.cpuUsage(); return { clients: clients.size, rooms: rooms.size, lobbies: lobbies.size, ...counters, admins: admin?.sockets.size ?? 0, uptime: Math.round((Date.now() - started) / 1000), rssMb: Math.round(process.memoryUsage().rss / 1048576), cpuMs: Math.round((cpu.user + cpu.system) / 1000) }; };
   const publicStats = () => { const { obsDropped: _o, admins: _a, ...rest } = stats(); return rest; };
@@ -107,6 +122,7 @@ export function startRelay(options: RelayOptions = {}): Promise<Relay> {
   function elect(key: string, room: Room) {
     const all = [...room.clients].sort((a, b) => a.joined - b.joined), live = all.filter(c => !c.dead), list = live.length ? live : all;
     const choice = list.find(c => c.owner) ?? list.find(c => c.lobby?.host === c && c.lobby.members.size > 1 && list.some(o => o !== c && o.lobby === c.lobby)) ?? list[0];
+    if (choice && room.authority !== choice) pilotEvent(choice, { kind: 'authority', id: choice.id, name: choice.name, seed: key });
     room.authority = choice;
     announceRoom(key);
   }
@@ -139,6 +155,7 @@ export function startRelay(options: RelayOptions = {}): Promise<Relay> {
   function leaveLobby(c: Client, reason: string, notify = true) {
     const lobby = c.lobby; if (!lobby) return;
     lobby.members.delete(c); c.lobby = undefined;
+    pilotEvent(c, { kind: 'lobby', id: c.id, name: c.name, code: lobby.code, detail: lobby.members.size ? 'left' : 'left; lobby closed' });
     if (notify) send(c, { t: 'left-lobby', reason });
     if (!lobby.members.size) { lobbies.delete(lobby.code); return; }
     if (lobby.host === c) lobby.host = lobby.members.values().next().value!;
@@ -218,9 +235,11 @@ export function startRelay(options: RelayOptions = {}): Promise<Relay> {
     command(id, cmd) {
       const c = byId(id); if (!c) return Promise.resolve({ ok: false, message: 'That pilot is not online.' });
       if (cmd.op === 'teleport' && (cmd.world || cmd.cell)) releaseGuest(c, cmd.world?.seed);
+      if (cmd.op === 'evict') releaseGuest(c);
       return command(c, cmd);
     },
     authorityOf(seed) { return rooms.get(seed)?.authority?.id; },
+    pilotDetail(id) { const c = byId(id); return c && { blocks: c.ship?.blocks, paint: c.ship?.paint }; },
     evict: evictFrom,
     watch(socket, seeds) {
       const next = seeds.slice(0, ADMIN.maxWatch);
@@ -246,11 +265,13 @@ const result=c.pilotId?crewStore.execute(c.pilotId,m.requestId,m.action,m.data,c
 
       case 'hello':
         if (m.v !== NET.version) { send(c, { t: 'error', message: 'This game version does not match the relay. Reload the page.' }); c.peer.close(4000); return; }
+        if (!c.greeted) { c.greeted = true; pilotEvent(c, { kind: 'join', id: c.id, name: m.name, ip: c.ip }); }
+        else if (c.name !== m.name) pilotEvent(c, { kind: 'rename', id: c.id, name: m.name, detail: `was ${c.name}` });
         c.name = m.name; if (c.lobby) announce(c.lobby); return;
       case 'create': {
         leaveLobby(c, 'You started a new lobby.', false);
         const lobby: Lobby = { code: newCode(), host: c, members: new Set([c]), open: m.open };
-        lobbies.set(lobby.code, lobby); c.lobby = lobby; announce(lobby); return;
+        lobbies.set(lobby.code, lobby); c.lobby = lobby; announce(lobby); pilotEvent(c, { kind: 'lobby', id: c.id, name: c.name, code: lobby.code, detail: 'created' }); return;
       }
       case 'join': {
         const lobby = lobbies.get(m.code);
@@ -258,7 +279,7 @@ const result=c.pilotId?crewStore.execute(c.pilotId,m.requestId,m.action,m.data,c
         if (lobby === c.lobby) { announce(lobby); return; }
         if (lobby.members.size >= NET.maxLobby) { send(c, { t: 'error', message: 'That lobby is full.' }); return; }
         leaveLobby(c, 'You joined another lobby.', false);
-        lobby.members.add(c); c.lobby = lobby; announce(lobby); return;
+        lobby.members.add(c); c.lobby = lobby; announce(lobby); pilotEvent(c, { kind: 'lobby', id: c.id, name: c.name, code: lobby.code, detail: 'joined' }); return;
       }
       case 'leave': leaveLobby(c, 'You left the lobby.'); return;
       case 'open': if (c.lobby?.host === c) { c.lobby.open = m.open || undefined; announce(c.lobby); } return;
@@ -290,6 +311,7 @@ const result=c.pilotId?crewStore.execute(c.pilotId,m.requestId,m.action,m.data,c
         }
         if (c.room !== m.world.seed) {
           leaveRoom(c); c.room = m.world.seed; c.joined = ++joins; c.owner = owner;
+          pilotEvent(c, { kind: 'sector', id: c.id, name: c.name, seed: m.world.seed });
           let room = rooms.get(c.room); if (!room) rooms.set(c.room, room = { clients: new Set(), claims: new Map() });
           room.clients.add(c); elect(c.room, room);
         } else if (c.owner !== owner) { c.owner = owner; elect(c.room, rooms.get(c.room)!); }
@@ -300,7 +322,14 @@ const result=c.pilotId?crewStore.execute(c.pilotId,m.requestId,m.action,m.data,c
       case 'state': {
         if (!c.room) return;
         c.at = { x: m.s.x, y: m.s.y }; c.angle = m.s.angle;c.ship={...m.s,blocks:m.s.blocks??c.ship?.blocks};
-        if (Boolean(m.s.dead) !== Boolean(c.dead)) { c.dead = Boolean(m.s.dead) || undefined; const room = rooms.get(c.room); if (room) elect(c.room, room); }
+        if (Boolean(m.s.dead) !== Boolean(c.dead)) {
+          c.dead = Boolean(m.s.dead) || undefined; const room = rooms.get(c.room); if (room) elect(c.room, room);
+          if (c.dead) {
+            const t = Date.now(); c.deaths = [...(c.deaths ?? []).filter(d => t - d < ALERTS.deathWindow), t].slice(-ALERTS.deaths);
+            pilotEvent(c, { kind: 'died', id: c.id, name: c.name, seed: c.room });
+            if (c.deaths.length >= ALERTS.deaths && t - (c.deathsAlerted ?? 0) > ALERTS.deathWindow) { c.deathsAlerted = t; pilotEvent(c, { kind: 'deaths', id: c.id, name: c.name, seed: c.room, detail: `${c.deaths.length} deaths in 2 minutes`, alert: true }); }
+          } else pilotEvent(c, { kind: 'respawn', id: c.id, name: c.name, seed: c.room });
+        }
         // Interest management: only pilots near enough to see or chart this ship get its state.
         const near = [...rooms.get(c.room)?.clients ?? []].filter(other => other !== c && (!other.at || Math.abs(other.at.x - m.s.x) < NET.interest && Math.abs(other.at.y - m.s.y) < NET.interest));
         const text = JSON.stringify({ t: 'state', id: c.id, name: m.s.blocks ? c.name : undefined, r: roomTag(c.room), s: packState(m.s) });
@@ -370,6 +399,8 @@ const result=c.pilotId?crewStore.execute(c.pilotId,m.requestId,m.action,m.data,c
     const t = Date.now();
     c.tokens = Math.min(NET.burst, c.tokens + (t - c.refilled) / 1000 * NET.maxRate); c.refilled = t;
     if (c.tokens >= 1) { c.tokens--; c.dropped = Math.max(0, c.dropped - 1); return true; }
+    if (t - (c.floodAt ?? 0) > ALERTS.floodWindow) { c.floodAt = t; c.floodCount = 0; c.flooded = false; }
+    if (++c.floodCount! > ALERTS.floodDrops && !c.flooded) { c.flooded = true; pilotEvent(c, { kind: 'flood', id: c.id, name: c.name, ip: c.ip, detail: 'sending faster than the rate limit', alert: true }); }
     if (++c.dropped > NET.maxRate * NET.abuse) c.peer.close(1008);
     return false;
   }
@@ -385,13 +416,20 @@ const result=c.pilotId?crewStore.execute(c.pilotId,m.requestId,m.action,m.data,c
     if (admin.handleUpgrade(request, socket)) return;
     const ip = clientIp(request, Boolean(options.admin?.trustProxy));
     if (!options.admin?.trustProxy && !warnedProxy && request.headers['x-forwarded-for'] && (ip === '127.0.0.1' || ip === '::1')) { warnedProxy = true; console.warn('[relay] Connections arrive through a proxy but TRUST_PROXY is not set: every player shows as a local address, so admin bans are refused. Set TRUST_PROXY=1.'); }
-    if (admin.bans.isBanned(ip)) { socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'); return; }
+    if (admin.bans.isBanned(ip)) {
+      const t = Date.now(); if (t - (retried.get(ip) ?? 0) > ALERTS.retryEvery) { retried.set(ip, t); admin.event({ kind: 'banned-retry', ip, detail: 'a banned address tried to connect', alert: true }); }
+      socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n'); return; }
     const peer = upgrade(request, socket, NET.maxMessage, origin => originAllowed(origin, allowed)); if (!peer) return;
     const t = Date.now();
     const c: Client = { id: randomBytes(6).toString('hex'), name: 'Pilot', peer, joined: 0, tokens: NET.burst, refilled: t, dropped: 0, ip, since: now(), msgs: 0, rateAt: t, rate: 0 };
     clients.add(c);
+    const joinsHere = [...(joinTimes.get(ip) ?? []).filter(j => t - j < ALERTS.joinWindow), t].slice(-(ALERTS.joinBurst + 1)); joinTimes.set(ip, joinsHere);
+    if (joinsHere.length > ALERTS.joinBurst && t - (burstAlerted.get(ip) ?? 0) > ALERTS.joinWindow) { burstAlerted.set(ip, t); admin.event({ kind: 'join-burst', ip, detail: `${joinsHere.length} connections in a minute`, alert: true }); }
+    if (joinTimes.size > 5000) for (const [k, v] of joinTimes) if (!v.some(j => t - j < ALERTS.joinWindow)) { joinTimes.delete(k); burstAlerted.delete(k); }
+    if (retried.size > 5000) retried.clear();
     peer.onmessage = text => { counters.messagesIn++; c.msgs++; if (!admit(c)) return; const m = parseClient(text); if (m) handle(c, m); };
     peer.onclose = () => {
+      if (c.greeted) pilotEvent(c, { kind: 'leave', id: c.id, name: c.name, ip: c.ip });
       clients.delete(c); leaveRoom(c); leaveLobby(c, '', false);if(c.pilotId)announceCrews();
       for (const [ref, entry] of pending) if (entry.client === c) { pending.delete(ref); clearTimeout(entry.timer); entry.resolve({ ok: false, message: 'The pilot disconnected.' }); }
     };

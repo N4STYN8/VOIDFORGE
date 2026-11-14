@@ -1,5 +1,5 @@
 import { ENEMIES, RESOURCES, type Resource } from './data.ts';
-import { cleanName, readWorld, type ServerMessage, type WorldRef } from './netProtocol.ts';
+import { cleanName, readWorld, type ServerMessage, type ShipBlock, type WorldRef } from './netProtocol.ts';
 
 /**
  * Admin console protocol, shared by the relay (server/admin.ts), the admin page (src/admin) and the game
@@ -12,7 +12,7 @@ import { cleanName, readWorld, type ServerMessage, type WorldRef } from './netPr
 export const ADMIN = {
   maxSockets: 4, rate: 20, maxWatch: 3, castBytes: 98304, resultTimeout: 5000, logSize: 200,
   sessionMs: 12 * 3600 * 1000, lockFailures: 5, lockMs: 15 * 60 * 1000, maxSpawn: 12, maxDelta: 100000,
-  maxText: 200, maxAck: 12000, overviewMs: 1000, kickMinutes: 2,
+  maxText: 200, maxAck: 12000, overviewMs: 1000, kickMinutes: 2, maxEvents: 500, eventsOnConnect: 200, maxBulk: 500,
 } as const;
 
 export type ResourceDelta = Partial<Record<Resource, number>>;
@@ -51,7 +51,16 @@ export type AdminRequest = Ref & (
   | { t: 'inspect'; id: string }
   | { t: 'cargo'; id: string; target: CargoTarget; delta: ResourceDelta }
   | { t: 'station'; id: string; index: number; unlocked: boolean }
-  | { t: 'structure'; id: string; outpost: number; structure?: number; action: 'repair' | 'upgrade' | 'destroy' });
+  | { t: 'structure'; id: string; outpost: number; structure?: number; action: 'repair' | 'upgrade' | 'destroy' }
+  /** One pilot's details for the drawer: the last block layout and paint the relay saw. */
+  | { t: 'pilot'; id: string }
+  /** One action for many pilots at once (at most ADMIN.maxBulk), answered with a single result. */
+  | { t: 'bulk'; ids: string[]; action: BulkAction; text?: string; reason?: string; minutes?: number; x?: number; y?: number; world?: WorldRef });
+export type BulkAction = 'message' | 'kick' | 'ban' | 'evict-pilot' | 'teleport';
+const BULK: readonly BulkAction[] = ['message', 'kick', 'ban', 'evict-pilot', 'teleport'];
+/** What the activity feed shows. Flood, deaths, banned-retry and join-burst events are alerts. */
+export type EventKind = 'join' | 'leave' | 'rename' | 'sector' | 'died' | 'respawn' | 'lobby' | 'authority' | 'kick' | 'ban' | 'admin' | 'flood' | 'deaths' | 'banned-retry' | 'join-burst';
+export type AdminEvent = { at: number; kind: EventKind; id?: string; name?: string; ip?: string; seed?: string; code?: string; detail?: string; alert?: true };
 
 export type AdminPilot = {
   id: string; name: string; ip: string; room?: string; world?: WorldRef; lobby?: string; authority: boolean; owner?: boolean;
@@ -70,7 +79,9 @@ export type AdminServerMessage =
   | { t: 'obs'; r: string; m: ServerMessage }
   | { t: 'report'; id: string; ref: number; data: unknown }
   | { t: 'result'; ref: number; ok: boolean; message?: string }
-  | { t: 'log'; entries: AuditEntry[] };
+  | { t: 'log'; entries: AuditEntry[] }
+  | { t: 'events'; entries: AdminEvent[] }
+  | { t: 'pilot'; ref: number; id: string; blocks?: ShipBlock[]; paint?: number };
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
 const int = (n: unknown): n is number => Number.isSafeInteger(n);
@@ -158,5 +169,14 @@ export function parseAdmin(raw: string): AdminRequest | undefined {
     case 'cargo': { const c = id(m.id) ? readAdminCommand({ ...m, op: 'cargo' }) : undefined; return c?.op === 'cargo' ? { t: 'cargo', ref, id: m.id as string, target: c.target, delta: c.delta } : undefined; }
     case 'station': { const c = id(m.id) ? readAdminCommand({ ...m, op: 'station' }) : undefined; return c?.op === 'station' ? { t: 'station', ref, id: m.id as string, index: c.index, unlocked: c.unlocked } : undefined; }
     case 'structure': { const c = id(m.id) ? readAdminCommand({ ...m, op: 'structure' }) : undefined; return c?.op === 'structure' ? { t: 'structure', ref, id: m.id as string, outpost: c.outpost, structure: c.structure, action: c.action } : undefined; }
+    case 'pilot': return id(m.id) ? { t: 'pilot', ref, id: m.id } : undefined;
+    case 'bulk': {
+      if (!Array.isArray(m.ids) || !m.ids.length || m.ids.length > ADMIN.maxBulk || !m.ids.every(id) || !BULK.includes(m.action as BulkAction)) return;
+      const action = m.action as BulkAction, out: Extract<AdminRequest, { t: 'bulk' }> = { t: 'bulk', ref, ids: [...new Set(m.ids as string[])], action, reason };
+      if (action === 'message') { const text = words(m.text); if (!text) return; out.text = text; }
+      if (action === 'ban') { if (!finite(m.minutes) || m.minutes <= 0 || m.minutes > 525600) return; out.minutes = m.minutes; }
+      if (action === 'teleport') { const t = readTeleport(m); if (!t || t.cell) return; Object.assign(out, { x: t.x, y: t.y, world: t.world }); }
+      return out;
+    }
   }
 }

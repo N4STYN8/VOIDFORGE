@@ -411,3 +411,115 @@ test('a watched solo pilot sends an observer feed of its enemies and fire withou
     a.close();
   } finally { net.disconnect(); await relay.close(); }
 });
+
+test('v2: the activity feed reports joins, leaves, deaths, respawns and lobby changes', async () => {
+  const relay = await relayWith();
+  try {
+    const a = await admin(relay);
+    const p = await pilot(relay, 'Eventful');
+    await a.next('events', m => m.entries.some(e => e.kind === 'join' && e.id === p.id));
+    p.send({ t: 'sector', world: world('ev1'), owner: true });
+    p.send({ t: 'state', s: { ...ship(100), dead: true } });
+    await a.next('events', m => m.entries.some(e => e.kind === 'died' && e.id === p.id));
+    await pause(110);
+    p.send({ t: 'state', s: ship(100) });
+    await a.next('events', m => m.entries.some(e => e.kind === 'respawn' && e.id === p.id));
+    p.send({ t: 'create' });
+    await a.next('events', m => m.entries.some(e => e.kind === 'lobby' && e.id === p.id));
+    p.close();
+    await a.next('events', m => m.entries.some(e => e.kind === 'leave' && e.id === p.id));
+    a.close();
+  } finally { await relay.close(); }
+});
+
+test('v2: flooding raises an alert', async () => {
+  const relay = await relayWith();
+  try {
+    const a = await admin(relay);
+    const p = await pilot(relay, 'Flooder');
+    for (let i = 0; i < 200; i++) p.send({ t: 'lobbies' });
+    const flood = await a.next('events', m => m.entries.some(e => e.kind === 'flood'));
+    const e = flood.entries.find(x => x.kind === 'flood')!;
+    assert.equal(e.alert, true); assert.equal(e.id, p.id);
+    a.close();
+  } finally { await relay.close(); }
+});
+
+test('v2: pilot detail returns the last block layout, or none before it arrives', async () => {
+  const relay = await relayWith();
+  try {
+    const a = await admin(relay);
+    const p = await pilot(relay, 'Shipwright');
+    p.send({ t: 'sector', world: world('pd1'), owner: true });
+    await a.next('overview', m => m.pilots.some(x => x.id === p.id && x.room === 'pd1'));
+    a.send({ t: 'pilot', ref: 1, id: p.id });
+    const before = await a.next('pilot', m => m.ref === 1);
+    assert.equal(before.blocks, undefined);
+    p.send({ t: 'state', s: { ...ship(50), paint: 4 } });
+    await a.next('overview', m => m.pilots.some(x => x.id === p.id && x.at));
+    a.send({ t: 'pilot', ref: 2, id: p.id });
+    const after = await a.next('pilot', m => m.ref === 2);
+    assert.deepEqual(after.blocks, [['core', 0, 0, 1]]); assert.equal(after.paint, 4);
+    a.close(); p.close();
+  } finally { await relay.close(); }
+});
+
+test('v2: bulk actions report per-pilot outcomes in one audit entry, and are capped', async () => {
+  const relay = await relayWith({ trustProxy: true });
+  try {
+    const a = await admin(relay);
+    const one = await pilot(relay, 'One', { 'x-forwarded-for': '198.51.100.11' }), two = await pilot(relay, 'Two', { 'x-forwarded-for': '198.51.100.12' }), gone = await pilot(relay, 'Gone', { 'x-forwarded-for': '198.51.100.13' });
+    await a.next('overview', m => m.pilots.length === 3);
+    a.send({ t: 'bulk', ref: 1, ids: [one.id, two.id], action: 'message', text: 'hello all' });
+    for (const p of [one, two]) assert.deepEqual((await p.next('admin', m => m.c.op === 'notice')).c, { op: 'notice', text: 'hello all' });
+    assert.match((await a.next('result', m => m.ref === 1)).message ?? '', /Message: 2 done/);
+    gone.close(); await closed(gone.socket); await pause(50);
+    a.send({ t: 'bulk', ref: 2, ids: [one.id, two.id, gone.id], action: 'kick', reason: 'cleanup' });
+    const kicked = await a.next('result', m => m.ref === 2);
+    assert.equal(kicked.ok, true); assert.equal(kicked.message, 'Kick: 2 done, 1 not online');
+    await a.next('log', m => m.entries.some(e => e.action === 'bulk-kick'));
+    a.send({ t: 'bulk', ref: 3, ids: Array.from({ length: 501 }, (_, i) => `id${i}`), action: 'kick' });
+    assert.equal((await a.next('result', m => m.ref === 3)).ok, false);
+    a.close();
+  } finally { await relay.close(); }
+});
+
+test('v2: events stay bounded under churn and a new admin gets the recent ones', async () => {
+  const relay = await relayWith();
+  try {
+    for (let i = 0; i < 150; i++) { const p = await pilot(relay, `Churn ${i}`); p.close(); await closed(p.socket); }
+    await pause(50);
+    const a = await admin(relay);
+    const first = await a.next('events');
+    assert.equal(first.entries.filter(e => !e.alert).length >= 199 && first.entries.length <= 300, true, `recent events plus kept alerts (${first.entries.length})`);
+    assert.ok(first.entries.some(e => e.kind === 'join-burst'), 'the connection-burst alert is kept');
+    const view = await a.next('overview');
+    assert.ok(view.stats.events <= 500 && view.stats.events >= 300);
+    a.close();
+  } finally { await relay.close(); }
+});
+
+test('review fix: a bulk ban saves the bans file once, not once per address', async () => {
+  const { Bans } = await import('../server/bans.ts');
+  const dir = mkdtempSync(join(tmpdir(), 'vf-bans-batch-')), bans = new Bans(join(dir, 'bans.json'));
+  bans.addMany([{ ip: '198.51.100.1', minutes: 5, reason: 'x', name: 'a' }, { ip: '198.51.100.2', minutes: 5, reason: 'x', name: 'b' }, { ip: '198.51.100.3', minutes: 5, reason: 'x', name: 'c' }]);
+  assert.equal(bans.saves, 1); assert.equal(bans.list().length, 3);
+});
+
+test('review fix: one pilot spamming events cannot flush alerts out of the history', async () => {
+  const relay = await relayWith();
+  try {
+    const spammer = await pilot(relay, 'Spammer');
+    spammer.send({ t: 'sector', world: world('spam'), owner: true });
+    for (let i = 0; i < 60; i++) { spammer.send({ t: 'state', s: { ...ship(10), dead: i % 2 === 0 } }); await pause(17); }
+    for (let i = 0; i < 200; i++) spammer.send({ t: 'lobbies' });
+    await pause(200);
+    const a = await admin(relay);
+    const history = await a.next('events');
+    const mine = history.entries.filter(e => e.id === spammer.id && !e.alert);
+    assert.ok(mine.length <= 25, `non-alert events from one pilot are rate limited (${mine.length})`);
+    assert.ok(history.entries.some(e => e.kind === 'deaths' && e.alert), 'the repeated-deaths alert survives');
+    assert.ok(history.entries.some(e => e.kind === 'flood' && e.alert), 'the flood alert survives');
+    a.close();
+  } finally { await relay.close(); }
+});

@@ -286,5 +286,25 @@ GameModel.deathNotice derives recovery instructions from dead/rebuildDue, indepe
 ## Cargo ejection — 2026-11-14
 CARGO_EJECTION in data.ts owns the bounded stack count, radial spread and outward speed. GameModel.ejectCargo transfers only selected carried quantities to personal drops, without RNG calls. Optional persisted Drop.discarded marks intentional jettison as permanently unrecoverable; legacy drops remain collectible. CollectDrop, tractor acquisition/retention and NPC scavenging reject marked drops; releaseOre never merges fresh recoverable minerals into them. The HUD uses delegated per-type eject actions and a stable modal outside its refreshed markup. Confirmation snapshots model/type/quantity, checks the same live model, caps spending to current cargo, and saves through the existing serializer/stores. Stored minerals and relay protocol are unchanged.
 
+## Admin console v2 (2026-11-14)
+- The user asked for a map that looks like the real game, a better UI, and easier pilot management: find pilots fast, act on many at once, see one pilot in depth, and watch activity. They chose to reuse the game's own art on the Canvas map rather than embed Phaser.
+- **Game art.** `src/admin/art.ts` bakes and caches the game's painters from `src/sprites.ts`: backdrop layers per sector seed (same seeding as the scene), asteroid sprites per rock (re-baked when the outline revision changes, at most 24 per frame), stations and enemy sprites. Ships use the game's `bakeShipImage`, built from module icons drawn by `drawModule` (`src/visuals.ts`).
+  - The icons are drawn through `CanvasGraphics` in `src/admin/artCore.ts`, a Canvas 2D stand-in for the subset of Phaser Graphics that `drawModule` uses. `src/visuals.ts` imports Phaser as a type only, so the admin page (about 115 KB) carries no engine.
+  - Everything is one texel per world unit with nearest-neighbour scaling. Below 0.03 px per unit the map falls back to dots and arrows. Caches are LRU-bounded.
+- **Relay events.** The relay emits activity events where those changes already happen: join (first hello), leave, rename, sector, died, respawn, lobby, authority, and admin actions (mirrored from the audit log).
+  - Alerts are events flagged `alert`. They fire for token-bucket drops over 30 in 10 s, 5 deaths in 2 minutes, a banned address retrying (at most once a minute per address), and more than 5 connections from one address in a minute. Bookkeeping maps are pruned.
+  - `server/admin.ts` keeps a ring of 500 events and sends the last 200 when an admin connects.
+- **`pilot {id}`** returns the pilot's last block layout and paint, from the relay's existing `Client.ship`, for the drawer's ship preview.
+- **`bulk {ids <= 500, action}`** covers message, kick, ban, evict-pilot and teleport. It reuses the single-pilot hooks and counts outcomes into one result ("done / not online / no response / refused") and one audit entry. Bulk ban removes duplicate addresses and skips loopback ones.
+- **Page structure.**
+  - `src/admin/state.ts`: store, sender, toasts, modal.
+  - `src/admin/roster.ts`: pure filter, sort and selection logic, tested.
+  - `src/admin/ui/roster.ts`: windowed rows, chips, bulk bar.
+  - `src/admin/ui/drawer.ts`: mini-map through `UniverseMap.draw` with a second camera, ship preview, stats, actions, activity and inspector tabs.
+  - `src/admin/ui/activity.ts`: feed, filters, alert count, dismissed per page.
+  - `src/admin/ui/actions.ts`: shared actions, menus and pick mode.
+- **Watching.** The order is the open drawer's sector, then the followed pilot's, then sectors in view, still at most 3.
+- **`scripts/swarm.ts`** runs N headless GameModel bots, named `Sim NNN`, across worker processes. They fly, mine, fight, unload and form 3-pilot lobbies, but never fire at pilots or use matchmaking.
+
 ## HUD interaction lifetime — 2026-11-14
 Flight HUD updates use updateFlightHud in hud.ts instead of replacing root.innerHTML. Matching nodes receive changed text/attributes in place; additions/removals still follow flightHud markup. This preserves eject button identity and focus through frequent changing speed/position/distance updates, allowing mouse-down and mouse-up to complete on the same control. Event delegation and confirmation behavior remain unchanged.

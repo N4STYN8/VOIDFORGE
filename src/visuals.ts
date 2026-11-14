@@ -1,4 +1,4 @@
-import Phaser from 'phaser';
+import type Phaser from 'phaser';
 import type { ModuleKind } from './data.ts';
 
 // Primitive-only presentation helpers. All dimensions here are visual, not physics.
