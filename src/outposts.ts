@@ -1,3 +1,4 @@
+import type { GateCharge } from './wormholes.ts';
 import { OUTPOST, STRUCTURES, STRUCTURE_LEVELS, STRUCTURE_SPECIAL, DRONES, type StructureKind, type Resource, type TurretDefinition } from './data.ts';
 
 // Player-built outposts: pure data and grid helpers, independent of Phaser and the DOM.
@@ -6,7 +7,7 @@ import { OUTPOST, STRUCTURES, STRUCTURE_LEVELS, STRUCTURE_SPECIAL, DRONES, type 
 
 export type Structure = { id: number; kind: StructureKind; cx: number; cy: number; rot: number; level: number; health: number; /** 0-1; below 1 the block is still under construction and does nothing. */ progress: number;
   /** Turret state: facing (radians), seconds until it may fire, seconds until it looks for a target again, current target id. */ angle?: number; cooldown?: number; scan?: number; target?: number;
-  /** Gatling ramp (0-1), seconds since it last fired, and shots fired (for every-Nth-shot specials). */ ramp?: number; quiet?: number; shots?: number };
+  /** Gatling ramp (0-1), seconds since it last fired, and shots fired (for every-Nth-shot specials). */ ramp?: number; quiet?: number; shots?: number; gateCooldown?: number; gateCharge?: GateCharge };
 export type Outpost = { id: number; name: string; /** Cell of the Outpost Core, the structural anchor. */ cx: number; cy: number; structures: Structure[]; /** Bumped whenever the outpost's appearance changes, so its baked sprite is redrawn only then. */ revision: number;
   /** Battery charge shared by the outpost's turrets. */ energy?: number; /** Minerals held in the outpost's storage. */ stored?: Record<Resource, number>; /** True while a turret wanted to fire but the battery was too low. */ shortage?: boolean; drones?: Drone[];
   /** Shield pool and seconds until it may recharge again. */ shield?: number; shieldDelay?: number;

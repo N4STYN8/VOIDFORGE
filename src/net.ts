@@ -35,7 +35,7 @@ export type NetStatus = 'offline' | 'connecting' | 'online' | 'error';
 type SocketLike = { readyState: number; send(text: string): void; close(): void; addEventListener(type: string, listener: (event: { data?: unknown }) => void): void };
 
 export class NetClient {
-  modularPvp=false;
+  independentTravel=false;modularPvp=false;wormholes=false;
   private modularQueue:ClientMessage[]=[];private modularSending=false;
   private modularParts?:{requestId:string;total:number;parts:(string|undefined)[];bytes:number};
   private flushModular(){if(this.modularSending)return;this.modularSending=true;const flush=()=>{if(!this.connected){this.modularQueue=[];this.modularSending=false;return;}let sent=0;while(this.modularQueue.length&&this.spare()>=BUDGET.reserve&&sent++<2)this.raw(this.modularQueue.shift()!);if(this.modularQueue.length)setTimeout(flush,100);else this.modularSending=false;};flush();}
@@ -211,6 +211,9 @@ export class NetClient {
     const r = (n: number, k = 10) => Math.round(n * k) / k;
     const s: ShipState = { ...state, x: r(state.x), y: r(state.y), vx: r(state.vx), vy: r(state.vy), angle: r(state.angle, 1000), health: r(state.health), maxHealth: r(state.maxHealth) }, blocks = JSON.stringify(state.blocks ?? []);
     if (blocks !== this.lastBlocks || now - this.lastBlocksAt > 2) { this.lastBlocks = blocks; this.lastBlocksAt = now; } else delete s.blocks;
+    // Large designs travel in the existing multipart combat manifest. Keep their pose valid
+    // instead of sending a layout that exceeds the legacy 400-block pose packet limit.
+    if(s.blocks&&s.blocks.length>400)delete s.blocks;
     if (this.socket?.readyState === 1) { this.spend(); this.socket.send(JSON.stringify({ t: 'state', s: packState(s) })); }
   }
   /** How far in the past this pilot's ship is drawn: adapts to how regularly its updates arrive. */
@@ -262,7 +265,7 @@ export class NetClient {
     switch (m.t) {
       case 'modular-result-part': {if(!this.modularWaiting.has(m.requestId))return;if(!this.modularParts||this.modularParts.requestId!==m.requestId)this.modularParts={requestId:m.requestId,total:m.total,parts:new Array(m.total),bytes:0};const p=this.modularParts;if(p.total!==m.total)return;if(p.parts[m.index]===undefined){p.parts[m.index]=m.data;p.bytes+=m.data.length;}if(p.bytes>1536000){this.modularParts=undefined;return;}if(p.parts.filter(v=>v!==undefined).length===m.total){this.modularParts=undefined;this.receive(p.parts.join(''),now);}return;}
       case 'modular-result': {const wait=this.modularWaiting.get(m.requestId);if(wait){clearTimeout(wait.timer);this.modularWaiting.delete(m.requestId);if(m.ok)wait.resolve(m.data);else wait.reject(Error(m.error??'Combat request rejected.'));}return;}
-      case 'welcome': this.modularPvp=m.modularPvp===1;this.id = m.id; this.status = 'online'; this.retryDelay = RECONNECT.first; this.setNote('Online.'); this.askLobbies();this.crewSupported=m.crewProtocol===1;if(this.crewSupported)this.raw({t:'crew-auth',credential:this.credential});this.onCrewState();return;
+      case 'welcome': this.wormholes=m.wormholes===1;this.modularPvp=m.modularPvp===1;this.id = m.id; this.status = 'online'; this.retryDelay = RECONNECT.first; this.setNote('Online.'); this.askLobbies();this.crewSupported=m.crewProtocol===1;if(this.crewSupported)this.raw({t:'crew-auth',credential:this.credential});this.onCrewState();return;
       case 'crew-identity': this.pilotId=m.pilotId;this.credential=m.credential;try{localStorage.setItem(this.credentialKey,m.credential);}catch{/* Keep identity in memory when storage is disabled. */}this.onCrewIdentity();return;
       case 'crew-state-part': {
         if(m.total<1||m.total>256||m.index<0||m.index>=m.total||m.data.length>9000)return;
@@ -290,12 +293,12 @@ export class NetClient {
       case 'match': this.matchWaiting?.(m.world ? { world: m.world, name: m.name } : null); return;
       case 'cast': if (this.sector && m.r === roomTag(this.sector.seed)) this.onCast(m.from, m.k, m.d); return;
       case 'direct': if (this.sector && m.r === roomTag(this.sector.seed)) this.onDirect(m.from, m.k, m.d); return;
-      case 'left-lobby': { const had = this.lobby; this.lobby = undefined; if (m.reason) this.setNote(m.reason); if (had) this.onLobbyWorld(null); return; }
+      case 'left-lobby': { const had = this.lobby; this.lobby = undefined; if (m.reason) this.setNote(m.reason); if (had&&!this.independentTravel) this.onLobbyWorld(null); return; }
       case 'lobby': {
         const before = this.lobby?.world?.seed, first = !this.lobby || this.lobby.code !== m.code;
         this.lobby = { code: m.code, host: m.host, members: m.members, world: m.world, open: m.open };
         if (first) this.setNote(m.host === this.id ? `Lobby ${m.code} created. Share the invite link.` : `Joined lobby ${m.code}.`);
-        if (m.world && (first || m.world.seed !== before)) this.onLobbyWorld(m.world, this.lobby);
+        if (!this.independentTravel && m.world && (first || m.world.seed !== before)) this.onLobbyWorld(m.world, this.lobby);
         return;
       }
       case 'state': {
@@ -334,7 +337,7 @@ export class NetClient {
   /** Messages dropped locally because they were too large to send. */
   oversized = 0;
   private dropped(text: string) {
-    this.modularPvp=false;this.modularQueue=[];this.modularParts=undefined;for(const w of this.modularWaiting.values()){clearTimeout(w.timer);w.reject(Error('Combat transport disconnected; receipt status unknown.'));}this.modularWaiting.clear();
+    this.wormholes=false;this.modularPvp=false;this.modularQueue=[];this.modularParts=undefined;for(const w of this.modularWaiting.values()){clearTimeout(w.timer);w.reject(Error('Combat transport disconnected; receipt status unknown.'));}this.modularWaiting.clear();
     this.crewParts=undefined;this.crewSupported=false;this.crewState=undefined;this.pilotId=undefined;for(const [requestId,w]of this.crewWaiting){clearTimeout(w.timer);w.reject(Error('Disconnected; outcome is unknown. Retry with the same request ID.'));}this.crewWaiting.clear();this.onCrewState();
     const had = this.lobby;
     this.status = 'offline'; this.socket = undefined; this.id = undefined; this.lobby = undefined; this.peers.clear(); this.pending = []; this.pingAsked = []; this.lastPing = -Infinity; this.room = undefined; this.claims.clear(); this.profileSent = ''; this.matchWaiting?.(null);
@@ -345,7 +348,7 @@ export class NetClient {
       text += ` Retrying in ${delay}s.`;
     }
     this.setNote(text);
-    if (had) this.onLobbyWorld(null);
+    if (had&&!this.independentTravel) this.onLobbyWorld(null);
   }
   private setNote(text: string) { this.note = text; this.onNote(text); }
 }

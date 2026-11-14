@@ -74,7 +74,7 @@ export type ClientMessage =
   | { t: 'admin-ack'; ref: number; ok: boolean; message?: string; data?: unknown };
 
 export type ServerMessage =
-  | { t: 'welcome'; id: string;crewProtocol?:number;modularPvp?:number }
+  | { t: 'welcome'; id: string;crewProtocol?:number;modularPvp?:number;wormholes?:number }
   | {t:'modular-result-part';requestId:string;index:number;total:number;data:string}
   | {t:'modular-result';requestId:string;ok:boolean;data?:unknown;error?:string}
   | {t:'crew-identity';pilotId:string;credential:string}
@@ -198,7 +198,7 @@ export function parseServer(raw: string): ServerMessage | undefined {
     case 'admin': { const c = Number.isSafeInteger(m.ref) ? readAdminCommand(m.c) : undefined; return c && { t: 'admin', ref: m.ref as number, c }; }
     case 'modular-result-part': return typeof m.requestId==='string'&&Number.isInteger(m.index)&&Number.isInteger(m.total)&&(m.total as number)>0&&(m.total as number)<=512&&(m.index as number)>=0&&(m.index as number)<(m.total as number)&&typeof m.data==='string'&&m.data.length<=3000?{t:'modular-result-part',requestId:m.requestId,index:m.index as number,total:m.total as number,data:m.data}:undefined;
     case 'modular-result': return typeof m.requestId==='string'&&typeof m.ok==='boolean'?{t:'modular-result',requestId:m.requestId,ok:m.ok,data:m.data,error:typeof m.error==='string'?m.error:undefined}:undefined;
-    case 'welcome': return typeof m.id === 'string' ? { t: 'welcome', id: m.id,...(m.crewProtocol===1?{crewProtocol:1}:{}),...(m.modularPvp===1?{modularPvp:1}:{}) } : undefined;
+    case 'welcome': return typeof m.id === 'string' ? { t: 'welcome', id: m.id,...(m.crewProtocol===1?{crewProtocol:1}:{}),...(m.modularPvp===1?{modularPvp:1}:{}),...(m.wormholes===1?{wormholes:1}:{}) } : undefined;
     case 'crew-identity': return typeof m.pilotId==='string'&&typeof m.credential==='string'&&/^[a-f0-9]{64}$/.test(m.credential)?{t:'crew-identity',pilotId:m.pilotId,credential:m.credential}:undefined;
     case 'crew-result': return typeof m.requestId==='string'&&typeof m.ok==='boolean'?{t:'crew-result',requestId:m.requestId,ok:m.ok,error:typeof m.error==='string'?m.error:undefined,result:m.result}:undefined;
     case 'crew-state': {const state=readCrewClientState(m.state);return state?{t:'crew-state',state}:undefined;}

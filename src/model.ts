@@ -721,6 +721,7 @@ export class GameModel {
   private updateOutposts(dt: number) {
     const builder = this.builder, p = this.player;
     for (const outpost of [...this.outposts]) {
+      for(const block of outpost.structures){if(block.kind!=='warpController')continue;block.gateCooldown=Math.max(0,(block.gateCooldown??0)-dt);if(block.gateCharge&&block.gateCharge.expiresAt<Date.now()){outpost.energy=Math.min(outpostStats(outpost).energyCapacity,(outpost.energy??0)+block.gateCharge.energy);block.gateCharge=undefined;}}
       const stats = outpostStats(outpost), distance = dist(outpostCenter(outpost), p), active = !this.dead && distance < OUTPOST.activeRange;
       outpost.stored ??= emptyStore(); outpost.shortage = false;
       const low = (outpost.energy ?? 0) < stats.energyCapacity * STRUCTURE_SPECIAL.overdriveBelow;

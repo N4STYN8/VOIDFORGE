@@ -330,9 +330,9 @@ const zero = { iron: 0, copper: 0, crystal: 0, ice: 0, radioactive: 0 };
 const pos = (s: { cx: number; cy: number }) => ({ x: cellCenter(s.cx), y: cellCenter(s.cy) });
 const dummy = (id: number, x: number, y: number, health = 5000) => ({ id, x, y, health, cooldown: 99, cooldown2: 99, angle: 0, disabledFor: 9999 });
 
-test('all sixteen outpost blocks exist with costs, five levels of scaling and a level-5 special', () => {
+test('all eighteen outpost blocks exist with costs, five levels of scaling and a level-5 special', () => {
   const kinds = Object.keys(STRUCTURES) as StructureKind[];
-  assert.equal(kinds.length, 16); assert.deepEqual(Object.keys(STRUCTURE_ABILITIES).sort(), [...kinds].sort());
+  assert.equal(kinds.length, 18); assert.deepEqual(Object.keys(STRUCTURE_ABILITIES).sort(), [...kinds].sort());
   for (const kind of kinds) {
     assert.ok(Object.values(STRUCTURES[kind].cost).some(n => n > 0)); assert.ok(STRUCTURE_ABILITIES[kind].name && STRUCTURE_ABILITIES[kind].description);
     let hull = 0;

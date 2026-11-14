@@ -600,6 +600,12 @@ function paintModule(ctx: Ctx, x: number, y: number, m: StationModule) {
   const glow = (r: number, hot: number, warm: number) => (_dx: number, _dy: number, d: number) => d < r * 0.45 ? WARM_HI : d < r * 0.75 ? hot : warm;
   const windows = (x0: number, y0: number, count: number, step: number, vertical = false) => { for (let k = 0; k < count; k++) px(x0 + (vertical ? 0 : k * step), y0 + (vertical ? k * step : 0), random() < 0.2 ? 0x3a2c12 : WARM); };
   switch (m.kind) {
+    case 'warpFrame': {
+      panel(1,1,S-2,S-2,3);px(3,3,0x173743,S-6,S-6);px(3,3,0xaff7ff,S-6,2);px(3,5,0x4abcca,2,S-8);px(S-5,5,0x176079,2,S-8);px(5,S-5,0x268b9c,S-10,2);px(2,2,0xe2bc66);break;
+    }
+    case 'warpController': {
+      octagon(0,0,S,3,4);px(3,3,0x062430,S-6,S-6);px(4,4,0x6ce5f4,S-8,2);px(5,7,0x2195ad,S-10,3);px(4,S-5,0xe1be64,2,1);px(S-6,S-5,0x94ffcc,2,1);break;
+    }
     case 'outpostCore': {
       // Command hub: octagonal hull, a ring of lit cabin windows, and a glowing command dome.
       octagon(0, 0, S, 4, 4);

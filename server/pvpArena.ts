@@ -79,6 +79,8 @@ export class PvpArena{
  }
  private collect(id:string,o:SalvageObject){const p=this.state.pilots[id];if(!p||p.outbox.length)return;const origin=structuredClone(o);const cap=SHIP_SYSTEMS.cargoCapacity+p.ship.modules.filter(m=>m.kind==='cargo'&&!m.offline&&m.integrity>0).reduce((n,m)=>n+(MODULES.cargo.levels[m.level-1].cargo??0),0);let room=Math.max(0,cap-mineralTotal(p.ship.cargo));const cargo=minerals();for(const ore of Object.keys(RESOURCES) as Resource[]){const n=Math.min(room,o.cargo[ore]);cargo[ore]=n;o.cargo[ore]-=n;p.ship.cargo[ore]+=n;room-=n;}const module=o.module;if(!module&&mineralTotal(cargo)<=0)return;delete o.module;this.receipt(id,{cargo,module,target:'cargo',pickup:o.id,pickupOrigin:{...origin,cargo:minerals(),module:undefined}});if(mineralTotal(o.cargo)<=0)delete this.state.objects[o.id];this.save();}
  /** For tests/inspection; mutations never enter through this API. */
+ gateShip(id:string){const p=this.pose(id);if(!p)return;return {health:p.ship.health,blocks:[['core',0,0,p.ship.coreLevel],...p.ship.modules.map(m=>[m.kind,m.x,m.y,m.level])] as import('../src/netProtocol.ts').ShipBlock[]};}
+ pendingReceipts(id:string){return Boolean(this.state.pilots[id]?.outbox.length);}
  hasPilot(id:string){return Boolean(this.state.pilots[id]);}
  inspect(){return structuredClone(this.state);}
 }

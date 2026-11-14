@@ -1,5 +1,8 @@
 import { GameModel, PILOT_KEYS, type Galaxy, type GameSave, type Point, type SectorWorld } from './model.ts';
-import { PVP, type Resource } from './data.ts';
+import { PVP, WORLD, OUTPOST, type Resource } from './data.ts';
+import { footprint } from './wormholes.ts';
+import { bossSites } from './world.ts';
+import { cellCenter, type Outpost } from './outposts.ts';
 import { SECTOR_STEPS, entryPoint, sectorKey, sectorSeed, type SectorDirection } from './sectorGrid.ts';
 import type { WorldRef } from './netProtocol.ts';
 
@@ -14,6 +17,32 @@ export function sectorWorld(save: GameSave): SectorWorld {
   return world as SectorWorld;
 }
 const generated = (seed: string) => sectorWorld(new GameModel(seed).toSave());
+
+/** Gate travel preserves pilot and source state. It never clears or deletes arrival ore. */
+export function warpTo(model: GameModel, world: WorldRef, near?: Point, crewPosts: Outpost[] = [], occupied: {x:number;y:number;radius:number}[] = [], preferred?:Point): GameModel {
+  const save=model.toSave(),galaxy=structuredClone(model.galaxy);stash(galaxy,save);
+  const key=sectorKey(world.x,world.y),own=world.home===galaxy.home?galaxy.sectors[key]:undefined;
+  const target=galaxy.foreign?.[world.seed]??(own?.seed===world.seed?own:undefined)??generated(world.seed);
+  if(world.home===galaxy.home&&!galaxy.links?.[key]){delete galaxy.away;galaxy.x=world.x;galaxy.y=world.y;delete galaxy.sectors[key];}
+  else galaxy.away={...world,returnX:galaxy.away?.returnX??save.player.x,returnY:galaxy.away?.returnY??save.player.y};
+  if(galaxy.foreign)delete galaxy.foreign[world.seed];
+  const pilot=Object.fromEntries(PILOT_KEYS.map(k=>[k,save[k]]));
+  const next=GameModel.fromSave({...target,...pilot,player:{...save.player,vx:0,vy:0},id:Math.max(save.id,target.id),galaxy} as GameSave);
+  const radius=footprint([['core',0,0,model.coreLevel],...model.modules.map(m=>[m.kind,m.x,m.y,m.level] as [string,number,number,number])],model.player.angle).radius;
+  const anchor=near??startPoint(target),posts=[...next.outposts,...crewPosts],hazards=bossSites(next.world.spec),candidates:Point[]=[];
+  if(preferred)candidates.push(preferred);
+  for(let ring=1;ring<=36;ring++)for(let step=0;step<24;step++){const a=step*Math.PI/12,r=80+ring*32;candidates.push({x:anchor.x+Math.cos(a)*r,y:anchor.y+Math.sin(a)*r});}
+  for(const point of candidates){
+    if(point.x<radius+80||point.y<radius+80||point.x>WORLD.width-radius-80||point.y>WORLD.height-radius-80)continue;
+    if(occupied.some(p=>Math.hypot(p.x-point.x,p.y-point.y)<p.radius+radius+24)||hazards.some(h=>Math.hypot(h.x-point.x,h.y-point.y)<h.radius+radius))continue;
+    if(posts.some(p=>p.structures.some(s=>Math.hypot(cellCenter(s.cx)-point.x,cellCenter(s.cy)-point.y)<radius+OUTPOST.cell)))continue;
+    if(next.bases.some(b=>Math.hypot(b.x-point.x,b.y-point.y)<radius+100)||next.enemies.some(e=>Math.hypot(e.x-point.x,e.y-point.y)<radius+250))continue;
+    next.asteroids=next.world.activate(point,next.asteroids,true);
+    if(next.asteroids.some(a=>Math.hypot(a.x-point.x,a.y-point.y)<a.radius+radius+20))continue;
+    Object.assign(next.player,point);next.message=`Wormhole arrival: sector (${world.x}, ${world.y}). Approach a gate and confirm your next hop.`;return next;
+  }
+  throw Error('No safe arrival position found. Choose another destination.');
+}
 /** The station-side starting point of a sector world, used when there is nowhere better to arrive. */
 function startPoint(world: SectorWorld): Point {
   const home = world.world.spec.bases[0], angle = world.world.spec.exitAngle;
@@ -69,7 +98,7 @@ function travelAway(model: GameModel, direction: SectorDirection): GameModel {
   const x = away.x + step.dx, y = away.y + step.dy, seed = sectorSeed(away.home, x, y);
   galaxy.away = { ...away, x, y, seed };
   const own = away.home === galaxy.home ? galaxy.sectors[sectorKey(x, y)] : undefined;
-  const target = galaxy.foreign?.[seed] ?? own ?? generated(seed);
+  const target = galaxy.foreign?.[seed] ?? (own?.seed === seed ? own : undefined) ?? generated(seed);
   if (galaxy.foreign) delete galaxy.foreign[seed];
   const next = arrive(save, target, galaxy, entryPoint(direction, save.player));
   next.message = `Entered ${next.sectorName}.`;
@@ -106,7 +135,7 @@ export function enterWorld(model: GameModel, world: WorldRef, near?: Point): Gam
   stash(galaxy, save);
   galaxy.away = { home: world.home, x: world.x, y: world.y, seed: world.seed, returnX: returnPoint.x, returnY: returnPoint.y };
   const own = world.home === galaxy.home ? galaxy.sectors[sectorKey(world.x, world.y)] : undefined;
-  const target = galaxy.foreign?.[world.seed] ?? own ?? generated(world.seed);
+  const target = galaxy.foreign?.[world.seed] ?? (own?.seed === world.seed ? own : undefined) ?? generated(world.seed);
   if (galaxy.foreign) delete galaxy.foreign[world.seed];
   const next = arrive(save, target, galaxy, near ? { x: near.x + 140, y: near.y + 90 } : startPoint(target));
   next.message = `Joined the lobby world: ${next.sectorName}.`;

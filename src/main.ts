@@ -1,3 +1,5 @@
+import { GateNavigation } from './gateNavigation.ts';
+import { gatesFor, sameSector } from './wormholes.ts';
 import {PvpClient} from './pvpClient.ts';
 import {CrewOutpostClient} from './crewOutposts.ts';
 import {CrewPanel} from './crewPanel.ts';
@@ -58,6 +60,8 @@ class SpaceScene extends Phaser.Scene {
   private selectedSalvage?:string;
   private crewEconomy=new CrewEconomy(this.net,()=>this.model,saveGameConfirmed);
   private crewOutposts=new CrewOutpostClient(this.net,()=>this.model,saveGameConfirmed);
+  private warp=new GateNavigation(this.net,{model:()=>this.model,save:saveGameConfirmed,switchModel:m=>{this.switchModel(m,false,true);this.arrivalPortal={x:m.player.x,y:m.player.y,until:this.time.now/1000+5};this.effects.spawn({kind:'ring',x:m.player.x,y:m.player.y,life:1,size:15,growth:60,color:0x75eaff,priority:2});},canCommit:()=>!this.combat.pending&&!this.crewEconomy.pending&&!this.crewOutposts.pending&&!this.travelPending&&!this.model.dead,suspend:v=>{this.combat.suspended=v;},sound:cue=>this.audio.play(cue)});
+  private gateMap=false;private arrivalPortal?:{x:number;y:number;until:number};
   private crewPanel?:CrewPanel;private crewBuild=false;
   private netStarted=false;
   private menuNetworkTransition=false;
@@ -191,7 +195,7 @@ class SpaceScene extends Phaser.Scene {
     window.addEventListener('pointerdown', () => this.audio.unlock());
     window.addEventListener('keydown', () => this.audio.unlock());
     this.mapWindow.id = 'map-window'; this.mapWindow.hidden = true;
-    this.mapWindow.innerHTML = '<header><div><small>NAVIGATION / LIVE TELEMETRY</small><h2>Sector chart</h2></div><button id="close-map">Close · M / Esc</button></header><div class="map-toolbar"><button data-chart="follow" aria-pressed="true">Follow ship</button><button data-chart="world">World</button><button data-chart="out" aria-label="Zoom map out">−</button><button data-chart="in" aria-label="Zoom map in">+</button></div><div class="chart-surface"><canvas width="720" height="720" aria-label="Explored space map"></canvas><span class="chart-north">N ↑</span></div><div class="map-telemetry" aria-live="off"></div><div class="map-legend"><span>● Ship</span><span>■ Active base</span><span>◇ Locked / marker</span><span>● Contact</span></div><p>WASD flies · Shift bursts · Flight stays live<br>Wheel zooms · Drag pans · Click adds/removes a marker<br>Only explored space is charted. Threat tint: blue → amber → red.</p>';
+    this.mapWindow.innerHTML = '<header><div><small>NAVIGATION / LIVE TELEMETRY</small><h2>Sector chart</h2></div><button id="close-map">Close · M / Esc</button></header><div class="map-toolbar"><button data-chart="gates">Gate network</button><button data-chart="navigate">Gate controls</button><button data-chart="follow" aria-pressed="true">Follow ship</button><button data-chart="world">World</button><button data-chart="out" aria-label="Zoom map out">−</button><button data-chart="in" aria-label="Zoom map in">+</button></div><div class="chart-surface"><canvas width="720" height="720" aria-label="Explored space map"></canvas><span class="chart-north">N ↑</span></div><div class="map-telemetry" aria-live="off"></div><div class="map-legend"><span>● Ship</span><span>■ Active base</span><span>◇ Locked / marker</span><span>● Contact</span></div><p>WASD flies · Shift bursts · Flight stays live<br>Wheel zooms · Drag pans · Click adds/removes a marker<br>Only explored space is charted. Threat tint: blue → amber → red.</p>';
 
     document.body.append(this.mapWindow); this.mapCanvas = this.mapWindow.querySelector('canvas')!;
     this.mapWindow.querySelector('#close-map')!.addEventListener('click', () => { this.setMapOpen(false); });
@@ -199,6 +203,8 @@ class SpaceScene extends Phaser.Scene {
     this.mapWindow.addEventListener('pointerleave',()=>{this.mapPointer=false;});
     this.mapWindow.querySelectorAll<HTMLButtonElement>('[data-chart]').forEach(button=>button.addEventListener('click',()=>{
       const action=button.dataset.chart;
+      if(action==='gates'){this.gateMap=!this.gateMap;this.mapElapsed=200;return;}
+      if(action==='navigate'){this.warp.open();return;}
       if(action==='follow'){this.mapFollow=true;this.mapView.zoom=8;}
       else if(action==='world'){this.mapFollow=false;this.mapView={zoom:1,centerX:.5,centerY:.5};}
       else {this.mapView.zoom=Phaser.Math.Clamp(this.mapView.zoom*(action==='in'?1.4:1/1.4),1,24);this.clampMap();}
@@ -252,7 +258,7 @@ class SpaceScene extends Phaser.Scene {
     this.builder.id = 'builder'; this.builder.hidden = true;
     document.body.append(this.builder);
     this.builder.addEventListener('pointerdown', event => event.stopPropagation());
-    const freezeKeyboard=()=>{this.input.keyboard!.enabled=false;this.input.keyboard!.disableGlobalCapture();};
+    const freezeKeyboard=()=>{this.input.keyboard!.resetKeys();this.input.keyboard!.enabled=false;this.input.keyboard!.disableGlobalCapture();};
     const restoreKeyboard=()=>{this.input.keyboard!.enabled=true;this.input.keyboard!.enableGlobalCapture();};
     this.builder.addEventListener('focusin',event=>{if((event.target as HTMLElement).matches('input,select'))freezeKeyboard();});
     this.builder.addEventListener('focusout',restoreKeyboard);
@@ -329,7 +335,7 @@ class SpaceScene extends Phaser.Scene {
     this.targetLabel = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '10px', color: '#b5ebdf', backgroundColor: '#0b1423', padding: { x: 6, y: 3 } }).setOrigin(0.5, 0).setDepth(5);
     this.follow = this.add.zone(this.model.player.x, this.model.player.y, 1, 1);
     this.cameras.main.setBounds(0, 0, WORLD.width, WORLD.height).setZoom(1.35).startFollow(this.follow, false, 0.15, 0.15);
-    this.keys = this.input.keyboard!.addKeys(`W,A,S,D,SPACE,E,R,ESC,B,Q,M,N,G,V,P,SHIFT,C,${OUTPOST.key}`) as Record<string, Phaser.Input.Keyboard.Key>;
+    this.keys = this.input.keyboard!.addKeys(`W,A,S,D,SPACE,E,R,J,ESC,B,Q,M,N,G,V,P,SHIFT,C,${OUTPOST.key}`) as Record<string, Phaser.Input.Keyboard.Key>;
     this.input.on('wheel', (_pointer: Phaser.Input.Pointer, _objects: unknown, _dx: number, dy: number) => {
       if (!this.mapOpen && !this.building) {
         this.zoomAimLock={x:_pointer.x,y:_pointer.y,angle:this.model.player.angle};
@@ -338,6 +344,7 @@ class SpaceScene extends Phaser.Scene {
     });
     this.mapCanvas.addEventListener('wheel', event => {
       event.preventDefault();
+      if(this.gateMap){this.warp.zoomNetwork(event.deltaY);this.mapElapsed=200;return;}
       this.mapFollow=false;
       const rect = this.mapCanvas.getBoundingClientRect();
       const u = (event.clientX - rect.left) / rect.width, v = (event.clientY - rect.top) / rect.height;
@@ -351,6 +358,7 @@ class SpaceScene extends Phaser.Scene {
     this.mapCanvas.addEventListener('pointerdown', event => { if(event.button!==0)return; drag = { x: event.clientX, y: event.clientY }; travelled = 0; this.mapCanvas.setPointerCapture(event.pointerId); });
     this.mapCanvas.addEventListener('pointermove', event => {
       if (!drag) return;
+      if(this.gateMap){this.warp.panNetwork(event.clientX-drag.x,event.clientY-drag.y,this.mapCanvas.getBoundingClientRect().width);travelled+=Math.abs(event.clientX-drag.x)+Math.abs(event.clientY-drag.y);drag={x:event.clientX,y:event.clientY};this.mapElapsed=200;return;}
       this.mapFollow=false;
       const rect = this.mapCanvas.getBoundingClientRect(), z = this.mapView.zoom;
       this.mapView.centerX = Phaser.Math.Clamp(this.mapView.centerX - (event.clientX - drag.x) / rect.width / z, 0.5 / z, 1 - 0.5 / z);
@@ -359,6 +367,8 @@ class SpaceScene extends Phaser.Scene {
       drag = { x: event.clientX, y: event.clientY }; this.mapElapsed = 200;
     });
     this.mapCanvas.addEventListener('pointerup', event => {
+      if(this.gateMap&&travelled<5){const rect=this.mapCanvas.getBoundingClientRect();this.warp.networkClick((event.clientX-rect.left)/rect.width,(event.clientY-rect.top)/rect.height);drag=undefined;return;}
+      if(this.gateMap){drag=undefined;return;}
       // A click (not a drag) drops a marker there, or removes the marker under the cursor.
       if (drag && travelled < 5) {
         const rect = this.mapCanvas.getBoundingClientRect(), point = mapToWorld(this.mapCanvas.width, this.mapView, (event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height);
@@ -369,6 +379,14 @@ class SpaceScene extends Phaser.Scene {
       drag = undefined;
     });
     this.mapCanvas.addEventListener('pointercancel', () => { drag = undefined; });
+    this.input.on('pointerdown',(pointer:Phaser.Input.Pointer)=>{
+      if(!pointer.leftButtonDown()||pointer.downElement!==this.game.canvas||this.buildMode||this.building||this.menu?.open)return;
+      const point=this.cameras.main.getWorldPoint(pointer.x,pointer.y),posts=[...this.model.outposts,...this.crewOutposts.outposts];
+      const hit=structureAt(posts,Math.floor(point.x/OUTPOST.cell),Math.floor(point.y/OUTPOST.cell));
+      if(hit&&(hit.structure.kind==='warpFrame'||hit.structure.kind==='warpController')){const gate=gatesFor(hit.outpost,worldRef(this.model)).sort((a,b)=>Math.hypot(a.x-point.x,a.y-point.y)-Math.hypot(b.x-point.x,b.y-point.y))[0];if(gate)this.warp.open(gate.id);}
+    });
+    this.warp.dialog.addEventListener('focusin',event=>{if((event.target as HTMLElement).matches('input,select'))freezeKeyboard();});
+    this.warp.dialog.addEventListener('focusout',restoreKeyboard);this.warp.dialog.addEventListener('close',restoreKeyboard);
     this.input.mouse!.disableContextMenu();
     this.input.keyboard!.addCapture(['SPACE', 'W', 'A', 'S', 'D']);
     // Losing focus pauses single-player only: in multiplayer the sector keeps running for everyone.
@@ -380,13 +398,14 @@ class SpaceScene extends Phaser.Scene {
       const now = performance.now(), elapsed = Math.min(2, (now - this.lastFrameAt) / 1000);
       if (now - this.lastFrameAt < 500 || !this.sessionStarted || this.menu?.open || !this.multiplayer) return;
       this.lastFrameAt = now;
+      if(this.warp.committing){this.net.heartbeat();return;}
       const bounds = this.cameras.main.worldView, idle = this.idleInput(bounds);
       for (let t = 0; t < elapsed; t += 0.05) this.model.update(Math.min(0.05, elapsed - t), idle);
       this.updateNet(now / 1000);
     }, 250);
     this.menu=new MainMenu({
       continue:async()=>{if(!this.sessionStarted){const saved=await loadSavedGame();if(!saved)throw new Error('No valid saved game could be loaded. Start a new voyage or import a backup.');this.switchModel(saved);}this.beginSession();},
-      newGame:async seed=>{if((this.combat.pending||this.crewEconomy.pending||this.crewOutposts.pending))throw Error('Resolve the pending transfer before starting another world.');const next=seed?new GameModel(seed):new GameModel();if(this.sessionStarted){const error=await saveGameConfirmed(this.model);if(error)throw new Error(error);}if(!await backupSavedGame())throw new Error('Backup failed. Export your current save before starting a new world.');this.switchModel(next);this.beginSession();const error=await saveGameConfirmed(next);if(error)this.model.message=error;},
+      newGame:async seed=>{if((this.warp.pending||this.combat.pending||this.crewEconomy.pending||this.crewOutposts.pending))throw Error('Resolve the pending transfer before starting another world.');const next=seed?new GameModel(seed):new GameModel();if(this.sessionStarted){const error=await saveGameConfirmed(this.model);if(error)throw new Error(error);}if(!await backupSavedGame())throw new Error('Backup failed. Export your current save before starting a new world.');this.switchModel(next);this.beginSession();const error=await saveGameConfirmed(next);if(error)this.model.message=error;},
       settings:()=>this.settings.show(),
       sound:kind=>{if(kind!=='hover'&&kind!=='open')this.audio.unlock();this.audio.play(({hover:'uiHover',click:'uiClick',warning:'uiWarning',open:'uiOpen',confirm:'uiConfirm',cancel:'uiCancel',launch:'uiLaunch'} as const)[kind]);},
       multiplayer:async()=>{if(!this.sessionStarted){const saved=await loadSavedGame();if(!saved)throw new Error('Start a new voyage first, then open Multiplayer to use its pilot.');this.switchModel(saved);}this.beginSession();this.setNetOpen(true);},
@@ -398,10 +417,11 @@ class SpaceScene extends Phaser.Scene {
   private lastFrameAt = performance.now();
   update(_time: number, delta: number) {
     this.lastFrameAt = performance.now();
-    if(!this.menu?.open){this.crewEconomy.frame();this.crewOutposts.frame();}this.crewPanel?.render();
+    if(!this.menu?.open){this.crewEconomy.frame();this.crewOutposts.frame();this.warp.frame();}this.crewPanel?.render();
     if(this.menu?.open){this.audio.updateMusic(delta/1000,{menu:true});return;}
     // No pausing in multiplayer: a pilot who was paused alone resumes when someone else shares the sector.
     if (this.paused && this.multiplayer && !this.confirmingMenu) { this.paused = false; this.model.message = 'Another pilot is here: multiplayer cannot be paused.'; }
+    if (Phaser.Input.Keyboard.JustDown(this.keys.J)) this.warp.open();
     if (Phaser.Input.Keyboard.JustDown(this.keys.M)) { this.setMapOpen(!this.mapOpen); this.building = false; }
     if (Phaser.Input.Keyboard.JustDown(this.keys.P)) this.setNetOpen(!this.netOpen);
     // The open lobby list stays fresh while the panel is up.
@@ -412,7 +432,8 @@ class SpaceScene extends Phaser.Scene {
       else this.model.message = 'Return to the green station to open the shop (Q).';
     }
     if (Phaser.Input.Keyboard.JustDown(this.keys.ESC)) {
-      if (this.netOpen) this.setNetOpen(false);
+      if (this.warp.dialog.open) this.warp.dialog.close();
+      else if (this.netOpen) this.setNetOpen(false);
       else if (this.mapOpen) this.mapOpen = false;
       else if (this.buildMode) this.buildMode = false;
       else if (this.building) this.building = false;
@@ -432,18 +453,18 @@ class SpaceScene extends Phaser.Scene {
     const aim = this.flightAim(pointer);
     const bounds = this.cameras.main.worldView;
     // Guns and the mining beam answer only to clicks that started on the game view, never on a panel or menu.
-    const onGame = !this.netOpen && pointer.downElement === this.game.canvas;
+    const onGame = !this.warp.dialog.open && !this.netOpen && pointer.downElement === this.game.canvas;
     if (this.buildMode && !this.paused && !this.settings.open) this.updateBuildMode(aim, pointer);
-    if (!this.paused && !this.building && !this.settings.open && !this.crewPanel?.open) this.model.update(delta / 1000, {
+    if (!this.warp.committing && !this.paused && !this.building && !this.settings.open && !this.crewPanel?.open) this.model.update(delta / 1000, {
       x: Number(this.keys.D.isDown) - Number(this.keys.A.isDown), y: Number(this.keys.S.isDown) - Number(this.keys.W.isDown),
       aim, fire: onGame && !this.buildMode && !(this.mapOpen&&this.mapPointer) && pointer.leftButtonDown(), overclock:Phaser.Input.Keyboard.JustDown(this.keys.C)||this.commandInput.has('overclock'), boost, mine: !this.buildMode && !this.netOpen && ((onGame&&!(this.mapOpen&&this.mapPointer)&&pointer.rightButtonDown()) || this.keys.SPACE.isDown), dock, view: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
     });
     // In multiplayer the Outfitter and Settings do not stop time: the ship keeps flying with hands off the controls.
-    else if ((this.multiplayer||this.crewPanel?.open) && !this.paused) this.model.update(delta / 1000, this.idleInput(bounds));
+    else if (!this.warp.committing && (this.multiplayer||this.crewPanel?.open) && !this.paused) this.model.update(delta / 1000, this.idleInput(bounds));
     // performance.now, not the Phaser loop clock: remote samples are stamped with it on arrival.
     this.updateNet(performance.now() / 1000);
     // Crossing a world edge swaps in the neighbouring sector's model; the pilot's ship and cargo travel with it.
-    if(this.model.sectorRequest&&(this.combat.pending||this.crewEconomy.pending||this.crewOutposts.pending)){this.model.sectorRequest=undefined;this.model.message='Transfer pending; wait before crossing the sector border.';}
+    if(this.model.sectorRequest&&(this.warp.pending||this.combat.pending||this.crewEconomy.pending||this.crewOutposts.pending)){this.model.sectorRequest=undefined;this.model.message='Transfer pending; wait before crossing the sector border.';}
     if (this.model.sectorRequest && !this.travelPending) {
       const direction = this.model.sectorRequest, step = SECTOR_STEPS[direction], g = this.model.galaxy, key = `${g.x + step.dx},${g.y + step.dy}`; this.model.sectorRequest = undefined;
       const go = (neighbour?: Parameters<typeof travel>[2]) => { try { const next = travel(this.model, direction, neighbour); this.switchModel(next); saveGame(next, this.saveFailed); this.audio.play('collect'); } catch (error) { this.model.message = `Sector travel failed: ${(error as Error).message}`; } };
@@ -485,8 +506,13 @@ class SpaceScene extends Phaser.Scene {
     this.mapWindow.hidden = !this.mapOpen;
     document.body.classList.toggle('chart-open',this.mapOpen);
     if(this.mapOpen){
+      this.mapWindow.querySelector('.map-legend')!.textContent=this.gateMap?'◉ Operational gate · ◉ Damaged / unavailable · ■ Your sector · Cyan cells: directly reachable':'● Ship · ■ Active base · ◇ Locked / marker · ● Contact';
+      this.mapWindow.querySelector('h2')!.textContent=this.gateMap?'Wormhole network':'Sector chart';
+      this.mapWindow.querySelector('[data-chart="gates"]')!.setAttribute('aria-pressed',String(this.gateMap));
+      this.mapWindow.querySelector('p')!.innerHTML=this.gateMap?'Wheel zooms · Drag pans · Click a sector to plan<br>Crew infrastructure is shared; personal local gates stay private.<br>J opens gate controls. Each hop requires confirmation.':'WASD flies · Shift bursts · Flight stays live<br>Wheel zooms · Drag pans · Click adds/removes a marker<br>Only explored space is charted. Threat tint: blue → amber → red.';
       if(this.mapFollow){this.mapView.centerX=p.x/WORLD.width;this.mapView.centerY=p.y/WORLD.height;this.clampMap();}
-      if(refreshMap){drawExplorationMap(this.mapCanvas,this.model,this.mapView);this.mapWindow.querySelector('.map-telemetry')!.textContent=`${this.mapFollow?'TRACKING SHIP':'FREE CHART'} · ${(WORLD.width/this.mapView.zoom/1000).toFixed(1)} km span · X ${Math.round(p.x).toLocaleString()} / Y ${Math.round(p.y).toLocaleString()}${this.paused?' · PAUSED':''}`;this.mapWindow.querySelector('[data-chart="follow"]')!.setAttribute('aria-pressed',String(this.mapFollow));}
+      if(refreshMap&&this.gateMap){this.warp.drawNetwork(this.mapCanvas);this.mapWindow.querySelector('.map-telemetry')!.textContent='GATE NETWORK · Cyan: operational · Amber: damage · Grey: unavailable · Each hop needs confirmation';}
+      else if(refreshMap){drawExplorationMap(this.mapCanvas,this.model,this.mapView);this.mapWindow.querySelector('.map-telemetry')!.textContent=`${this.mapFollow?'TRACKING SHIP':'FREE CHART'} · ${(WORLD.width/this.mapView.zoom/1000).toFixed(1)} km span · X ${Math.round(p.x).toLocaleString()} / Y ${Math.round(p.y).toLocaleString()}${this.paused?' · PAUSED':''}`;this.mapWindow.querySelector('[data-chart="follow"]')!.setAttribute('aria-pressed',String(this.mapFollow));}
     }
     if (refreshMap) this.mapElapsed = 0;
     this.saveElapsed += delta;
@@ -725,6 +751,7 @@ class SpaceScene extends Phaser.Scene {
   /** Each frame: tell the relay which sector we are in, send our ship and collect the other pilots here. */
   private updateNet(now: number) {
     const p = this.model.player, net = this.net;
+    if(this.warp.committing){net.heartbeat();return;}
     if (net.status !== 'offline') {
       net.heartbeat();
       net.setSector({ ...worldRef(this.model), spot: [Math.round(p.x), Math.round(p.y)] }, ownsSector(this.model));
@@ -945,6 +972,13 @@ class SpaceScene extends Phaser.Scene {
         image.setTexture(key).setPosition(baked.x, baked.y); entry = { image, revision: outpost.revision }; this.outpostSprites.set(spriteId, entry);
       }
       entry.image.setVisible(true);
+      for(const gate of gatesFor(outpost,worldRef(this.model))){
+        if(gate.status!=='Operational'&&gate.status!=='Charging'&&gate.status!=='Cooling down')continue;
+        const pulse=.5+.5*Math.sin(now*3+gate.controllerId),w=Math.max(0,gate.width-6),h=Math.max(0,gate.height-6);
+        g.fillStyle(0x228baa,gate.status==='Charging'?.1+pulse*.12:.025);g.fillEllipse(gate.x,gate.y,w,h);
+        g.lineStyle(1,gate.status==='Cooling down'?0x4c7384:0x75eaff,.2+pulse*.45);g.strokeEllipse(gate.x,gate.y,w,h);
+        g.lineStyle(1,0x2a94b8,.35);g.strokeEllipse(gate.x,gate.y,w*.7,h*.7);
+      }
       for (const s of outpost.structures) {
         const x = s.cx * size, y = s.cy * size;
         if (s.progress < 1) { g.fillStyle(0x05070c); g.fillRect(x + 1, y + size - 4, size - 2, 3); g.fillStyle(0xf2d489); g.fillRect(x + 2, y + size - 3, (size - 4) * s.progress, 1); }
@@ -1003,8 +1037,8 @@ class SpaceScene extends Phaser.Scene {
    * the asteroid sprites and their canvases, repainting each rock in place on its next draw, and keeps the
    * backdrop painted for this seed, so a sync does not cause a visible hitch.
    */
-  private switchModel(model: GameModel, sameWorld = false) {
-    if(this.combat.pending||this.crewEconomy.pending||this.crewOutposts.pending){this.model.message='Resolve the pending transfer before changing worlds.';return;}
+  private switchModel(model: GameModel, sameWorld = false, warpCommit = false) {
+    if(this.combat.pending||this.crewEconomy.pending||this.crewOutposts.pending||(this.warp.pending&&!warpCommit)){this.model.message='Resolve the pending transfer before changing worlds.';return;}
     sameWorld &&= model.seed === this.model.seed;
     if (sameWorld) for (const cache of this.asteroidCache.values()) cache.verify = true;
     else {
@@ -1156,6 +1190,7 @@ class SpaceScene extends Phaser.Scene {
     const visible = (p: { x: number; y: number }) => p.x >= view.x - 80 && p.y >= view.y - 80 && p.x <= view.right + 80 && p.y <= view.bottom + 80;
     g.lineStyle(2, 0x34526a); g.strokeRect(0, 0, WORLD.width, WORLD.height);
     this.drawGrids(view, this.cameras.main.zoom); this.drawOutposts(view, now);
+    if(this.arrivalPortal&&this.arrivalPortal.until>now){const portal=this.arrivalPortal,alpha=Math.min(1,(portal.until-now)/2);g.lineStyle(2,0x75eaff,alpha*.6);g.strokeEllipse(portal.x,portal.y,80,110);g.lineStyle(1,0x296d90,alpha*.7);g.strokeEllipse(portal.x,portal.y,62,90);}
     this.model.bases.forEach((base, i) => {
       const inView = base.x > view.x - 300 && base.x < view.right + 300 && base.y > view.y - 300 && base.y < view.bottom + 300;
       this.baseLabels[i].setVisible(inView);

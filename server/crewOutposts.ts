@@ -1,3 +1,6 @@
+import { gatesFor, travelError, footprint, gateCosts, sectorDistance, targetSector, validSector, sameSector, type Gate } from '../src/wormholes.ts';
+import { WORMHOLE } from '../src/data.ts';
+import { warpTo } from '../src/sectors.ts';
 import {GameModel,type Enemy,type GameSave,type Bullet} from '../src/model.ts';
 import {OUTPOST,STRUCTURES,MODULES,MODULE_DURABILITY,SHIP,WEAPONS,type Resource,type ModuleKind,type StructureKind} from '../src/data.ts';
 import {cellCenter,connectedIds,maxHealth,outpostCenter,outpostStats,storedTotal,structureOnSegment,type Outpost} from '../src/outposts.ts';
@@ -5,11 +8,11 @@ import {sharedSector,encodeRock,type RockState,type SharedShot} from '../src/sha
 import {segmentCircleHit} from '../src/asteroidGeometry.ts';
 import type {WorldRef,ShipState} from '../src/netProtocol.ts';
 export type CrewMinerals=Record<Resource,number>;
-export type CrewOutpostRecord={key:string;world:WorldRef;state:GameSave;transferred?:string[]};
+export type CrewOutpostRecord={key:string;world:WorldRef;state:GameSave;transferred?:string[];arrivals?:{x:number;y:number;radius:number;until:number}[]};
 export type OutpostCrew={id:string;resources:CrewMinerals;members?:{pilotId:string;role:string}[];outposts?:unknown[]};
-export type CrewOutpostContext={world?:WorldRef;ship?:ShipState};
-export type CrewOutpostOptions={claimRock?:(crewId:string,world:WorldRef,id:number)=>boolean;readRock?:(world:WorldRef,id:number)=>RockState|undefined;onRock?:(world:WorldRef,patch:RockState)=>void;onEnemyHit?:(world:WorldRef,id:number,damage:number)=>void};
-export type CrewOutpostView={sectorKey:string;outposts:Outpost[];miningReady:boolean};
+export type CrewOutpostContext={world?:WorldRef;ship?:ShipState;requestId?:string;now?:number};
+export type CrewOutpostOptions={canDepart?:(pilotId:string)=>boolean;canTravel?:(world:WorldRef)=>boolean;arrivalBlockers?:(world:WorldRef)=>{x:number;y:number;radius:number}[];claimRock?:(crewId:string,world:WorldRef,id:number)=>boolean;readRock?:(world:WorldRef,id:number)=>RockState|undefined;onRock?:(world:WorldRef,patch:RockState)=>void;onEnemyHit?:(world:WorldRef,id:number,damage:number)=>void};
+export type CrewOutpostView={sectorKey:string;outposts:Outpost[];miningReady:boolean;gates:Gate[];wormholeProtocol:1};
 export const crewSectorKey=(w:WorldRef)=>JSON.stringify([w.home,w.x,w.y,w.seed]);
 const empty=():CrewMinerals=>({iron:0,copper:0,crystal:0,ice:0,radioactive:0});
 const clone=<T>(value:T):T=>structuredClone(value);
@@ -28,7 +31,7 @@ export class CrewOutposts{
   });return model;}
  private save(crew:OutpostCrew,record:CrewOutpostRecord,model:GameModel){model.world.capture(model.asteroids);crew.resources={...model.stored};record.state=model.toSave();record.state.stored=empty();record.state.cargo=empty();record.state.enemies=[];record.state.player.health=Math.max(1,record.state.player.health);}
  private pilot(model:GameModel,context:CrewOutpostContext,data:Record<string,unknown>={}){
-  const ship=context.ship;if(!ship||ship.dead||!finite(ship.x)||!finite(ship.y))fail('A living pilot in the same sector is required.');
+  const ship=context.ship;if(!ship||ship.health<=0||ship.dead||!finite(ship.x)||!finite(ship.y))fail('A living pilot in the same sector is required.');
   Object.assign(model.player,{x:ship.x,y:ship.y,vx:ship.vx,vy:ship.vy,angle:ship.angle,health:ship.health});
   model.modules=[];model.coreLevel=1;
   for(const [kind,x,y,level]of ship.blocks??[]){if(!Number.isInteger(level)||level<1||level>5)continue;if(kind==='core'){model.coreLevel=level;continue;}if(!Object.hasOwn(MODULES,kind))continue;model.modules.push({kind:kind as ModuleKind,x,y,level,cooldown:0,integrity:MODULE_DURABILITY[kind as ModuleKind][level-1]});}
@@ -37,14 +40,43 @@ export class CrewOutposts{
   model.asteroids=model.world.activate(model.player,model.asteroids,true);
  }
  private world(context:CrewOutpostContext){if(!context.world)fail('Enter a sector before using crew outposts.');return context.world;}
- view(crew:OutpostCrew,context:CrewOutpostContext):CrewOutpostView|undefined{if(!context.world)return undefined;const record=this.record(crew,context.world);return {sectorKey:crewSectorKey(context.world),outposts:clone(record?.state.outposts??[]),miningReady:Boolean(this.options.claimRock&&this.options.readRock)};}
+ view(crew:OutpostCrew,context:CrewOutpostContext):CrewOutpostView|undefined{if(!context.world)return undefined;const record=this.record(crew,context.world);return {sectorKey:crewSectorKey(context.world),outposts:clone(record?.state.outposts??[]),miningReady:Boolean(this.options.claimRock&&this.options.readRock),wormholeProtocol:1,gates:this.records(crew).flatMap(r=>(r.state.outposts??[]).flatMap(p=>gatesFor(p,r.world)))};}
  command(crew:OutpostCrew,pilotId:string,action:string,raw:unknown,context:CrewOutpostContext):Record<string,unknown>{
   const world=this.world(context);if(action==='outpost-sync')return {outpostView:this.view(crew,context)};const data=raw&&typeof raw==='object'?raw as Record<string,unknown>:{};
-  const record=this.record(crew,world,true)!,model=this.load(crew,record);this.pilot(model,context,data);
+  const record=this.record(crew,world,true)!,model=this.load(crew,record);
+  if(action==='outpost-warp-cancel'){
+   const post=model.outposts.find(p=>p.id===data.outpostId),block=post?.structures.find(s=>s.id===data.controllerId),ticket=block?.gateCharge;
+   if(!post||!block||!ticket||ticket.pilotId!==pilotId||ticket.id!==data.ticketId)fail('This gate charge is no longer yours.');
+   block.gateCharge=undefined;post.energy=Math.min(outpostStats(post).energyCapacity,(post.energy??0)+ticket.energy);this.save(crew,record,model);return {cancelled:true,outpostView:this.view(crew,context)};
+  }
+  this.pilot(model,context,data);
   const find=()=>{const outpost=model.outposts.find(o=>o.id===data.outpostId);if(!outpost)fail('Crew outpost no longer exists in this sector.');return outpost;};
   let result:Record<string,unknown>={};
   if(action==='outpost-sync')return {outpostView:this.view(crew,context)};
-  if(action==='outpost-place'){
+  if(action==='outpost-warp-start'||action==='outpost-warp-complete'||action==='outpost-warp-cancel'){
+   const post=find(),controller=post.structures.find(s=>s.id===data.controllerId&&s.kind==='warpController');if(!controller)fail('Gate controller no longer exists.');
+   const ship=context.ship!,blocks=ship.blocks;if(!blocks?.some(b=>b[0]==='core'&&b[1]===0&&b[2]===0)||!Number.isFinite(ship.angle))fail('A complete ship layout is required.');
+   const size=footprint(blocks,ship.angle),gate=gatesFor(post,world).find(g=>g.controllerId===controller.id)!,now=context.now??Date.now();
+   if(Math.hypot(ship.x-gate.x,ship.y-gate.y)>WORMHOLE.useRange+Math.max(gate.width,gate.height)/2)fail('Approach the departure gate.');
+   if(action==='outpost-warp-start'){
+    if(!validSector(data.to))fail('Choose valid sector coordinates.');
+    if(this.records(crew).some(r=>(r.state.outposts??[]).some(p=>p.structures.some(s=>s.gateCharge?.pilotId===pilotId))))fail('Finish or cancel your existing gate charge.');
+    const to=targetSector(world,(data.to as any).x,(data.to as any).y),error=travelError(gate,to,size);if(error)fail(error);
+    const cost=gateCosts(gate,sectorDistance(world,to),size);post.energy!-=cost.energy;post.heat=(post.heat??0)+cost.heat;
+    const ticket={id:context.requestId!,pilotId,to,readyAt:now+cost.charge*1000,expiresAt:now+WORMHOLE.reservationLifetime*1000,energy:cost.energy};controller.gateCharge=ticket;result.charge=clone(ticket);
+   }else{
+    const ticket=controller.gateCharge;if(!ticket||ticket.pilotId!==pilotId||ticket.id!==data.ticketId)fail('This gate charge is no longer yours.');
+    if(action==='outpost-warp-cancel'){controller.gateCharge=undefined;post.energy=Math.min(outpostStats(post).energyCapacity,(post.energy??0)+ticket.energy);result.cancelled=true;}
+    else{
+     if(this.options.canDepart?.(pilotId)===false)fail('Resolve pending combat damage before departing.');
+     if(now<ticket.readyAt)fail('The wormhole is still charging.');if(now>ticket.expiresAt)fail('Gate charge expired.');
+     const error=travelError(gate,ticket.to,size,true);if(error)fail(error);
+     if(gateCosts(gate,sectorDistance(world,ticket.to),size).energy>ticket.energy)fail('Ship configuration changed; cancel and recharge.');
+     const destination=this.records(crew).find(r=>r.world.home===ticket.to.home&&r.world.x===ticket.to.x&&r.world.y===ticket.to.y&&(r.state.outposts??[]).length);
+     const arrivalPost=destination?.state.outposts?.find(p=>gatesFor(p,ticket.to).length)??destination?.state.outposts?.[0];const arrivalRecord=destination??this.record(crew,ticket.to,true)!;arrivalRecord.arrivals=(arrivalRecord.arrivals??[]).filter(a=>a.until>now);const occupied=[...(this.options.arrivalBlockers?.(ticket.to)??[]),...arrivalRecord.arrivals];if(this.options.canTravel?.(ticket.to)===false)fail('Destination sector is locked.');const preview=warpTo(model,destination?.world??ticket.to,arrivalPost?{x:cellCenter(arrivalPost.cx),y:cellCenter(arrivalPost.cy)}:undefined,destination?.state.outposts??[],occupied);arrivalRecord.arrivals.push({x:preview.player.x,y:preview.player.y,radius:size.radius,until:now+WORMHOLE.arrivalLifetime*1000});controller.gateCharge=undefined;controller.gateCooldown=gateCosts(gate,sectorDistance(world,ticket.to),size).cooldown;result.warp={id:ticket.id,crewId:crew.id,from:world,to:destination?.world??ticket.to,spot:{x:preview.player.x,y:preview.player.y},occupied,near:arrivalPost?{x:cellCenter(arrivalPost.cx),y:cellCenter(arrivalPost.cy)}:undefined,outposts:clone(destination?.state.outposts??[])};
+    }
+   }
+  }else if(action==='outpost-place'){
    if(typeof data.kind!=='string'||!Object.hasOwn(STRUCTURES,data.kind)||!Number.isSafeInteger(data.cx)||!Number.isSafeInteger(data.cy))fail('Invalid construction block or grid cell.');
    if(!model.placeStructure(data.kind as StructureKind,data.cx as number,data.cy as number,Number(data.rot??0)))fail(model.message);
   }else if(action==='outpost-upgrade'||action==='outpost-repair'){
@@ -64,7 +96,7 @@ export class CrewOutposts{
    for(const ore of Object.keys(empty())as Resource[]){const n=Number(amounts[ore]??0),source=action==='outpost-bank-deposit'?model.stored:stored,target=action==='outpost-bank-deposit'?stored:model.stored;if(source[ore]<n)fail(`Not enough ${ore}.`);target[ore]+=n;source[ore]-=n;}
   }else if(action==='outpost-claim-personal'){
    if(!crew.members?.some(m=>m.pilotId===pilotId&&m.role==='owner'))fail('Only the crew leader may reclaim a crew outpost.');
-   const outpost=find();if(Math.hypot(outpostCenter(outpost).x-model.player.x,outpostCenter(outpost).y-model.player.y)>OUTPOST.panelRange)fail('Move close to the crew outpost before reclaiming it.');
+   const outpost=find();if(outpost.structures.some(s=>s.gateCharge))fail('Cancel active gate charges before reclaiming ownership.');if(Math.hypot(outpostCenter(outpost).x-model.player.x,outpostCenter(outpost).y-model.player.y)>OUTPOST.panelRange)fail('Move close to the crew outpost before reclaiming it.');
    model.outposts=model.outposts.filter(o=>o!==outpost);result.personalOutpost=clone(outpost);
   }else if(action==='outpost-transfer'){
    const source=data.outpost as Outpost|undefined;if(!source||!Number.isSafeInteger(source.id)||!Array.isArray(source.structures)||source.structures.length<1||source.structures.length>(OUTPOST.radius*2+1)**2)fail('Invalid personal outpost.');
@@ -76,6 +108,7 @@ export class CrewOutposts{
   this.save(crew,record,model);return {...result,message:model.message||'Crew outpost updated.',outpostView:this.view(crew,context)};
  }
  private validateTransfer(source:Outpost,model:GameModel){
+  if(source.structures.some(s=>s.gateCharge))fail('Cancel active gate charges before transferring ownership.');
   const copy=clone(source),cells=new Set<string>(),ids=new Map<number,number>();let next=Math.max(1,...model.outposts.flatMap(o=>[o.id,...o.structures.map(s=>s.id)]))+1;copy.id=next++;
   if(!Number.isSafeInteger(copy.cx)||!Number.isSafeInteger(copy.cy))fail('Invalid core cell.');
   for(const s of copy.structures){if(!Object.hasOwn(STRUCTURES,s.kind)||!Number.isSafeInteger(s.cx)||!Number.isSafeInteger(s.cy)||Math.abs(s.cx-copy.cx)>OUTPOST.radius||Math.abs(s.cy-copy.cy)>OUTPOST.radius||!Number.isInteger(s.level)||s.level<1||s.level>5||!finite(s.health)||!finite(s.progress)||s.progress<0||s.progress>1)fail('Invalid personal structure.');const key=`${s.cx},${s.cy}`;if(cells.has(key))fail('Overlapping personal blocks.');cells.add(key);if(!Number.isSafeInteger(s.id)||ids.has(s.id))fail('Invalid structure identity.');const old=s.id;s.id=next++;ids.set(old,s.id);s.health=Math.max(0,Math.min(maxHealth(s),s.health));}
@@ -84,7 +117,10 @@ export class CrewOutposts{
  }
  ingestCombat(crew:OutpostCrew,world:WorldRef,data:{enemies?:Enemy[];shots?:SharedShot[]}){const key=crew.id+':'+crewSectorKey(world),state=this.combats.get(key)??{enemies:[],shots:[]};if(data.enemies)state.enemies=clone(data.enemies);if(data.shots)state.shots.push(...clone(data.shots).slice(0,128));this.combats.set(key,state);}
  tick(crew:OutpostCrew,dt:number,contexts:CrewOutpostContext[]=[]){let changed=false;dt=Math.min(1,Math.max(0,dt));if(!dt)return false;
-  for(const record of this.records(crew)){if(!record.state.outposts?.length)continue;const pilots=contexts.filter(c=>c.world&&crewSectorKey(c.world)===record.key&&c.ship&&!c.ship.dead);if(!pilots.length)continue;const context=pilots[0];
+  for(const record of this.records(crew)){if(!record.state.outposts?.length)continue;const pilots=contexts.filter(c=>c.world&&crewSectorKey(c.world)===record.key&&c.ship&&!c.ship.dead);if(!pilots.length){
+    // Passive infrastructure uses the same persisted outpost state even with no builder online.
+    for(const post of record.state.outposts){const stats=outpostStats(post);const before=JSON.stringify([post.energy,post.heat,post.structures.map(s=>[s.gateCooldown,s.gateCharge])]);post.energy=Math.min(stats.energyCapacity,(post.energy??0)+stats.generation*dt);post.heat=Math.max(0,(post.heat??0)-stats.cooling*dt);if(post.overheated&&(post.heat??0)<stats.heatCapacity*.6)post.overheated=false;for(const block of post.structures){block.gateCooldown=Math.max(0,(block.gateCooldown??0)-dt);if(block.gateCharge&&block.gateCharge.expiresAt<Date.now()){post.energy=Math.min(stats.energyCapacity,(post.energy??0)+block.gateCharge.energy);block.gateCharge=undefined;}}changed ||= before!==JSON.stringify([post.energy,post.heat,post.structures.map(s=>[s.gateCooldown,s.gateCharge])]);}continue;
+   }const context=pilots[0];
    const model=this.load(crew,record);this.pilot(model,context);const combat=this.combats.get(crew.id+':'+record.key);model.enemies=clone(combat?.enemies??[]);model.world.advance(dt);
    if(combat?.shots.length){for(const shot of combat.shots.splice(0)){if('beam'in shot){const hit=structureOnSegment(model.outposts,shot,{x:shot.ex,y:shot.ey});if(hit)(model as any).damageStructure(hit.outpost,hit.structure,shot.damage);}else model.bullets.push({id:Date.now()+model.bullets.length,...shot,weapon:shot.weapon as Bullet["weapon"],enemy:true});}}
    const posts=[...model.outposts],survived:Outpost[]=[],rocks=new Map(model.asteroids.map(a=>[a.id,a]));

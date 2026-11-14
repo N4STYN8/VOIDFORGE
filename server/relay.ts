@@ -1,3 +1,4 @@
+import { footprint } from '../src/wormholes.ts';
 import {ENEMIES,BASE_RADIUS} from '../src/data.ts';
 import {PvpArena} from './pvpArena.ts';
 import {ChunkWorld,createWorld,type WorldSpec} from '../src/world.ts';
@@ -28,7 +29,7 @@ import { ADMIN, type AdminCommand, type AdminEvent, type AdminPilot } from '../s
  * sockets that watch a sector get a copy of its traffic (`tap`), bounded so watching cannot stall the relay.
  */
 type Client = {
-  modularReady?:boolean;
+  appliedWarps?:Set<string>;modularReady?:boolean;
   combatParts?:{id:string;action:'sync'|'ack';total:number;parts:(string|undefined)[];bytes:number;at:number};
   pilotId?:string;ship?:ShipState;
   at?: { x: number; y: number }; angle?: number;
@@ -45,7 +46,7 @@ type Client = {
 const ALERTS = { events: 20, eventsPerSecond: 1, floodWindow: 10000, floodDrops: 30, deaths: 5, deathWindow: 120000, joinBurst: 5, joinWindow: 60000, retryEvery: 60000 };
 /** A sector room: its pilots, who runs its enemies, and rock claim leases (rock id -> holder and expiry). */
 type Room = { clients: Set<Client>; authority?: Client; claims: Map<number, { holder: Client; until: number }> };
-type Lobby = { code: string; host: Client; members: Set<Client>; open?: boolean };
+type Lobby = { warpWorld?:WorldRef;code: string; host: Client; members: Set<Client>; open?: boolean };
 export type RelayOptions = { port?: number; host?: string; tls?: { cert: string | Buffer; key: string | Buffer }; origins?: string[]; admin?: AdminOptions;crewFile?:string;pvpFile?:string };
 export type RelayStats = { clients: number; rooms: number; lobbies: number; messagesIn: number; framesOut: number; bytesOut: number; skipped: number; obsDropped: number; admins: number; uptime: number; rssMb: number; cpuMs: number };
 export type Relay = { server: Server; port: number; close(): Promise<void>; stats(): RelayStats };
@@ -66,7 +67,7 @@ export function startRelay(options: RelayOptions = {}): Promise<Relay> {
   const rockCache=new Map<string,Map<number,RockState>>(),crewClaims=new Map<string,{crewId:string;until:number}>();
   let pendingCrewEffects:(()=>void)[]=[];
   const flushCrewEffects=()=>{const effects=pendingCrewEffects;pendingCrewEffects=[];for(const apply of effects)apply();};
-  const outpostService=new CrewOutposts({
+  const outpostService=new CrewOutposts({canDepart:pilotId=>!combat.pendingReceipts(pilotId),canTravel:world=>!locked.has(world.seed),arrivalBlockers:world=>[...clients].filter(c=>c.world?.seed===world.seed&&c.ship&&!c.ship.dead).map(c=>({x:c.ship!.x,y:c.ship!.y,radius:footprint(c.ship!.blocks??[],c.ship!.angle).radius})),
     claimRock:(crewId,world,id)=>{const room=rooms.get(world.seed),claim=room?.claims.get(id),now=Date.now();if(claim&&claim.until>now)return false;const key=world.seed+':'+id,held=crewClaims.get(key);if(held&&held.crewId!==crewId&&held.until>now)return false;crewClaims.set(key,{crewId,until:now+CLAIMS.lease});return true;},
     readRock:(world,id)=>rockCache.get(world.seed)?.get(id),
     onRock:(world,patch)=>{pendingCrewEffects.push(()=>{let cache=rockCache.get(world.seed);if(!cache)rockCache.set(world.seed,cache=new Map());cache.set(patch.id,patch);const room=rooms.get(world.seed);if(room)for(const c of room.clients)send(c,{t:'cast',from:'crew-server',r:roomTag(world.seed),k:'rocks',d:[patch]});});},
@@ -150,10 +151,10 @@ export function startRelay(options: RelayOptions = {}): Promise<Relay> {
   const allowed = options.origins ?? DEFAULT_ORIGINS;
   const send = (c: Client, m: ServerMessage) => { const frame = textFrame(JSON.stringify(m)); c.peer.sendFrame(frame); counters.framesOut++; counters.bytesOut += frame.length; };
   const sendCombat=(c:Client,m:Extract<ServerMessage,{t:'modular-result'}>)=>{const text=JSON.stringify(m);if(text.length<3000)send(c,m);else{const total=Math.ceil(text.length/3000);if(total>512){send(c,{t:'modular-result',requestId:m.requestId,ok:false,error:'Combat snapshot exceeds transfer budget.'});return;}for(let index=0;index<total;index++)send(c,{t:'modular-result-part',requestId:m.requestId,index,total,data:text.slice(index*3000,(index+1)*3000)});}};
-  const crewContext=(c:Client):Partial<CrewCommandContext>=>({world:c.world,ship:c.ship});
+  const crewContext=(c:Client):Partial<CrewCommandContext>=>({world:c.world,ship:c.ship?{...c.ship,...(c.pilotId&&c.modularReady?combat.gateShip(c.pilotId):undefined)}:undefined});
   function announceCrews(){const online=[...clients].filter(c=>c.pilotId).map(c=>({pilotId:c.pilotId!,name:c.name,socketId:c.id}));for(const c of clients)if(c.pilotId){const state=crewStore.snapshot(c.pilotId,online,crewContext(c));const data=JSON.stringify(state);if(Buffer.byteLength(data)<NET.maxMessage-100)send(c,{t:'crew-state',state});else{const total=Math.ceil(data.length/3000),transferId=randomBytes(8).toString('hex');if(total>256){delete state.outpostView;send(c,{t:'crew-state',state});continue;}for(let index=0;index<total;index++)send(c,{t:'crew-state-part',transferId,index,total,data:data.slice(index*3000,(index+1)*3000)});}}}
   const members = (lobby: Lobby): Member[] => [...lobby.members].map(c => ({ id: c.id, name: c.name, host: c === lobby.host }));
-  const announce = (lobby: Lobby) => { const m: ServerMessage = { t: 'lobby', code: lobby.code, host: lobby.host.id, members: members(lobby), world: lobby.host.world ?? null, open: lobby.open || undefined }; for (const c of lobby.members) send(c, m); };
+  const announce = (lobby: Lobby) => { const m: ServerMessage = { t: 'lobby', code: lobby.code, host: lobby.host.id, members: members(lobby), world: lobby.warpWorld ?? lobby.host.world ?? null, open: lobby.open || undefined }; for (const c of lobby.members) send(c, m); };
   const newCode = () => { for (;;) { let code = ''; for (let i = 0; i < NET.codeLength; i++) code += NET.codeAlphabet[randomInt(NET.codeAlphabet.length)]; if (!lobbies.has(code)) return code; } };
 
   /**
@@ -298,12 +299,25 @@ export function startRelay(options: RelayOptions = {}): Promise<Relay> {
     switch (m.t) {
       case 'crew-auth': {try{const identity=crewStore.authenticate(m.credential,c.name);c.pilotId=identity.pilotId;send(c,{t:'crew-identity',...identity});announceCrews();}catch(error){send(c,{t:'error',message:error instanceof Error?error.message:'Crew authentication failed.'});}return;}
       case 'crew': {pendingCrewEffects=[];try{
+        if(m.action.startsWith('outpost-warp-')&&(!c.pilotId||!crewStore.crewOf(c.pilotId))){send(c,{t:'crew-result',requestId:m.requestId,ok:false,error:'Current crew membership is required.'});return;}
+
         if(m.action==='outpost-sync'){
           const crew=c.pilotId?crewStore.crewOf(c.pilotId):undefined;if(!crew){send(c,{t:'crew-result',requestId:m.requestId,ok:false,error:'Join a crew first.'});return;}
           if(c.room&&c.world&&c.ship&&rooms.get(c.room)?.authority===c){const data=m.data as {rocks?:unknown};let cache=rockCache.get(c.room);if(!cache)rockCache.set(c.room,cache=new Map());for(const patch of crewRockPatches(data?.rocks).slice(0,12)){if(patch.gone||patch.amount!>1e6||patch.radius!>512||Math.hypot(patch.x!-c.ship.x,patch.y!-c.ship.y)>2500||cache.has(patch.id))continue;cache.set(patch.id,patch);}}
           send(c,{t:'crew-result',requestId:m.requestId,ok:true});announceCrews();return;
         }
-const result=c.pilotId?crewStore.execute(c.pilotId,m.requestId,m.action,m.data,crewContext(c)):{requestId:m.requestId,ok:false,error:'Authenticate your crew identity first.'};send(c,{t:'crew-result',...result});if(result.ok){flushCrewEffects();announceCrews();}else pendingCrewEffects=[];}catch{pendingCrewEffects=[];send(c,{t:'error',message:'Crew persistence unavailable; outcome unknown. Retry the same request after reconnecting.'});}return;}
+const result=c.pilotId?crewStore.execute(c.pilotId,m.requestId,m.action,m.data,crewContext(c)):{requestId:m.requestId,ok:false,error:'Authenticate your crew identity first.'};
+if(result.ok&&m.action==='outpost-warp-complete'){
+ const grant=(result.result as any)?.warp;
+ if(!grant||!c.pilotId||crewStore.crewOf(c.pilotId)?.id!==grant.crewId){send(c,{t:'crew-result',requestId:m.requestId,ok:false,error:'Gate access has been revoked.'});return;}
+ if(!c.appliedWarps?.has(grant.id)){
+  if(!c.world||![grant.from,grant.to].some(w=>w.home===c.world!.home&&w.x===c.world!.x&&w.y===c.world!.y&&w.seed===c.world!.seed)){send(c,{t:'crew-result',requestId:m.requestId,ok:false,error:'This departure belongs to another sector.'});return;}
+  if(c.lobby?.host===c)c.lobby.warpWorld??=c.world;
+  if(c.ship)Object.assign(c.ship,grant.spot,{vx:0,vy:0});c.at=grant.spot;
+  (c.appliedWarps??=new Set()).add(grant.id);handle(c,{t:'sector',world:grant.to,owner:c.profile?.home===grant.to.home});
+ }
+}
+send(c,{t:'crew-result',...result});if(result.ok){flushCrewEffects();announceCrews();}else pendingCrewEffects=[];}catch{pendingCrewEffects=[];send(c,{t:'error',message:'Crew persistence unavailable; outcome unknown. Retry the same request after reconnecting.'});}return;}
 
       case 'hello':
         if (m.v !== NET.version) { send(c, { t: 'error', message: 'This game version does not match the relay. Reload the page.' }); c.peer.close(4000); return; }
@@ -353,6 +367,7 @@ const result=c.pilotId?crewStore.execute(c.pilotId,m.requestId,m.action,m.data,c
         return;
       }
       case 'sector': {
+        const alreadyHere=c.room===m.world.seed;
         const owner = Boolean(m.owner);
         // A sector an admin locked admits only its owner; anyone else is sent home by their own client.
         if (locked.has(m.world.seed) && !owner) {
@@ -367,7 +382,7 @@ const result=c.pilotId?crewStore.execute(c.pilotId,m.requestId,m.action,m.data,c
           let room = rooms.get(c.room); if (!room) rooms.set(c.room, room = { clients: new Set(), claims: new Map() });
           room.clients.add(c); elect(c.room, room);
         } else if (c.owner !== owner) { c.owner = owner; elect(c.room, rooms.get(c.room)!); }
-        c.world = m.world;if(c.pilotId)announceCrews();
+        c.world = m.world;if(alreadyHere&&c.room)announceRoom(c.room);if(c.pilotId)announceCrews();
         if (c.lobby?.host === c) announce(c.lobby);
         return;
       }
@@ -489,7 +504,7 @@ const result=c.pilotId?crewStore.execute(c.pilotId,m.requestId,m.action,m.data,c
       clients.delete(c); leaveRoom(c); leaveLobby(c, '', false);if(c.pilotId)announceCrews();
       for (const [ref, entry] of pending) if (entry.client === c) { pending.delete(ref); clearTimeout(entry.timer); entry.resolve({ ok: false, message: 'The pilot disconnected.' }); }
     };
-    send(c, { t: 'welcome', id: c.id,crewProtocol:1,modularPvp:1 });
+    send(c, { t: 'welcome', id: c.id,crewProtocol:1,modularPvp:1,wormholes:1 });
     peer.ping();
   });
   const keepAlive = setInterval(() => { for (const c of clients) { if (!c.peer.alive) { c.peer.close(1001); continue; } c.peer.alive = false; c.peer.ping(); } }, NET.ping * 1000);

@@ -268,7 +268,7 @@ export const OUTPOST = {
 };
 /** Per-level multipliers for outpost blocks (index = level - 1). `output` scales power, battery, storage, shields, cooling and repair. */
 export const STRUCTURE_LEVELS = { health: [1, 1.3, 1.65, 2.05, 2.5], output: [1, 1.4, 1.8, 2.3, 3], damage: [1, 1.25, 1.55, 1.9, 2.3], drones: [2, 4, 6, 8, 10] };
-export type StructureKind = 'outpostCore' | 'wall' | 'reinforcedWall' | 'autocannonTurret' | 'missileTurret' | 'railgunTurret' | 'shieldGenerator' | 'reactor' | 'coolingUnit' | 'storage' | 'droneHangar' | 'droneRepairBay' | 'upgradeStation' | 'repairStation' | 'radarTower' | 'dockingStation';
+export type StructureKind = 'warpFrame' | 'warpController' | 'outpostCore' | 'wall' | 'reinforcedWall' | 'autocannonTurret' | 'missileTurret' | 'railgunTurret' | 'shieldGenerator' | 'reactor' | 'coolingUnit' | 'storage' | 'droneHangar' | 'droneRepairBay' | 'upgradeStation' | 'repairStation' | 'radarTower' | 'dockingStation';
 /**
  * Mining drones. Each flies to an asteroid within `range` of its hangar, mines it through the normal
  * finite-ore extraction at `rate` ore/s, carries up to `capacity` of one ore home and unloads into
@@ -287,7 +287,15 @@ export type StructureDefinition = { label: string; description: string; cost: Re
   /** Hull points per second repaired on nearby blocks, paid in stored iron and battery energy. */ repair?: number; repairRadius?: number;
   /** Fraction added to turret range across the outpost; also gives warning of raids. */ radar?: number;
   /** Lets blocks in this outpost be upgraded past OUTPOST.stationLevel. */ upgrades?: boolean; /** Speeds up drone servicing. */ droneService?: boolean };
+export const WORMHOLE = {
+  range: [1, 2, 3, 4, 5], useRange: 180, clearance: 4, criticalFraction: 0.5,
+  baseEnergy: 100, sectorEnergy: 50, cellEnergy: 2, baseHeat: 8, sectorHeat: 5,
+  charge: 3, cooldown: 18, reservationLifetime: 120, arrivalLifetime: 5,
+  stabilization: { energy: 0.75, heat: 0.75, charge: 0.6, cooldown: 0.75 },
+};
 export const STRUCTURES: Record<StructureKind, StructureDefinition> = {
+  warpFrame: { label: 'Warp Gate Frame', description: 'Build a closed rectangular perimeter with an empty opening. Its real opening must fit the ship. Connect the assembly to an outpost core.', cost: cost(30, 20, 8), health: 300, buildTime: 5, color: 0x62dae8 },
+  warpController: { label: 'Warp Gate Controller', description: 'One per frame assembly. L1–5 reaches 1–5 sectors (Manhattan distance). Uses the outpost battery and cooling. Open M → Gate network to travel.', cost: cost(160, 110, 60, 30, 15), health: 260, buildTime: 12, color: 0x95f4ff },
   outpostCore: { label: 'Outpost Core', description: 'Founds a new outpost and anchors every block joined to it. Provides a little power, battery and storage. Place this first; other blocks must connect back to it.', cost: cost(80, 40, 10), health: 600, buildTime: 8, color: 0xd9a441, generation: 10, energyCapacity: 100, storage: 200, cooling: 4, heatCapacity: 60 },
   wall: { label: 'Wall block', description: 'Basic riveted plating. Stops hostile fire. Adjacent walls join into one structure.', cost: cost(8), health: 160, buildTime: 2, color: 0x6f7c8c },
   reinforcedWall: { label: 'Reinforced wall', description: 'Cross-braced plating with more than twice the strength of a wall block.', cost: cost(14, 6), health: 380, buildTime: 3.5, color: 0x9aa9bb },
@@ -311,6 +319,8 @@ export const STRUCTURES: Record<StructureKind, StructureDefinition> = {
 for(const definition of Object.values(STRUCTURES))for(const ore of Object.keys(definition.cost) as Resource[])definition.cost[ore]=Math.ceil(definition.cost[ore]*ECONOMY.structureMultiplier);
 /** Level-5 specials for outpost blocks. Names and text are shown in Build Mode; the numbers they use are in STRUCTURE_SPECIAL. */
 export const STRUCTURE_ABILITIES: Record<StructureKind, { name: string; description: string }> = {
+  warpFrame: { name: 'Hardened field lattice', description: 'Higher structural integrity; opening size still depends on the built frame.' },
+  warpController: { name: 'Warp Stabilization', description: '25% less energy, heat and cooldown; 40% faster charge. Range remains five sectors.' },
   outpostCore: { name: 'Command Network', description: 'When turrets engage, all turrets in the outpost fire 30% faster for 8 seconds. 30-second cooldown.' },
   wall: { name: 'Layered Plating', description: 'Takes 25% less damage.' },
   reinforcedWall: { name: 'Reactive Plating', description: 'Takes 35% less damage.' },

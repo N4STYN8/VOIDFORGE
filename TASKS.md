@@ -381,3 +381,16 @@ Choices: own Node + WebSocket relay; sector grid; owners keep changes to their s
 - [ ] Zach: deploy updated relay with persistent PVP_DATA, preserving CREW_DATA/admin settings; see docs/PVP_RELAY_HANDOFF.md
 - [ ] Live two/three-pilot acceptance and actual-Pi performance/balance pass after relay rollout
 - [ ] Follow-up authority: personal economy/movement validation and complete paid ultimate/defense parity; no anti-cheat claim
+
+
+## Modular wormhole gates and crew network
+- [x] Existing grid/cost/build/upgrade/repair/destruction integration and cached procedural gate art
+- [x] Closed frame geometry, clear aperture, actual ship orientation and per-level Manhattan range
+- [x] Shared battery/heat, charging/cooldown, L5 stabilization and atomic crew receipts
+- [x] Persistent crew index, privacy/access revalidation, builder-offline availability and independent travel
+- [x] Built-gate click dialog / J and existing M-map network/route planner; explicit per-hop confirmation
+- [x] Safe arrival search, visual-only temporary portal, source/pilot persistence and reload recovery
+- [x] 435 tests, game/admin builds, relay bundle and isolated real two-browser acceptance
+- [ ] Zach: integrate current main and deploy relay with crewProtocol/modularPvp/wormholes capabilities; see both relay handoffs and issue 17
+- [ ] Live three-pilot/Pi performance and balance acceptance after the coordinated restart
+- [ ] Next authorized work after publication: procedural black holes and Singularity Probe Drones from the queued attachment
