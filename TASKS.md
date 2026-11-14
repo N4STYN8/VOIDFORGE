@@ -236,3 +236,15 @@ Choices: own Node + WebSocket relay; sector grid; owners keep changes to their s
 - [x] Verify model accounting, real browser audio rendering/cleanup and integrated multiplayer regression suite
 - [ ] Human listening on headphones/small speakers; tune bass and confirmation balance
 - [ ] Optional future remote-pilot shot-audio protocol (no relay changes in this release)
+
+## Ship zoom rendering
+- [x] Sample the player's assembled hull as one core-anchored cached texture instead of independently transformed tiles
+- [x] Preserve paint/layout/levels, north preview and safe fallback for large ships
+- [x] Verify real wheel zoom in Canvas/WebGL and layout/texture-budget regressions
+- [ ] User visual check of their ship while zooming
+
+## Audio strength and visibility
+- [x] Replace global hit/kill audio with positioned cues and reject off-screen world events
+- [x] Strengthen effects, add metallic impact texture and music ducking with bounded output/source costs
+- [x] Verify viewport boundaries, real browser playback and offline mix/source cleanup
+- [ ] Human listening pass on headphones/speakers

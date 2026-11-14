@@ -745,10 +745,10 @@ export class GameModel {
   actionSounds:EffectEvent[]=[];
   private sound(cue:NonNullable<EffectEvent['cue']>,at:Point=this.player,amount?:number){
     const volume=Math.min(1,Math.max(0,1-dist(at,this.player)/HEARING.range)*1.4);
-    if(volume>0&&this.actionSounds.length<32)this.actionSounds.push({type:'cue',cue,...at,volume,amount});
+    if(volume>0&&this.actionSounds.length<32)this.actionSounds.push({type:'cue',cue,...at,volume,amount,localSound:at===this.player||cue==='deposit'});
   }
   private effectView?: Input['view'];
-  /** Sound-only event: heard off screen too, quieter with distance, deeper for larger ships. */
+  /** Sound-only event: distance/size mix; the scene additionally rejects off-screen origins. */
   private cue(cue: NonNullable<EffectEvent['cue']>, at: Point = this.player, size = SHIP.radius) {
     const volume = 1 - dist(at, this.player) / HEARING.range;
     if (volume > 0 && this.effects.length < VFX.maxEvents) this.effects.push({ type: 'cue', cue, x: at.x, y: at.y, volume: Math.min(1, volume * 1.4), pitch: Math.max(0.55, Math.min(1.35, Math.sqrt(17 / size))) });
@@ -1416,7 +1416,7 @@ export class GameModel {
         const speed = collideAsteroid(body, rock, rock.geometry!, COLLISION.restitution);
         if (speed !== undefined && speed > COLLISION.safeSpeed && e.impactCooldown <= 0) {
           this.damageEnemy(e, Math.min(COLLISION.maxDamage, Math.ceil((speed - COLLISION.safeSpeed) * COLLISION.damagePerSpeed)), false);
-          this.enemyHits++;
+          this.enemyHits++;this.cue('impact',e);
           e.impactCooldown = COLLISION.damageCooldown;
           this.addBlast({ x: e.x, y: e.y, radius: 16, life: 0.12 });
         }
@@ -1456,6 +1456,7 @@ export class GameModel {
     const def = ENEMIES[e.kind ?? 'raider'];
     if(e.rewarded)return;
     if(def.boss?.meltdown&&!e.meltdownDone){if(e.meltdown===undefined){e.meltdown=def.boss.meltdown.duration;e.empCharge=e.meltdown;e.charge=undefined;this.cue('empCharge',e,def.radius);this.message='Reactor meltdown! Clear the blast radius!';}e.health=1;return;}e.rewarded=true;
+    this.cue('explosion',e,def.radius);
     this.addBlast({ x: e.x, y: e.y, radius: Math.max(35, def.radius * 1.6), life: def.boss ? 0.5 : 0.22 });
     // Components that go down with their boss are debris, not separate kills or loot.
     if (e.mount && !this.enemies.some(other => other.id === e.parent && other.health > 0)) return;
@@ -1518,7 +1519,7 @@ export class GameModel {
   }
   private shootOre(asteroid: Asteroid, damage: number, point: Point, weapon?: WeaponKind, direction?: Point) {
     // Another pilot holds this rock: the shot still hits it, but only they may change it.
-    if (!this.mayChange(asteroid)) { this.oreHits++; this.addBlast({ ...point, radius: 10, life: 0.1 }, weapon); return; }
+    if (!this.mayChange(asteroid)) { this.oreHits++;this.cue('impact',point); this.addBlast({ ...point, radius: 10, life: 0.1 }, weapon); return; }
     this.pushOre(asteroid,damage,direction??{x:asteroid.x-point.x,y:asteroid.y-point.y});
     const removed = this.take(asteroid, damage * ORE_COMBAT.materialPerDamage, point);
     if (removed > 0) {
@@ -1528,14 +1529,14 @@ export class GameModel {
       this.releaseOre(point, asteroid.ore, recovered,{x:asteroid.vx*BELT_MOTION.dropInheritance,y:asteroid.vy*BELT_MOTION.dropInheritance});
       this.emitDebris(point, { x: point.x - asteroid.x, y: point.y - asteroid.y }, RESOURCES[asteroid.ore].color, asteroid.id + asteroid.amount);
     }
-    this.oreHits++; this.addBlast({ ...point, radius: 10, life: 0.1 },weapon);
+    this.oreHits++;this.cue('impact',point); this.addBlast({ ...point, radius: 10, life: 0.1 },weapon);
     if (asteroid.amount <= 0) this.destroyAsteroid(asteroid.id);
   }
   private disableByEmp(enemy:Enemy,duration:number){if(!ENEMIES[enemy.kind??'raider'].boss&&(enemy.empRecovery??0)<=0){enemy.disabledFor=Math.max(enemy.disabledFor??0,duration);enemy.empRecovery=duration+SPECIAL.emp.recovery;}}
   private hitEnemy(enemy:Enemy,damage:number,armorPiercing=false,by?:string){
     if(enemy.health<=0||damage<=0)return;
     enemy.lastHitBy=by;
-    this.enemyHits++;this.damageEnemy(enemy,damage,true,armorPiercing);if(enemy.health<=0)this.enemyDestroyed(enemy);
+    this.enemyHits++;this.cue('hit',enemy);this.damageEnemy(enemy,damage,true,armorPiercing);if(enemy.health<=0)this.enemyDestroyed(enemy);
   }
   private arc(from:Point,to:Point,color:number){this.effect({type:'arc',...from,toX:to.x,toY:to.y,color});}
   private fragment(b:Bullet,point:Point){

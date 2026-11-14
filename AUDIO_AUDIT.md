@@ -34,3 +34,9 @@
 - Remote pilots do not broadcast individual weapon-audio events; this change intentionally leaves the multiplayer wire protocol/relay untouched. Local and existing shared-authority cues remain audible.
 - Human listening on headphones and small speakers is still needed to tune bass/confirmation balance and subjective loudness. No new music or ambience assets were added; Deep Space Patrol is unchanged.
 - The old one-shot `mine` profile remains for compatibility; continuous mining uses its persistent loop instead.
+
+## Visible-only audio and stronger effects — 2026-11-13
+- World cues now require an origin inside the exact camera rectangle, without the rendering preload margin. Applies to shots, impacts, deaths, pickups, structure cues and tool targets. Removed global hit/kill-counter playback, which lost the event position. UI/action confirmation remains audible independently of world visibility.
+- Effects bus now has 2.6x gain; low-priority cues stay restrained. Mechanical shots, hits, hull damage and cargo/module operations add decaying inharmonic metallic resonances. Brief music ducking gives actions room; existing volume/mute controls and track remain intact. Compressor plus bounded soft saturation protects the output.
+- 280 tests pass. Real-browser off-screen/visible event checks pass with no errors. Offline render measured 2.599x RMS versus the former mix; crowded combat peak 0.270, maximum 24 sources and zero remaining sources after completion. Browser verified music ducks then restores.
+- Subjective headphone/speaker listening remains the next tuning step. Local changes only, alongside the ship zoom fix; no relay/protocol changes.
